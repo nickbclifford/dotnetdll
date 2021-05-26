@@ -5,7 +5,7 @@ use goblin::{
 };
 use scroll::Pread;
 
-use super::{metadata, stream};
+use super::stream;
 
 const ALIGNMENT: u32 = 0x200;
 
@@ -72,13 +72,21 @@ impl DLL<'_> {
     // TODO
     pub fn get_stream_offset(&self, name: &str) -> Result<usize, String> {
         let metadata = self.get_metadata().map_err(|e| e.to_string())?;
-        let header = metadata.stream_headers.iter().find(|h| h.name == name).ok_or("bad stream name".to_string())?;
+        let header = metadata
+            .stream_headers
+            .iter()
+            .find(|h| h.name == name)
+            .ok_or("bad stream name".to_string())?;
         let m_offset = utils::find_offset(
-            self.get_cli_header().map_err(|e| e.to_string())?.metadata.virtual_address as usize,
+            self.get_cli_header()
+                .map_err(|e| e.to_string())?
+                .metadata
+                .virtual_address as usize,
             &self.object.sections,
             ALIGNMENT,
             &ParseOptions::default(),
-        ).ok_or("bad offset".to_string())?;
+        )
+        .ok_or("bad offset".to_string())?;
         Ok(m_offset + header.offset as usize)
     }
 }
