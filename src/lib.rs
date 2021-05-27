@@ -32,27 +32,28 @@ mod tests {
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let strs: heap::Strings = dll.get_heap("#Strings")?;
+        let strs = dll.get_heap("#Strings")?;
         let meta = dll.get_logical_metadata()?;
 
-        for row in meta.tables[&Kind::TypeDef].iter() {
-            match row {
-                Table::TypeDef(t) => {
-                    print!("type name: {} ", t.type_name(&strs));
-                    match t.extends.0 {
-                        Some((idx, kind)) => match &meta.tables[&kind][idx.saturating_sub(1)] {
-                            Table::TypeDef(t) => print!("extends {}", t.type_name(&strs)),
-                            Table::TypeRef(t) => print!("extends {}", t.type_name(&strs)),
+        for row in meta.tables.type_def.iter() {
+            print!("type name: {} ", row.type_name(&strs));
+            match row.extends.0 {
+                Some((idx, kind)) => {
+                    if idx != 0 {
+                        match kind {
+                            Kind::TypeDef => {
+                                print!("extends {}", meta.tables.type_def[idx - 1].type_name(&strs))
+                            }
+                            Kind::TypeRef => {
+                                print!("extends {}", meta.tables.type_ref[idx - 1].type_name(&strs))
+                            }
                             _ => {}
-                        },
-                        None => {
-                            print!("nah")
                         }
                     }
-                    println!();
                 }
                 _ => {}
             }
+            println!();
         }
         Ok(())
     }

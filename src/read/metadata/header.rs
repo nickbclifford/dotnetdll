@@ -16,7 +16,7 @@ pub struct Header {
     pub reserved1: u8,
     pub valid: u64,
     pub sorted: u64,
-    pub tables: HashMap<Kind, Vec<Table>>,
+    pub tables: Tables,
 }
 
 impl TryFromCtx<'_, Endian> for Header {
@@ -52,13 +52,11 @@ impl TryFromCtx<'_, Endian> for Header {
             },
         );
 
-        let mut tables = HashMap::new();
+        let mut tables = Tables::new();
+
         for (kind, size) in iter {
             for _ in 0..size {
-                tables
-                    .entry(kind)
-                    .or_insert(vec![])
-                    .push(build_match!(kind, from, offset, meta_ctx));
+                tables_kind_push!(tables, kind, from.gread_with(offset, meta_ctx)?);
             }
         }
 

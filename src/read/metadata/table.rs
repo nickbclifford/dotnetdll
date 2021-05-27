@@ -2,6 +2,9 @@ use super::index;
 use num_derive::FromPrimitive;
 use scroll::{ctx::TryFromCtx, Pread};
 
+// paste!
+use paste::paste;
+
 macro_rules! tables {
     ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ },)+) => {
         #[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq)]
@@ -37,20 +40,34 @@ macro_rules! tables {
             }
         )*
 
-        #[derive(Debug)]
-        pub enum Table {
-            $($name($name),)*
-        }
+        paste! {
+            #[derive(Debug)]
+            pub struct Tables {
+                $(
+                    pub [<$name:snake>]: Vec<$name>,
+                )*
+            }
 
-        macro_rules! build_match {
-            ($kind:ident, $from:ident, $offset:ident, $ctx:ident) => {
-                match $kind {
-                    $(
-                        Kind::$name => Table::$name($from.gread_with::<$name>($offset, $ctx)?),
-                    )*
-                    Kind::Unused => unreachable!()
+            impl Tables {
+                pub fn new() -> Tables {
+                    Tables {
+                        $(
+                            [<$name:snake>]: vec![],
+                        )*
+                    }
                 }
-            };
+            }
+
+            macro_rules! tables_kind_push {
+                ($tables:ident, $kind:ident, $add:expr) => {
+                    match $kind {
+                        $(
+                            Kind::$name => $tables.[<$name:snake>].push($add),
+                        )*
+                        Kind::Unused => unreachable!()
+                    }
+                }
+            }
         }
     };
 }
@@ -71,7 +88,7 @@ tables! {
         name: index::String,
         culture: index::String,
     },
-    AssemblyOS = 0x22 {
+    AssemblyOs = 0x22 {
         os_platform_id: u32,
         os_major_version: u32,
         os_minor_version: u32,
@@ -90,7 +107,7 @@ tables! {
         culture: index::String,
         hash_value: index::Blob,
     },
-    AssemblyRefOS = 0x25 {
+    AssemblyRefOs = 0x25 {
         os_platform_id: u32,
         os_major_version: u32,
         os_minor_version: u32,
@@ -150,7 +167,7 @@ tables! {
         parent: index::HasFieldMarshal,
         native_type: index::Blob,
     },
-    FieldRVA = 0x1D {
+    FieldRva = 0x1D {
         rva: u32,
         field: index::Simple<Field>,
     },
