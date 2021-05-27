@@ -14,7 +14,7 @@ macro_rules! tables {
         }
 
         $(
-            #[derive(Debug)]
+            #[derive(Clone, Copy, Debug)]
             pub struct $name {
                 $(pub $fname: $ty,)*
             }

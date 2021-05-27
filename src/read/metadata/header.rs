@@ -17,8 +17,7 @@ pub struct Header {
     pub reserved1: u8,
     pub valid: u64,
     pub sorted: u64,
-    pub rows: Vec<u32>,
-    pub tables: Vec<Table>,
+    pub tables: HashMap<Kind, Vec<Table>>,
 }
 
 impl TryFromCtx<'_, Endian> for Header {
@@ -34,7 +33,7 @@ impl TryFromCtx<'_, Endian> for Header {
         let valid: u64 = from.gread_with(offset, ctx)?;
         let sorted = from.gread_with(offset, ctx)?;
 
-        let mut rows = vec![0; valid.count_ones() as usize];
+        let mut rows = vec![0u32; valid.count_ones() as usize];
         from.gread_inout_with(offset, &mut rows, ctx)?;
 
         let mut kinds = vec![];
@@ -43,8 +42,8 @@ impl TryFromCtx<'_, Endian> for Header {
                 kinds.push(Kind::from_usize(num).unwrap());
             }
         }
-        let iter = kinds.into_iter().zip(rows.iter());
-        let sizes_map: HashMap<_, _> = iter.clone().map(|(k, &i)| (k, i)).collect();
+        let iter = kinds.into_iter().zip(rows.into_iter());
+        let sizes_map: HashMap<_, _> = iter.clone().collect();
 
         let meta_ctx = Context(
             ctx,
@@ -54,10 +53,13 @@ impl TryFromCtx<'_, Endian> for Header {
             },
         );
 
-        let mut tables = vec![];
+        let mut tables = HashMap::new();
         for (kind, size) in iter {
-            for _ in 0..*size {
-                tables.push(build_match!(kind, from, offset, meta_ctx));
+            for _ in 0..size {
+                tables
+                    .entry(kind)
+                    .or_insert(vec![])
+                    .push(build_match!(kind, from, offset, meta_ctx));
             }
         }
 
@@ -70,7 +72,6 @@ impl TryFromCtx<'_, Endian> for Header {
                 reserved1: res1,
                 valid,
                 sorted,
-                rows,
                 tables,
             },
             *offset,

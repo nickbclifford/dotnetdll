@@ -33,7 +33,7 @@ heap_struct!(Strings, {
     type Value = &'a str;
 
     fn at_index(&self, index::String(idx): Self::Index) -> Result<Self::Value, Error> {
-        self.bytes.pread_with(idx as usize, StrCtx::Delimiter(0))
+        self.bytes.pread_with(idx, StrCtx::Delimiter(0))
     }
 });
 heap_struct!(Blob, {
@@ -41,19 +41,19 @@ heap_struct!(Blob, {
     type Value = &'a [u8];
 
     fn at_index(&self, index::Blob(idx): Self::Index) -> Result<Self::Value, Error> {
-        let mut offset = idx as usize;
+        let mut offset = idx;
         let mut size = 0usize;
 
-        let indicator: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
+        let indicator = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
         if (indicator >> 7) == 0 {
             size = indicator as usize;
         } else if (indicator >> 6) == 0b10 {
-            let b2: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
+            let b2 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
             size = (((indicator & 0b111111) << 8) + b2) as usize;
         } else if (indicator >> 5) == 0b110 {
-            let b2: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
-            let b3: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
-            let b4: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
+            let b2 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
+            let b3 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
+            let b4 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
             size = (((indicator & 0b11111) << 24) + (b2 << 16) + (b3 << 8) + b4) as usize;
         }
 
@@ -65,6 +65,6 @@ heap_struct!(GUID, {
     type Value = u128;
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value, Error> {
-        Ok(self.bytes.pread_with(idx as usize, Endian::Little)?)
+        Ok(self.bytes.pread_with(idx, Endian::Little)?)
     }
 });

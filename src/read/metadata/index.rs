@@ -38,8 +38,8 @@ uint_impl!(u64);
 
 macro_rules! heap_index {
     ($name:ident, $idx:literal) => {
-        #[derive(Debug)]
-        pub struct $name(pub u32);
+        #[derive(Debug, Copy, Clone)]
+        pub struct $name(pub usize);
         impl<'a> TryFromCtx<'a, Context<'a>> for $name {
             type Error = scroll::Error;
 
@@ -50,9 +50,9 @@ macro_rules! heap_index {
                 let offset = &mut 0;
 
                 let idx = if sizes.heap[$idx] {
-                    from.gread_with::<u32>(offset, end)?
+                    from.gread_with::<u32>(offset, end)? as usize
                 } else {
-                    from.gread_with::<u16>(offset, end)? as u32
+                    from.gread_with::<u16>(offset, end)? as usize
                 };
 
                 Ok(($name(idx), *offset))
@@ -65,8 +65,8 @@ heap_index!(String, 0);
 heap_index!(GUID, 1);
 heap_index!(Blob, 2);
 
-#[derive(Debug)]
-pub struct Simple<T: HasKind>(pub u32, std::marker::PhantomData<T>);
+#[derive(Debug, Copy, Clone)]
+pub struct Simple<T: HasKind>(pub Option<usize>, std::marker::PhantomData<T>);
 impl<'a, T: 'a + HasKind> TryFromCtx<'a, Context<'a>> for Simple<T> {
     type Error = scroll::Error;
 
@@ -76,17 +76,13 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Context<'a>> for Simple<T> {
     ) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let size = sizes
-            .tables
-            .get(&T::get_kind())
-            .ok_or(scroll::Error::Custom(
-                "Table kind does not exist".to_string(),
-            ))?;
-
-        let idx = if *size > 2u32.pow(16) {
-            from.gread_with::<u32>(offset, end)?
-        } else {
-            from.gread_with::<u16>(offset, end)? as u32
+        let idx = match sizes.tables.get(&T::get_kind()) {
+            Some(size) => Some(if *size < 2u32.pow(16) {
+                from.gread_with::<u16>(offset, end)? as usize
+            } else {
+                from.gread_with::<u32>(offset, end)? as usize
+            }),
+            None => None,
         };
 
         Ok((Simple(idx, PhantomData), *offset))
@@ -102,11 +98,8 @@ macro_rules! count_items {
 
 macro_rules! coded_index {
     ($name:ident, {$($tag:ident),+}) => {
-        #[derive(Debug)]
-        pub struct $name {
-            pub index: u32,
-            pub tag: Kind
-        }
+        #[derive(Debug, Copy, Clone)]
+        pub struct $name(pub Option<(usize, Kind)>);
 
         paste! {
             #[allow(non_upper_case_globals)]
@@ -120,9 +113,11 @@ macro_rules! coded_index {
                 fn try_from_ctx(from: &'a [u8], Context(end, sizes): Context<'a>) -> Result<(Self, usize), Self::Error> {
                     let offset = &mut 0;
 
-                    let log = ([<$name NUM_TABLES>] as f32).log2().floor() as u32;
+                    let log = ([<$name NUM_TABLES>] as f32).log2().ceil() as u32;
 
-                    let coded = if *sizes.tables.values().max().unwrap() < 2u32.pow(16 - log) {
+                    let max_size = [<$name TAGS>].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
+
+                    let coded = if *max_size < 2u32.pow(16 - log) {
                         from.gread_with::<u16>(offset, end)? as u32
                     } else {
                         from.gread_with::<u32>(offset, end)?
@@ -130,8 +125,18 @@ macro_rules! coded_index {
 
                     let mask = (1 << log) - 1;
                     let tag = (coded & mask) as usize;
+                    let index = (coded >> log) as usize;
 
-                    Ok(($name { index: coded >> log, tag: [<$name TAGS>][tag] }, *offset))
+                    Ok((
+                        $name(
+                            if tag < [<$name NUM_TABLES>] {
+                                Some((index, [<$name TAGS>][tag]))
+                            } else {
+                                None
+                            }
+                        ),
+                        *offset
+                    ))
                 }
             }
         }
