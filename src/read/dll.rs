@@ -1,92 +1,88 @@
-use goblin::{
-    error,
-    pe::{data_directories::DataDirectory, options::ParseOptions, utils, PE},
-    Object,
+use object::{
+    endian::{LittleEndian, U32Bytes},
+    pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders64},
+    read::{
+        pe::{ImageNtHeaders, SectionTable},
+        Error as ObjectError,
+    },
 };
-use scroll::Pread;
+use scroll::{Error as ScrollError, Pread};
 
-use super::stream;
-
-const ALIGNMENT: u32 = 0x200;
+use super::{
+    cli::{Header, Metadata, RVASize},
+    heap::Heap,
+    metadata
+};
 
 #[derive(Debug)]
 pub struct DLL<'a> {
     buffer: &'a [u8],
-    pub object: PE<'a>,
+    pub cli: Header,
+    sections: SectionTable<'a>,
 }
 
-#[derive(Debug, Pread)]
-pub struct CLIHeader {
-    pub cb: u32,
-    pub major_runtime_version: u16,
-    pub minor_runtime_version: u16,
-    pub metadata: DataDirectory,
-    pub flags: u32,
-    pub entry_point_token: u32,
-    pub resources: DataDirectory,
-    pub strong_name_signature: DataDirectory,
-    pub code_manager_table: DataDirectory,
-    pub vtable_fixups: DataDirectory,
-    pub export_address_table_jumps: DataDirectory,
-    pub managed_native_header: DataDirectory,
+#[derive(Debug)]
+pub enum DLLError {
+    PE(ObjectError),
+    CLI(ScrollError),
+    Other(&'static str),
 }
-
-impl DLL<'_> {
-    pub fn parse(bytes: &[u8]) -> error::Result<DLL> {
-        match Object::parse(bytes) {
-            Ok(Object::PE(pe)) => Ok(DLL {
-                buffer: bytes,
-                object: pe,
-            }),
-            Ok(_) => Err(error::Error::Malformed(
-                "Object is not a PE DLL".to_string(),
-            )),
-            Err(e) => Err(e),
+impl std::fmt::Display for DLLError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PE(o) => write!(f, "PE parsing: {}", o),
+            CLI(s) => write!(f, "CLI parsing: {}", s),
+            Other(s) => write!(f, "Other parsing: {}", s),
         }
     }
+}
+impl std::error::Error for DLLError {}
 
-    pub fn get_cli_header(&self) -> error::Result<CLIHeader> {
-        let header = self
-            .object
-            .header
-            .optional_header
-            .ok_or(error::Error::Malformed(
-                "Missing PE optional header".to_string(),
-            ))?;
-        let dir = header
-            .data_directories
-            .get_clr_runtime_header()
-            .ok_or(error::Error::Malformed("Missing CLI header".to_string()))?;
-        utils::get_data(self.buffer, &self.object.sections, dir, ALIGNMENT)
+use DLLError::*;
+
+type Result<T> = std::result::Result<T, DLLError>;
+
+impl<'a> DLL<'a> {
+    pub fn parse(bytes: &[u8]) -> Result<DLL> {
+        let dos = ImageDosHeader::parse(bytes).map_err(PE)?;
+        let mut offset = dos.nt_headers_offset() as u64;
+        // TODO: PE32?
+        let (nt, dirs) = ImageNtHeaders64::parse(bytes, &mut offset).map_err(PE)?;
+        let sections = nt.sections(bytes, offset).map_err(PE)?;
+        let cli_b = dirs[14].data(bytes, &sections).map_err(PE)?;
+        Ok(DLL {
+            buffer: bytes,
+            cli: cli_b.pread_with(0, scroll::Endian::Little).map_err(CLI)?,
+            sections,
+        })
     }
 
-    pub fn get_metadata(&self) -> error::Result<stream::Metadata> {
-        utils::get_data(
-            self.buffer,
-            &self.object.sections,
-            self.get_cli_header()?.metadata,
-            ALIGNMENT,
-        )
+    pub fn at_rva(&self, rva: &RVASize) -> Result<&[u8]> {
+        let dir = ImageDataDirectory {
+            virtual_address: U32Bytes::new(LittleEndian, rva.rva),
+            size: U32Bytes::new(LittleEndian, rva.size),
+        };
+        dir.data(self.buffer, &self.sections).map_err(PE)
     }
 
-    // TODO
-    pub fn get_stream_offset(&self, name: &str) -> Result<usize, String> {
-        let metadata = self.get_metadata().map_err(|e| e.to_string())?;
-        let header = metadata
-            .stream_headers
-            .iter()
-            .find(|h| h.name == name)
-            .ok_or("bad stream name".to_string())?;
-        let m_offset = utils::find_offset(
-            self.get_cli_header()
-                .map_err(|e| e.to_string())?
-                .metadata
-                .virtual_address as usize,
-            &self.object.sections,
-            ALIGNMENT,
-            &ParseOptions::default(),
-        )
-        .ok_or("bad offset".to_string())?;
-        Ok(m_offset + header.offset as usize)
+    fn get_stream(&self, name: &'static str) -> Result<&'a [u8]> {
+        let meta = self.get_cli_metadata()?;
+        let header = meta.stream_headers.iter().find(|h| h.name == name).ok_or(Other("unable to find stream"))?;
+        self
+            .sections
+            .pe_data_at(self.buffer, self.cli.metadata.rva + header.offset)
+            .ok_or(Other("bad stream offset"))
+    }
+
+    pub fn get_heap<T: Heap<'a>>(&self, name: &'static str) -> Result<T> {
+        Ok(T::new(self.get_stream(name)?))
+    }
+
+    pub fn get_cli_metadata(&self) -> Result<Metadata> {
+        self.at_rva(&self.cli.metadata)?.pread(0).map_err(CLI)
+    }
+
+    pub fn get_logical_metadata(&self) -> Result<metadata::header::Header> {
+        self.get_stream("#~")?.pread(0).map_err(CLI)
     }
 }

@@ -1,54 +1,42 @@
 use super::metadata::index;
-use scroll::{Endian, Error, Pread};
+use scroll::{ctx::StrCtx, Endian, Error, Pread};
 
-pub trait Heap {
+pub trait Heap<'a> {
     type Index;
     type Value;
+
+    fn new(bytes: &'a [u8]) -> Self;
 
     fn at_index(&self, idx: Self::Index) -> Result<Self::Value, Error>;
 }
 
 macro_rules! heap_struct {
-    ($name:ident) => {
+    ($name:ident, { $($i:item)* }) => {
         pub struct $name<'a> {
             bytes: &'a [u8],
         }
 
-        impl $name<'_> {
-            pub fn new(bytes: &[u8], offset: usize) -> $name {
+        impl<'a> Heap<'a> for $name<'a> {
+            fn new(bytes: &'a [u8]) -> $name<'a> {
                 $name {
-                    bytes: &bytes[offset..],
+                    bytes: &bytes,
                 }
             }
+
+            $($i)*
         }
     };
 }
 
-heap_struct!(Strings);
-heap_struct!(Blob);
-heap_struct!(GUID);
-
-impl Heap for Strings<'_> {
+heap_struct!(Strings, {
     type Index = index::String;
-    type Value = String;
+    type Value = &'a str;
 
     fn at_index(&self, index::String(idx): Self::Index) -> Result<Self::Value, Error> {
-        let mut buf = vec![];
-        let mut offset = idx as usize;
-        loop {
-            let c: u8 = self.bytes.gread_with(&mut offset, Endian::Little)?;
-            if c == 0 {
-                break;
-            } else {
-                buf.push(c);
-            }
-        }
-        // This should never happen, but might as well be careful
-        Ok(String::from_utf8(buf).map_err(|e| Error::Custom(e.to_string()))?)
+        self.bytes.pread_with(idx as usize, StrCtx::Delimiter(0))
     }
-}
-
-impl<'a> Heap for Blob<'a> {
+});
+heap_struct!(Blob, {
     type Index = index::Blob;
     type Value = &'a [u8];
 
@@ -71,13 +59,12 @@ impl<'a> Heap for Blob<'a> {
 
         Ok(self.bytes.pread_with(offset, size)?)
     }
-}
-
-impl Heap for GUID<'_> {
+});
+heap_struct!(GUID, {
     type Index = index::GUID;
     type Value = u128;
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value, Error> {
         Ok(self.bytes.pread_with(idx as usize, Endian::Little)?)
     }
-}
+});

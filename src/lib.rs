@@ -2,27 +2,22 @@ pub mod read;
 
 #[cfg(test)]
 mod tests {
-    use crate::read::{heap::Heap, *};
-    use scroll::Pread;
+    use crate::read::*;
+
+    use heap::Heap;
+    use metadata::table::Table::*;
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let strings = dll.get_stream_offset("#Strings")?;
-        let heap = heap::Strings::new(&file, strings);
-        let meta = dll.get_stream_offset("#~")?;
-        let header: metadata::header::Header = file.pread(meta)?;
-        for table in header.tables {
-            use metadata::table::Table::*;
+        let strs: heap::Strings = dll.get_heap("#Strings")?;
+        let meta = dll.get_logical_metadata()?;
+        for table in meta.tables {
             match table {
                 TypeDef(t) => {
-                    println!(
-                        "{}.{}",
-                        heap.at_index(t.type_namespace)?,
-                        heap.at_index(t.type_name)?
-                    )
-                }
+                    println!("{}.{} extends {:?}", strs.at_index(t.type_namespace)?, strs.at_index(t.type_name)?, t.extends);
+                },
                 _ => {}
             }
         }
