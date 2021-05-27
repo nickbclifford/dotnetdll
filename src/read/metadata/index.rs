@@ -1,10 +1,9 @@
-use super::table::Kind;
-use bitvec::prelude::*;
-use scroll::ctx::TryFromCtx;
-use scroll::{Endian, Pread};
-use std::collections::HashMap;
-use std::marker::PhantomData;
+use super::table::{HasKind, Kind};
+use bitvec::{order::Lsb0, slice::BitSlice};
+use scroll::{ctx::TryFromCtx, Endian, Pread};
+use std::{collections::HashMap, marker::PhantomData};
 
+// paste! macro
 use paste::paste;
 
 #[derive(Clone, Copy, Debug)]
@@ -143,7 +142,6 @@ macro_rules! coded_index {
     }
 }
 
-use crate::read::metadata::table::HasKind;
 use Kind::*;
 
 coded_index!(TypeDefOrRef, {

@@ -1,9 +1,8 @@
 use super::{
     index::{Context, Sizes},
-    table::*,
+    table::*, // structs required to be in scope for build_match!
 };
-use bitvec::order::Lsb0;
-use bitvec::view::BitView;
+use bitvec::{order::Lsb0, view::BitView};
 use num_traits::FromPrimitive;
 use scroll::{ctx::TryFromCtx, Endian, Pread};
 use std::collections::HashMap;

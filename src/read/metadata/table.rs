@@ -1,7 +1,6 @@
+use super::index;
 use num_derive::FromPrimitive;
 use scroll::{ctx::TryFromCtx, Pread};
-
-use super::index;
 
 macro_rules! tables {
     ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ },)+) => {

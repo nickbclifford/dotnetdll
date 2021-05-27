@@ -1,3 +1,8 @@
+use super::{
+    cli::{Header, Metadata, RVASize},
+    heap::Heap,
+    metadata,
+};
 use object::{
     endian::{LittleEndian, U32Bytes},
     pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders32, ImageNtHeaders64},
@@ -7,12 +12,6 @@ use object::{
     },
 };
 use scroll::{Error as ScrollError, Pread};
-
-use super::{
-    cli::{Header, Metadata, RVASize},
-    heap::Heap,
-    metadata,
-};
 
 #[derive(Debug)]
 pub struct DLL<'a> {
