@@ -1,7 +1,7 @@
 use super::{
     cli::{Header, Metadata, RVASize},
     heap::Heap,
-    metadata,
+    metadata, method,
 };
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -82,6 +82,12 @@ impl<'a> DLL<'a> {
         dir.data(self.buffer, &self.sections).map_err(PE)
     }
 
+    fn raw_rva(&self, rva: u32) -> Result<&'a [u8]> {
+        self.sections
+            .pe_data_at(self.buffer, rva)
+            .ok_or(Other("bad stream offset"))
+    }
+
     fn get_stream(&self, name: &'static str) -> Result<&'a [u8]> {
         let meta = self.get_cli_metadata()?;
         let header = meta
@@ -89,9 +95,7 @@ impl<'a> DLL<'a> {
             .iter()
             .find(|h| h.name == name)
             .ok_or(Other("unable to find stream"))?;
-        self.sections
-            .pe_data_at(self.buffer, self.cli.metadata.rva + header.offset)
-            .ok_or(Other("bad stream offset"))
+        self.raw_rva(self.cli.metadata.rva + header.offset)
     }
 
     pub fn get_heap<T: Heap<'a>>(&self, name: &'static str) -> Result<T> {
@@ -106,6 +110,12 @@ impl<'a> DLL<'a> {
 
     pub fn get_logical_metadata(&self) -> Result<metadata::header::Header> {
         self.get_stream("#~")?
+            .pread_with(0, scroll::Endian::Little)
+            .map_err(CLI)
+    }
+
+    pub fn get_method(&self, def: &metadata::table::MethodDef) -> Result<method::Method> {
+        self.raw_rva(def.rva)?
             .pread_with(0, scroll::Endian::Little)
             .map_err(CLI)
     }

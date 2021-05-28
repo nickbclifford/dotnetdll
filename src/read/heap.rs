@@ -49,12 +49,12 @@ heap_struct!(Blob, {
             size = indicator as usize;
         } else if (indicator >> 6) == 0b10 {
             let b2 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
-            size = (((indicator & 0b111111) << 8) + b2) as usize;
+            size = (((indicator & 0b111111) << 8) | b2) as usize;
         } else if (indicator >> 5) == 0b110 {
             let b2 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
             let b3 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
             let b4 = self.bytes.gread_with::<u8>(&mut offset, Endian::Little)? as usize;
-            size = (((indicator & 0b11111) << 24) + (b2 << 16) + (b3 << 8) + b4) as usize;
+            size = (((indicator & 0b11111) << 24) | (b2 << 16) | (b3 << 8) | b4) as usize;
         }
 
         Ok(self.bytes.pread_with(offset, size)?)

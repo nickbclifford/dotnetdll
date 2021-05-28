@@ -76,7 +76,7 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Context<'a>> for Simple<T> {
         let offset = &mut 0;
 
         let idx = match sizes.tables.get(&T::get_kind()) {
-            Some(size) => Some(if *size < 2u32.pow(16) {
+            Some(size) => Some(if *size < (1 << 16) {
                 from.gread_with::<u16>(offset, end)? as usize
             } else {
                 from.gread_with::<u32>(offset, end)? as usize
@@ -116,7 +116,7 @@ macro_rules! coded_index {
 
                     let max_size = [<$name TAGS>].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
 
-                    let coded = if *max_size < 2u32.pow(16 - log) {
+                    let coded = if *max_size < (1 << (16 - log)) {
                         from.gread_with::<u16>(offset, end)? as u32
                     } else {
                         from.gread_with::<u32>(offset, end)?
