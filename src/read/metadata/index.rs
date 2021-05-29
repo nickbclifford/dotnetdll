@@ -1,10 +1,31 @@
 use super::table::{HasKind, Kind};
 use bitvec::{order::Lsb0, slice::BitSlice};
+use num_traits::FromPrimitive;
 use scroll::{ctx::TryFromCtx, Endian, Pread};
 use std::{collections::HashMap, marker::PhantomData};
 
 // paste! macro
 use paste::paste;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Token {
+    pub table: Kind,
+    pub index: usize,
+}
+
+impl<'a> TryFromCtx<'a, Endian> for Token {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+        let num: u32 = from.gread_with(offset, ctx)?;
+
+        let table = Kind::from_u32(num >> 24).unwrap();
+        let index = (num & 0xFFFFFF) as usize;
+
+        Ok((Token { table, index }, *offset))
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes<'a> {

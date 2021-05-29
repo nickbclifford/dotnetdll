@@ -14,3 +14,6 @@ object = "0.24.0"
 paste = "1.0.5"
 scroll = "0.10.2"
 scroll_derive = "0.10.5"
+
+[dev-dependencies]
+regex = "1"
