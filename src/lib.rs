@@ -27,23 +27,38 @@ mod tests {
     name_impl!(TypeDef);
     name_impl!(TypeRef);
 
-    fn get_type_name(kind: Kind, index: usize, strs: &heap::Strings, tables: &Tables) -> String {
+    fn get_type_name(
+        kind: Kind,
+        index: usize,
+        strs: &heap::Strings,
+        blobs: &heap::Blob,
+        tables: &Tables,
+    ) -> String {
         match kind {
             Kind::TypeDef => tables.type_def[index - 1].type_name(strs),
             Kind::TypeRef => tables.type_ref[index - 1].type_name(strs),
-            _ => "{todo}".to_string(),
+            Kind::TypeSpec => format!(
+                "TYPESPEC {}",
+                tables.type_spec[index + 1].to_string(strs, blobs, tables)
+            ),
+            _ => unreachable!(),
         }
     }
 
     impl TypeDefOrRefOrSpec {
-        fn to_string(&self, strs: &heap::Strings, tables: &Tables) -> String {
+        fn to_string(&self, strs: &heap::Strings, blobs: &heap::Blob, tables: &Tables) -> String {
             let metadata::index::Token { table, index } = self.0;
-            get_type_name(table, index, strs, tables)
+            get_type_name(table, index, strs, blobs, tables)
         }
     }
 
     impl Type {
-        pub fn to_string(&self, strs: &heap::Strings, tables: &Tables) -> String {
+        pub fn to_string(
+            &self,
+            strs: &heap::Strings,
+            blobs: &heap::Blob,
+            tables: &Tables,
+        ) -> String {
             use Type::*;
 
             match self {
@@ -62,19 +77,23 @@ mod tests {
                 IntPtr => "nint".to_string(),
                 UIntPtr => "nuint".to_string(),
                 Array(t, shape) => {
-                    format!("{}{}", t.to_string(strs, tables), "[]".repeat(shape.rank))
+                    format!(
+                        "{}{}",
+                        t.to_string(strs, blobs, tables),
+                        "[]".repeat(shape.rank)
+                    )
                 }
-                Class(t) => t.to_string(strs, tables),
+                Class(t) => t.to_string(strs, blobs, tables),
                 FnPtrDef(_) => "{function}".to_string(),
                 FnPtrRef(_) => "{function}".to_string(),
                 GenericInstClass(token, types) | GenericInstValueType(token, types) => format!(
                     "{}<{}>",
                     token
-                        .to_string(strs, tables)
+                        .to_string(strs, blobs, tables)
                         .trim_end_matches(|c: char| c == '`' || c.is_digit(10)),
                     types
                         .iter()
-                        .map(|t| t.to_string(strs, tables))
+                        .map(|t| t.to_string(strs, blobs, tables))
                         .collect::<Vec<std::string::String>>()
                         .join(", ")
                 ),
@@ -83,15 +102,31 @@ mod tests {
                 Ptr(_, ptrt) => format!(
                     "{}*",
                     match &**ptrt {
-                        Some(t) => t.to_string(strs, tables),
+                        Some(t) => t.to_string(strs, blobs, tables),
                         None => "void".to_string(),
                     }
                 ),
                 String => "string".to_string(),
-                SzArray(_, t) => format!("{}[]", t.to_string(strs, tables)),
-                ValueType(token) => token.to_string(strs, tables),
+                SzArray(_, t) => format!("{}[]", t.to_string(strs, blobs, tables)),
+                ValueType(token) => token.to_string(strs, blobs, tables),
                 Var(n) => format!("T{}", n),
             }
+        }
+    }
+
+    impl TypeSpec {
+        pub fn to_string(
+            &self,
+            strs: &heap::Strings,
+            blobs: &heap::Blob,
+            tables: &Tables,
+        ) -> String {
+            let sig = blobs
+                .at_index(self.signature)
+                .and_then(|b| b.pread::<Type>(0))
+                .unwrap();
+
+            sig.to_string(strs, blobs, tables)
         }
     }
 
@@ -128,7 +163,8 @@ mod tests {
             }
 
             buf.push_str(&match sig.ret_type.1 {
-                RetTypeType::Type(t) | RetTypeType::ByRef(t) => t.to_string(strs, tables),
+                RetTypeType::Type(t) => t.to_string(strs, blobs, tables),
+                RetTypeType::ByRef(t) => format!("ref {}", t.to_string(strs, blobs, tables)),
                 RetTypeType::TypedByRef => "wtf".to_string(),
                 RetTypeType::Void => "void".to_string(),
             });
@@ -155,7 +191,8 @@ mod tests {
                 &sig.params
                     .iter()
                     .map(|p| match &p.1 {
-                        ParamType::Type(t) | ParamType::ByRef(t) => t.to_string(strs, tables),
+                        ParamType::Type(t) => t.to_string(strs, blobs, tables),
+                        ParamType::ByRef(t) => format!("ref {}", t.to_string(strs, blobs, tables)),
                         ParamType::TypedByRef => "wtf".to_string(),
                     })
                     .collect::<Vec<String>>()
@@ -172,82 +209,95 @@ mod tests {
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let strs = dll.get_heap("#Strings")?;
+        let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
-        let method_len = meta.tables.method_def.len();
-
-        for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
-            let name = row.type_name(&strs);
-            if name.starts_with(".") {
-                continue;
-            }
-            if let Some(idx) = row.method_list.0 {
-                let gen_name = Regex::new(r"`(\d+)")
-                    .unwrap()
-                    .replace(&name, |c: &Captures| {
-                        let mut buf = String::new();
-                        let num_gen: usize = c[1].parse().unwrap();
-                        buf.push('<');
-                        buf.push_str(
-                            &(0..num_gen)
-                                .into_iter()
-                                .map(|i| format!("T{}", i))
-                                .collect::<Vec<String>>()
-                                .join(", "),
-                        );
-                        buf.push('>');
-                        buf
-                    });
-
-                match row.flags & 0x7 {
-                    0 => print!("internal "),
-                    1 => print!("public "),
-                    _ => {}
-                }
-
-                if row.flags & 0x80 == 0x80 {
-                    print!("abstract ");
-                }
-
-                if row.flags & 0x100 == 0x100 {
-                    print!("sealed ");
-                }
-
-                match row.flags & 0x20 {
-                    0x00 => print!("class "),
-                    0x20 => print!("interface "),
-                    _ => {}
-                }
-
-                print!("{} ", gen_name);
-
-                match row.extends.0 {
-                    Some((index, kind)) if index != 0 => {
-                        print!(": {} ", get_type_name(kind, index, &strs, &meta.tables))
-                    }
-                    _ => {}
-                }
-
-                println!("{{");
-
-                let last_method = std::cmp::min(
-                    method_len,
-                    meta.tables
-                        .type_def
-                        .get(t_idx + 1)
-                        .and_then(|t| t.method_list.0)
-                        .unwrap_or(method_len),
-                ) - 1;
-
-                for method in &meta.tables.method_def[idx - 1..last_method] {
-                    println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
-                }
-
-                println!("}}");
-            }
+        println!("method defs");
+        for row in meta.tables.method_def.iter() {
+            println!("{:x?}", blobs.at_index(row.signature)?);
         }
+
+        println!("\ntype specs");
+        for row in meta.tables.type_spec.iter() {
+            println!("{:x?}", blobs.at_index(row.signature)?);
+        }
+
+        // let method_len = meta.tables.method_def.len();
+
+        // for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
+        //     let name = row.type_name(&strs);
+        //     if name.starts_with(".") {
+        //         continue;
+        //     }
+        //     if let Some(idx) = row.method_list.0 {
+        //         let gen_name = Regex::new(r"`(\d+)")
+        //             .unwrap()
+        //             .replace(&name, |c: &Captures| {
+        //                 let mut buf = String::new();
+        //                 let num_gen: usize = c[1].parse().unwrap();
+        //                 buf.push('<');
+        //                 buf.push_str(
+        //                     &(0..num_gen)
+        //                         .into_iter()
+        //                         .map(|i| format!("T{}", i))
+        //                         .collect::<Vec<String>>()
+        //                         .join(", "),
+        //                 );
+        //                 buf.push('>');
+        //                 buf
+        //             });
+        //
+        //         match row.flags & 0x7 {
+        //             0 => print!("internal "),
+        //             1 => print!("public "),
+        //             _ => {}
+        //         }
+        //
+        //         if row.flags & 0x80 == 0x80 {
+        //             print!("abstract ");
+        //         }
+        //
+        //         if row.flags & 0x100 == 0x100 {
+        //             print!("sealed ");
+        //         }
+        //
+        //         match row.flags & 0x20 {
+        //             0x00 => print!("class "),
+        //             0x20 => print!("interface "),
+        //             _ => {}
+        //         }
+        //
+        //         print!("{} ", gen_name);
+        //
+        //         match row.extends.0 {
+        //             Some((index, kind)) if index != 0 => {
+        //                 print!(
+        //                     ": {} ",
+        //                     get_type_name(kind, index, &strs, &blobs, &meta.tables)
+        //                 )
+        //             }
+        //             _ => {}
+        //         }
+        //
+        //         println!("{{");
+        //
+        //         let last_method = std::cmp::min(
+        //             method_len,
+        //             meta.tables
+        //                 .type_def
+        //                 .get(t_idx + 1)
+        //                 .and_then(|t| t.method_list.0)
+        //                 .unwrap_or(method_len),
+        //         ) - 1;
+        //
+        //         for method in &meta.tables.method_def[idx - 1..last_method] {
+        //             println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
+        //         }
+        //
+        //         println!("}}");
+        //     }
+        // }
         Ok(())
     }
 
@@ -271,5 +321,12 @@ mod tests {
         assert_eq!(sp4, 268435455);
         let Signed(sn4) = [0xC0, 0x00, 0x00, 0x01].pread(0).unwrap();
         assert_eq!(sn4, -268435456);
+    }
+
+    #[test]
+    fn def_ref_spec() {
+        let TypeDefOrRefOrSpec(t) = [0x49].pread(0).unwrap();
+        assert_eq!(t.table, Kind::TypeRef);
+        assert_eq!(t.index, 0x12);
     }
 }

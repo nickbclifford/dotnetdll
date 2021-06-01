@@ -1,4 +1,4 @@
-use super::{compressed, encoded};
+use super::{compressed, encoded::*};
 use scroll::{ctx::TryFromCtx, Endian, Pread};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -13,8 +13,8 @@ pub struct MethodDefSig {
     pub has_this: bool,
     pub explicit_this: bool,
     pub calling_convention: CallingConvention,
-    pub ret_type: encoded::RetType,
-    pub params: Vec<encoded::Param>,
+    pub ret_type: RetType,
+    pub params: Vec<Param>,
 }
 
 impl<'a> TryFromCtx<'a, Endian> for MethodDefSig {
@@ -47,7 +47,10 @@ impl<'a> TryFromCtx<'a, (Endian, bool)> for MethodDefSig {
         } else if tag & 0x0 == 0x0 {
             CallingConvention::Default
         } else {
-            return Err(scroll::Error::Custom("bad method def kind tag".to_string()));
+            return Err(scroll::Error::Custom(format!(
+                "bad method def kind tag {:#04x}",
+                tag
+            )));
         };
 
         let compressed::Unsigned(param_count) = from.gread_with(offset, ctx)?;
@@ -75,7 +78,7 @@ impl<'a> TryFromCtx<'a, (Endian, bool)> for MethodDefSig {
 #[derive(Debug)]
 pub struct MethodRefSig {
     pub method_def: MethodDefSig,
-    pub varargs: Vec<encoded::Param>,
+    pub varargs: Vec<Param>,
 }
 
 impl<'a> TryFromCtx<'a, Endian> for MethodRefSig {
@@ -89,10 +92,12 @@ impl<'a> TryFromCtx<'a, Endian> for MethodRefSig {
         let mut varargs = vec![];
         if method_def.calling_convention == CallingConvention::Vararg {
             let sentinel: u8 = from.gread_with(offset, ctx)?;
-            if sentinel != encoded::ELEMENT_TYPE_SENTINEL {
+            if sentinel == ELEMENT_TYPE_SENTINEL {
                 for _ in 0..method_def.params.len() {
                     varargs.push(from.gread_with(offset, ctx)?);
                 }
+            } else {
+                *offset -= 1;
             }
         }
 

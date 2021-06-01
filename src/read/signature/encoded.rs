@@ -142,7 +142,12 @@ impl<'a> TryFromCtx<'a, Endian> for CustomMod {
             match tag as u8 {
                 ELEMENT_TYPE_CMOD_OPT => CustomMod::Optional(token),
                 ELEMENT_TYPE_CMOD_REQD => CustomMod::Required(token),
-                _ => return Err(scroll::Error::Custom("bad modifier tag type".to_string())),
+                _ => {
+                    return Err(scroll::Error::Custom(format!(
+                        "bad modifier tag type {:#04x}",
+                        tag
+                    )))
+                }
             },
             *offset,
         ))
@@ -235,9 +240,10 @@ impl<'a> TryFromCtx<'a, Endian> for Type {
                     ELEMENT_TYPE_CLASS => GenericInstClass(token, types),
                     ELEMENT_TYPE_VALUETYPE => GenericInstValueType(token, types),
                     _ => {
-                        return Err(scroll::Error::Custom(
-                            "bad generic instantiation tag".to_string(),
-                        ))
+                        return Err(scroll::Error::Custom(format!(
+                            "bad generic instantiation tag {:#04x}",
+                            next_tag
+                        )))
                     }
                 }
             }
@@ -320,7 +326,7 @@ impl<'a> TryFromCtx<'a, Endian> for Param {
             ELEMENT_TYPE_BYREF => ParamType::ByRef(from.gread_with(offset, ctx)?),
             _ => {
                 *offset -= 1;
-                ParamType::ByRef(from.gread_with(offset, ctx)?)
+                ParamType::Type(from.gread_with(offset, ctx)?)
             }
         };
 
@@ -358,7 +364,7 @@ impl<'a> TryFromCtx<'a, Endian> for RetType {
             ELEMENT_TYPE_BYREF => RetTypeType::ByRef(from.gread_with(offset, ctx)?),
             _ => {
                 *offset -= 1;
-                RetTypeType::ByRef(from.gread_with(offset, ctx)?)
+                RetTypeType::Type(from.gread_with(offset, ctx)?)
             }
         };
 
