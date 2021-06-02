@@ -213,6 +213,11 @@ mod tests {
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
+        println!("property types");
+        for row in meta.tables.property.iter() {
+            println!("{:x?}", blobs.at_index(row.property_type)?);
+        }
+
         println!("method defs");
         for row in meta.tables.method_def.iter() {
             println!("{:x?}", blobs.at_index(row.signature)?);

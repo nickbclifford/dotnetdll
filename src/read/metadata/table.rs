@@ -123,14 +123,14 @@ tables! {
         parent: index::Simple<TypeDef>,
     },
     Constant = 0x0B {
-        r#type: u8,
+        constant_type: u8,
         padding: u8,
         parent: index::HasConstant,
         value: index::Blob,
     },
     CustomAttribute = 0x0C {
         parent: index::HasCustomAttribute,
-        r#type: index::CustomAttributeType,
+        attr_type: index::CustomAttributeType,
         value: index::Blob,
     },
     DeclSecurity = 0x0E {
@@ -251,7 +251,7 @@ tables! {
     Property = 0x17 {
         flags: u16,
         name: index::String,
-        r#type: index::Blob,
+        property_type: index::Blob,
     },
     PropertyMap = 0x15 {
         parent: index::Simple<TypeDef>,

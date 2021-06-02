@@ -45,8 +45,6 @@ heap_struct!(Blob, {
 
         let compressed::Unsigned(size) = self.bytes.gread_with(&mut offset, scroll::LE)?;
 
-        println!("indexing with size {}", size);
-
         let bytes = self.bytes.pread_with(offset, size as usize)?;
 
         Ok(bytes)
