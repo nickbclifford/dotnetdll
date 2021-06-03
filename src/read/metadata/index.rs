@@ -86,7 +86,7 @@ heap_index!(GUID, 1);
 heap_index!(Blob, 2);
 
 #[derive(Debug, Copy, Clone)]
-pub struct Simple<T: HasKind>(pub Option<usize>, std::marker::PhantomData<T>);
+pub struct Simple<T: HasKind>(pub usize, std::marker::PhantomData<T>);
 impl<'a, T: 'a + HasKind> TryFromCtx<'a, Context<'a>> for Simple<T> {
     type Error = scroll::Error;
 
@@ -96,13 +96,10 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Context<'a>> for Simple<T> {
     ) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let idx = match sizes.tables.get(&T::get_kind()) {
-            Some(size) => Some(if *size < (1 << 16) {
-                from.gread_with::<u16>(offset, end)? as usize
-            } else {
-                from.gread_with::<u32>(offset, end)? as usize
-            }),
-            None => None,
+        let idx = if sizes.tables[&T::get_kind()] < (1 << 16) {
+            from.gread_with::<u16>(offset, end)? as usize
+        } else {
+            from.gread_with::<u32>(offset, end)? as usize
         };
 
         Ok((Simple(idx, PhantomData), *offset))
@@ -119,7 +116,7 @@ macro_rules! count_items {
 macro_rules! coded_index {
     ($name:ident, {$($tag:ident),+}) => {
         #[derive(Debug, Copy, Clone)]
-        pub struct $name(pub Option<(usize, Kind)>);
+        pub struct $name(pub usize, pub Kind);
 
         paste! {
             #[allow(non_upper_case_globals)]
@@ -148,13 +145,7 @@ macro_rules! coded_index {
                     let index = (coded >> log) as usize;
 
                     Ok((
-                        $name(
-                            if tag < [<$name NUM_TABLES>] {
-                                Some((index, [<$name TAGS>][tag]))
-                            } else {
-                                None
-                            }
-                        ),
+                        $name(index, [<$name TAGS>][tag]),
                         *offset
                     ))
                 }
