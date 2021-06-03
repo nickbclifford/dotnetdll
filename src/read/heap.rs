@@ -55,6 +55,6 @@ heap_struct!(GUID, {
     type Value = u128;
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value, Error> {
-        Ok(self.bytes.pread_with(idx, Endian::Little)?)
+        self.bytes.pread_with((idx - 1) * 16, Endian::Little)
     }
 });

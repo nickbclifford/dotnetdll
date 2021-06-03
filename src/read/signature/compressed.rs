@@ -30,12 +30,11 @@ impl<'a> TryFromCtx<'a, Endian> for Unsigned {
     }
 }
 
+#[derive(Debug)]
 pub struct Signed(pub i32);
 
 fn from_twos_complement(bits: usize, source: u32) -> i32 {
     let slice = source.view_bits::<Lsb0>();
-
-    println!("{:#x}", source);
 
     (-(1 << (bits - 1)) * slice[bits - 1] as i32)
         + slice[..=bits - 2]

@@ -39,7 +39,7 @@ mod tests {
             Kind::TypeRef => tables.type_ref[index - 1].type_name(strs),
             Kind::TypeSpec => format!(
                 "TYPESPEC {}",
-                tables.type_spec[index + 1].to_string(strs, blobs, tables)
+                tables.type_spec[index - 1].to_string(strs, blobs, tables)
             ),
             _ => unreachable!(),
         }
@@ -207,102 +207,87 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
-        println!("property types");
-        for row in meta.tables.property.iter() {
-            println!("{:x?}", blobs.at_index(row.property_type)?);
+        let method_len = meta.tables.method_def.len();
+
+        for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
+            let name = row.type_name(&strs);
+            if name.starts_with(".") {
+                continue;
+            }
+            if let Some(idx) = row.method_list.0 {
+                let gen_name = Regex::new(r"`(\d+)")
+                    .unwrap()
+                    .replace(&name, |c: &Captures| {
+                        let mut buf = String::new();
+                        let num_gen: usize = c[1].parse().unwrap();
+                        buf.push('<');
+                        buf.push_str(
+                            &(0..num_gen)
+                                .into_iter()
+                                .map(|i| format!("T{}", i))
+                                .collect::<Vec<String>>()
+                                .join(", "),
+                        );
+                        buf.push('>');
+                        buf
+                    });
+
+                match row.flags & 0x7 {
+                    0 => print!("internal "),
+                    1 => print!("public "),
+                    _ => {}
+                }
+
+                if row.flags & 0x80 == 0x80 {
+                    print!("abstract ");
+                }
+
+                if row.flags & 0x100 == 0x100 {
+                    print!("sealed ");
+                }
+
+                match row.flags & 0x20 {
+                    0x00 => print!("class "),
+                    0x20 => print!("interface "),
+                    _ => {}
+                }
+
+                print!("{} ", gen_name);
+
+                match row.extends.0 {
+                    Some((index, kind)) if index != 0 => {
+                        print!(
+                            ": {} ",
+                            get_type_name(kind, index, &strs, &blobs, &meta.tables)
+                        )
+                    }
+                    _ => {}
+                }
+
+                println!("{{");
+
+                let last_method = std::cmp::min(
+                    method_len,
+                    meta.tables
+                        .type_def
+                        .get(t_idx + 1)
+                        .and_then(|t| t.method_list.0)
+                        .unwrap_or(method_len),
+                ) - 1;
+
+                for method in &meta.tables.method_def[idx - 1..last_method] {
+                    println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
+                }
+
+                println!("}}");
+            }
         }
-
-        println!("method defs");
-        for row in meta.tables.method_def.iter() {
-            println!("{:x?}", blobs.at_index(row.signature)?);
-        }
-
-        println!("\ntype specs");
-        for row in meta.tables.type_spec.iter() {
-            println!("{:x?}", blobs.at_index(row.signature)?);
-        }
-
-        // let method_len = meta.tables.method_def.len();
-
-        // for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
-        //     let name = row.type_name(&strs);
-        //     if name.starts_with(".") {
-        //         continue;
-        //     }
-        //     if let Some(idx) = row.method_list.0 {
-        //         let gen_name = Regex::new(r"`(\d+)")
-        //             .unwrap()
-        //             .replace(&name, |c: &Captures| {
-        //                 let mut buf = String::new();
-        //                 let num_gen: usize = c[1].parse().unwrap();
-        //                 buf.push('<');
-        //                 buf.push_str(
-        //                     &(0..num_gen)
-        //                         .into_iter()
-        //                         .map(|i| format!("T{}", i))
-        //                         .collect::<Vec<String>>()
-        //                         .join(", "),
-        //                 );
-        //                 buf.push('>');
-        //                 buf
-        //             });
-        //
-        //         match row.flags & 0x7 {
-        //             0 => print!("internal "),
-        //             1 => print!("public "),
-        //             _ => {}
-        //         }
-        //
-        //         if row.flags & 0x80 == 0x80 {
-        //             print!("abstract ");
-        //         }
-        //
-        //         if row.flags & 0x100 == 0x100 {
-        //             print!("sealed ");
-        //         }
-        //
-        //         match row.flags & 0x20 {
-        //             0x00 => print!("class "),
-        //             0x20 => print!("interface "),
-        //             _ => {}
-        //         }
-        //
-        //         print!("{} ", gen_name);
-        //
-        //         match row.extends.0 {
-        //             Some((index, kind)) if index != 0 => {
-        //                 print!(
-        //                     ": {} ",
-        //                     get_type_name(kind, index, &strs, &blobs, &meta.tables)
-        //                 )
-        //             }
-        //             _ => {}
-        //         }
-        //
-        //         println!("{{");
-        //
-        //         let last_method = std::cmp::min(
-        //             method_len,
-        //             meta.tables
-        //                 .type_def
-        //                 .get(t_idx + 1)
-        //                 .and_then(|t| t.method_list.0)
-        //                 .unwrap_or(method_len),
-        //         ) - 1;
-        //
-        //         for method in &meta.tables.method_def[idx - 1..last_method] {
-        //             println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
-        //         }
-        //
-        //         println!("}}");
-        //     }
-        // }
         Ok(())
     }
 

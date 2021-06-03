@@ -39,18 +39,19 @@ impl<'a> TryFromCtx<'a, (Endian, bool)> for MethodDefSig {
         let has_this = tag & 0x20 == 0x20;
         let explicit_this = tag & 0x40 == 0x40;
 
-        let kind = if tag & 0x10 == 0x10 {
-            let compressed::Unsigned(value) = from.gread_with(offset, ctx)?;
-            CallingConvention::Generic(value as usize)
-        } else if tag & 0x5 == 0x5 {
-            CallingConvention::Vararg
-        } else if tag & 0x0 == 0x0 {
-            CallingConvention::Default
-        } else {
-            return Err(scroll::Error::Custom(format!(
-                "bad method def kind tag {:#04x}",
-                tag
-            )));
+        let kind = match tag & 0x1f {
+            0x10 => {
+                let compressed::Unsigned(value) = from.gread_with(offset, ctx)?;
+                CallingConvention::Generic(value as usize)
+            }
+            0x5 => CallingConvention::Vararg,
+            0x0 => CallingConvention::Default,
+            _ => {
+                return Err(scroll::Error::Custom(format!(
+                    "bad method def kind tag {:#04x}",
+                    tag
+                )))
+            }
         };
 
         let compressed::Unsigned(param_count) = from.gread_with(offset, ctx)?;
@@ -330,7 +331,7 @@ impl<'a> TryFromCtx<'a, Endian> for LocalVarSig {
                     custom_modifier: opt_mod,
                     pinned,
                     by_ref,
-                    var_type: from.gread_with(offset, ctx)?
+                    var_type: from.gread_with(offset, ctx)?,
                 }
             });
         }

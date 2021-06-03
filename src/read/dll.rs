@@ -95,7 +95,8 @@ impl<'a> DLL<'a> {
             .iter()
             .find(|h| h.name == name)
             .ok_or(Other("unable to find stream"))?;
-        self.raw_rva(self.cli.metadata.rva + header.offset)
+        let data = self.raw_rva(self.cli.metadata.rva + header.offset)?;
+        Ok(&data[..header.size as usize])
     }
 
     pub fn get_heap<T: Heap<'a>>(&self, name: &'static str) -> Result<T> {

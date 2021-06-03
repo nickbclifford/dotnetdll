@@ -119,7 +119,7 @@ tables! {
     },
     ClassLayout = 0x0F {
         packing_size: u16,
-        class_size: u16,
+        class_size: u32,
         parent: index::Simple<TypeDef>,
     },
     Constant = 0x0B {
