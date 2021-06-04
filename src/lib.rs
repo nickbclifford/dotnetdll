@@ -45,7 +45,12 @@ mod tests {
 
     impl TypeDefOrRefOrSpec {
         fn to_string(&self, strs: &heap::Strings, blobs: &heap::Blob, tables: &Tables) -> String {
-            let metadata::index::Token { table, index } = self.0;
+            use metadata::index::*;
+            let Token { target, index } = self.0;
+            let table = match target {
+                TokenTarget::Table(t) => t,
+                _ => unreachable!()
+            };
             get_type_name(table, index, strs, blobs, tables)
         }
     }
@@ -489,7 +494,7 @@ mod tests {
     #[test]
     fn def_ref_spec() {
         let TypeDefOrRefOrSpec(t) = [0x49].pread(0).unwrap();
-        assert_eq!(t.table, Kind::TypeRef);
+        assert_eq!(t.target, metadata::index::TokenTarget::Table(Kind::TypeRef));
         assert_eq!(t.index, 0x12);
     }
 }

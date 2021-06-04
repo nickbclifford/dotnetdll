@@ -66,7 +66,7 @@ impl<'a> TryFromCtx<'a, ()> for TypeDefOrRefOrSpec {
 
         Ok((
             TypeDefOrRefOrSpec(index::Token {
-                table: match value & 0b11 {
+                target: index::TokenTarget::Table(match value & 0b11 {
                     0 => table::Kind::TypeDef,
                     1 => table::Kind::TypeRef,
                     2 => table::Kind::TypeSpec,
@@ -75,7 +75,7 @@ impl<'a> TryFromCtx<'a, ()> for TypeDefOrRefOrSpec {
                             "bad token table specifier".to_string(),
                         ))
                     }
-                },
+                }),
                 index: (value >> 2) as usize,
             }),
             *offset,

@@ -28,6 +28,14 @@ macro_rules! heap_struct {
     };
 }
 
+fn read_bytes(bytes: &[u8], idx: usize) -> Result<&[u8], Error> {
+    let mut offset = idx;
+
+    let compressed::Unsigned(size) = bytes.gread(&mut offset)?;
+
+    bytes.pread_with(offset, size as usize)
+}
+
 heap_struct!(Strings, {
     type Index = index::String;
     type Value = &'a str;
@@ -41,13 +49,7 @@ heap_struct!(Blob, {
     type Value = &'a [u8];
 
     fn at_index(&self, index::Blob(idx): Self::Index) -> Result<Self::Value, Error> {
-        let mut offset = idx;
-
-        let compressed::Unsigned(size) = self.bytes.gread(&mut offset)?;
-
-        let bytes = self.bytes.pread_with(offset, size as usize)?;
-
-        Ok(bytes)
+        read_bytes(self.bytes, idx)
     }
 });
 heap_struct!(GUID, {
@@ -56,5 +58,22 @@ heap_struct!(GUID, {
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value, Error> {
         self.bytes.pread_with((idx - 1) * 16, scroll::LE)
+    }
+});
+heap_struct!(UserString, {
+    type Index = usize;
+    type Value = String;
+
+    fn at_index(&self, idx: Self::Index) -> Result<Self::Value, Error> {
+        let bytes = read_bytes(self.bytes, idx)?;
+
+        let num_utf16 = (bytes.len() - 1) / 2;
+        let offset = &mut 0;
+        let mut chars = vec![];
+        for _ in 0..num_utf16 {
+            chars.push(bytes.gread_with::<u16>(offset, scroll::LE)?);
+        }
+
+        String::from_utf16(&chars).map_err(|e| scroll::Error::Custom(e.to_string()))
     }
 });

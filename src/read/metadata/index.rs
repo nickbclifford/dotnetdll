@@ -7,9 +7,15 @@ use std::{collections::HashMap, marker::PhantomData};
 // paste! macro
 use paste::paste;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TokenTarget {
+    Table(Kind),
+    UserString
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Token {
-    pub table: Kind,
+    pub target: TokenTarget,
     pub index: usize,
 }
 
@@ -20,10 +26,15 @@ impl<'a> TryFromCtx<'a, ()> for Token {
         let offset = &mut 0;
         let num: u32 = from.gread_with(offset, scroll::LE)?;
 
-        let table = Kind::from_u32(num >> 24).unwrap();
+        let tag = (num >> 24) as u8;
+
         let index = (num & 0xFFFFFF) as usize;
 
-        Ok((Token { table, index }, *offset))
+        Ok((Token { target: if tag == 0x70 {
+            TokenTarget::UserString
+        } else {
+            TokenTarget::Table(Kind::from_u8(tag).unwrap())
+        }, index }, *offset))
     }
 }
 
