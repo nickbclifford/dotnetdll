@@ -3,7 +3,7 @@ use super::{
     compressed, kinds,
 };
 use paste::paste;
-use scroll::{ctx::TryFromCtx, Endian, Pread};
+use scroll::{ctx::TryFromCtx, Pread};
 
 macro_rules! element_types {
     ($($name:ident = $val:literal,)+) => {
@@ -56,13 +56,13 @@ element_types! {
 #[derive(Debug)]
 pub struct TypeDefOrRefOrSpec(pub index::Token);
 
-impl<'a> TryFromCtx<'a, Endian> for TypeDefOrRefOrSpec {
+impl<'a> TryFromCtx<'a, ()> for TypeDefOrRefOrSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let compressed::Unsigned(value) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(value) = from.gread(offset)?;
 
         Ok((
             TypeDefOrRefOrSpec(index::Token {
@@ -90,25 +90,25 @@ pub struct ArrayShape {
     pub lower_bounds: Vec<isize>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for ArrayShape {
+impl<'a> TryFromCtx<'a, ()> for ArrayShape {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let compressed::Unsigned(rank) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(rank) = from.gread(offset)?;
 
-        let compressed::Unsigned(num_sizes) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(num_sizes) = from.gread(offset)?;
         let mut sizes = vec![];
         for _ in 0..num_sizes {
-            let compressed::Unsigned(size) = from.gread_with(offset, ctx)?;
+            let compressed::Unsigned(size) = from.gread(offset)?;
             sizes.push(size as usize);
         }
 
-        let compressed::Unsigned(num_bounds) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(num_bounds) = from.gread(offset)?;
         let mut lower_bounds = vec![];
         for _ in 0..num_bounds {
-            let compressed::Signed(bound) = from.gread_with(offset, ctx)?;
+            let compressed::Signed(bound) = from.gread(offset)?;
             lower_bounds.push(bound as isize);
         }
 
@@ -129,14 +129,14 @@ pub enum CustomMod {
     Optional(TypeDefOrRefOrSpec),
 }
 
-impl<'a> TryFromCtx<'a, Endian> for CustomMod {
+impl<'a> TryFromCtx<'a, ()> for CustomMod {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let compressed::Unsigned(tag) = from.gread_with(offset, ctx)?;
-        let token = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(tag) = from.gread(offset)?;
+        let token = from.gread(offset)?;
 
         Ok((
             match tag as u8 {
@@ -185,13 +185,13 @@ pub enum Type {
     Var(u32),
 }
 
-impl<'a> TryFromCtx<'a, Endian> for Type {
+impl<'a> TryFromCtx<'a, ()> for Type {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
 
         use Type::*;
 
@@ -211,29 +211,29 @@ impl<'a> TryFromCtx<'a, Endian> for Type {
             ELEMENT_TYPE_I => IntPtr,
             ELEMENT_TYPE_U => UIntPtr,
             ELEMENT_TYPE_ARRAY => {
-                let type_data = from.gread_with(offset, ctx)?;
-                let shape = from.gread_with(offset, ctx)?;
+                let type_data = from.gread(offset)?;
+                let shape = from.gread(offset)?;
                 Array(Box::new(type_data), shape)
             }
-            ELEMENT_TYPE_CLASS => Class(from.gread_with(offset, ctx)?),
+            ELEMENT_TYPE_CLASS => Class(from.gread(offset)?),
             ELEMENT_TYPE_FNPTR => {
                 let prev_offset = *offset;
-                match from.gread_with::<kinds::MethodDefSig>(offset, ctx) {
+                match from.gread_with::<kinds::MethodDefSig>(offset, ()) {
                     Ok(m) => FnPtrDef(Box::new(m)),
                     Err(_) => {
                         *offset = prev_offset;
-                        FnPtrRef(Box::new(from.gread_with(offset, ctx)?))
+                        FnPtrRef(Box::new(from.gread(offset)?))
                     }
                 }
             }
             ELEMENT_TYPE_GENERICINST => {
-                let next_tag: u8 = from.gread_with(offset, ctx)?;
-                let token = from.gread_with(offset, ctx)?;
+                let next_tag: u8 = from.gread_with(offset, scroll::LE)?;
+                let token = from.gread(offset)?;
 
-                let compressed::Unsigned(arg_count) = from.gread_with(offset, ctx)?;
+                let compressed::Unsigned(arg_count) = from.gread(offset)?;
                 let mut types = vec![];
                 for _ in 0..arg_count {
-                    types.push(from.gread_with(offset, ctx)?);
+                    types.push(from.gread(offset)?);
                 }
 
                 match next_tag {
@@ -248,23 +248,23 @@ impl<'a> TryFromCtx<'a, Endian> for Type {
                 }
             }
             ELEMENT_TYPE_MVAR => {
-                let compressed::Unsigned(number) = from.gread_with(offset, ctx)?;
+                let compressed::Unsigned(number) = from.gread(offset)?;
                 MVar(number)
             }
             ELEMENT_TYPE_OBJECT => Object,
             ELEMENT_TYPE_PTR => {
                 let prev_offset = *offset;
-                let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+                let opt_mod = from.gread(offset).ok();
                 if opt_mod.is_none() {
                     *offset = prev_offset;
                 }
 
-                let next_tag: u8 = from.gread_with(offset, ctx)?;
+                let next_tag: u8 = from.gread_with(offset, scroll::LE)?;
                 let type_data = if next_tag == ELEMENT_TYPE_VOID {
                     None
                 } else {
                     *offset -= 1;
-                    Some(from.gread_with(offset, ctx)?)
+                    Some(from.gread(offset)?)
                 };
 
                 Ptr(opt_mod, Box::new(type_data))
@@ -272,17 +272,17 @@ impl<'a> TryFromCtx<'a, Endian> for Type {
             ELEMENT_TYPE_STRING => String,
             ELEMENT_TYPE_SZARRAY => {
                 let prev_offset = *offset;
-                let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+                let opt_mod = from.gread(offset).ok();
                 if opt_mod.is_none() {
                     *offset = prev_offset;
                 }
 
-                let type_data = from.gread_with(offset, ctx)?;
+                let type_data = from.gread(offset)?;
                 SzArray(opt_mod, Box::new(type_data))
             }
-            ELEMENT_TYPE_VALUETYPE => ValueType(from.gread_with(offset, ctx)?),
+            ELEMENT_TYPE_VALUETYPE => ValueType(from.gread(offset)?),
             ELEMENT_TYPE_VAR => {
-                let compressed::Unsigned(number) = from.gread_with(offset, ctx)?;
+                let compressed::Unsigned(number) = from.gread(offset)?;
                 Var(number)
             }
             _ => {
@@ -308,25 +308,25 @@ pub enum ParamType {
 #[derive(Debug)]
 pub struct Param(pub Option<CustomMod>, pub ParamType);
 
-impl<'a> TryFromCtx<'a, Endian> for Param {
+impl<'a> TryFromCtx<'a, ()> for Param {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let prev_offset = *offset;
-        let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+        let opt_mod = from.gread(offset).ok();
         if opt_mod.is_none() {
             *offset = prev_offset;
         }
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
             ELEMENT_TYPE_TYPEDBYREF => ParamType::TypedByRef,
-            ELEMENT_TYPE_BYREF => ParamType::ByRef(from.gread_with(offset, ctx)?),
+            ELEMENT_TYPE_BYREF => ParamType::ByRef(from.gread(offset)?),
             _ => {
                 *offset -= 1;
-                ParamType::Type(from.gread_with(offset, ctx)?)
+                ParamType::Type(from.gread(offset)?)
             }
         };
 
@@ -345,29 +345,48 @@ pub enum RetTypeType {
 #[derive(Debug)]
 pub struct RetType(pub Option<CustomMod>, pub RetTypeType);
 
-impl<'a> TryFromCtx<'a, Endian> for RetType {
+impl<'a> TryFromCtx<'a, ()> for RetType {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let prev_offset = *offset;
-        let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+        let opt_mod = from.gread(offset).ok();
         if opt_mod.is_none() {
             *offset = prev_offset;
         }
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
             ELEMENT_TYPE_VOID => RetTypeType::Void,
             ELEMENT_TYPE_TYPEDBYREF => RetTypeType::TypedByRef,
-            ELEMENT_TYPE_BYREF => RetTypeType::ByRef(from.gread_with(offset, ctx)?),
+            ELEMENT_TYPE_BYREF => RetTypeType::ByRef(from.gread(offset)?),
             _ => {
                 *offset -= 1;
-                RetTypeType::Type(from.gread_with(offset, ctx)?)
+                RetTypeType::Type(from.gread(offset)?)
             }
         };
 
         Ok((RetType(opt_mod, val), *offset))
     }
 }
+
+struct SerString<'a>(&'a str);
+impl<'a> TryFromCtx<'a, ()> for SerString<'a> {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+        let len: u8 = from.gread_with(offset, scroll::LE)?;
+        let val = if len == 0x00 || len == 0xFF {
+            ""
+        } else {
+            from.gread_with(offset, scroll::ctx::StrCtx::Length(len as usize))?
+        };
+
+        Ok((SerString(val), *offset))
+    }
+}
+
+// TODO: custom attributes, decode contexts

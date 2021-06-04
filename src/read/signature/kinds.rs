@@ -1,5 +1,5 @@
 use super::{compressed, encoded::*};
-use scroll::{ctx::TryFromCtx, Endian, Pread};
+use scroll::{ctx::TryFromCtx, Pread};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CallingConvention {
@@ -17,31 +17,28 @@ pub struct MethodDefSig {
     pub params: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for MethodDefSig {
+impl<'a> TryFromCtx<'a, ()> for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
-        TryFromCtx::try_from_ctx(from, (ctx, false))
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        TryFromCtx::try_from_ctx(from, false)
     }
 }
 
-impl<'a> TryFromCtx<'a, (Endian, bool)> for MethodDefSig {
+impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(
-        from: &'a [u8],
-        (ctx, is_ref): (Endian, bool),
-    ) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], is_ref: bool) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
 
         let has_this = tag & 0x20 == 0x20;
         let explicit_this = tag & 0x40 == 0x40;
 
         let kind = match tag & 0x1f {
             0x10 => {
-                let compressed::Unsigned(value) = from.gread_with(offset, ctx)?;
+                let compressed::Unsigned(value) = from.gread(offset)?;
                 CallingConvention::Generic(value as usize)
             }
             0x5 => CallingConvention::Vararg,
@@ -54,13 +51,13 @@ impl<'a> TryFromCtx<'a, (Endian, bool)> for MethodDefSig {
             }
         };
 
-        let compressed::Unsigned(param_count) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(param_count) = from.gread(offset)?;
 
-        let ret_type = from.gread_with(offset, ctx)?;
+        let ret_type = from.gread(offset)?;
 
         let mut params = vec![];
         for _ in 0..(if is_ref { param_count / 2 } else { param_count }) {
-            params.push(from.gread_with(offset, ctx)?);
+            params.push(from.gread(offset)?);
         }
 
         Ok((
@@ -82,20 +79,20 @@ pub struct MethodRefSig {
     pub varargs: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for MethodRefSig {
+impl<'a> TryFromCtx<'a, ()> for MethodRefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let method_def: MethodDefSig = from.gread_with(offset, (ctx, true))?;
+        let method_def = from.gread_with::<MethodDefSig>(offset, true)?;
 
         let mut varargs = vec![];
         if method_def.calling_convention == CallingConvention::Vararg {
-            let sentinel: u8 = from.gread_with(offset, ctx)?;
+            let sentinel: u8 = from.gread_with(offset, scroll::LE)?;
             if sentinel == ELEMENT_TYPE_SENTINEL {
                 for _ in 0..method_def.params.len() {
-                    varargs.push(from.gread_with(offset, ctx)?);
+                    varargs.push(from.gread(offset)?);
                 }
             } else {
                 *offset -= 1;
@@ -132,13 +129,13 @@ pub struct StandAloneMethodSig {
     pub varargs: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for StandAloneMethodSig {
+impl<'a> TryFromCtx<'a, ()> for StandAloneMethodSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
 
         let has_this = tag & 0x20 == 0x20;
         let explicit_this = tag & 0x40 == 0x40;
@@ -160,26 +157,26 @@ impl<'a> TryFromCtx<'a, Endian> for StandAloneMethodSig {
             }
         };
 
-        let compressed::Unsigned(param_count) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(param_count) = from.gread(offset)?;
         let count = if calling_convention == Vararg {
             param_count / 2
         } else {
             param_count
         };
 
-        let ret_type = from.gread_with(offset, ctx)?;
+        let ret_type = from.gread(offset)?;
 
         let mut params = vec![];
         for _ in 0..count {
-            params.push(from.gread_with(offset, ctx)?);
+            params.push(from.gread(offset)?);
         }
 
         let mut varargs = vec![];
         if calling_convention == Vararg || calling_convention == C {
-            let sentinel: u8 = from.gread_with(offset, ctx)?;
+            let sentinel: u8 = from.gread_with(offset, scroll::LE)?;
             if sentinel == ELEMENT_TYPE_SENTINEL {
                 for _ in 0..count {
-                    varargs.push(from.gread_with(offset, ctx)?);
+                    varargs.push(from.gread(offset)?);
                 }
             } else {
                 *offset -= 1;
@@ -203,24 +200,24 @@ impl<'a> TryFromCtx<'a, Endian> for StandAloneMethodSig {
 #[derive(Debug)]
 pub struct FieldSig(pub Option<CustomMod>, pub Type);
 
-impl<'a> TryFromCtx<'a, Endian> for FieldSig {
+impl<'a> TryFromCtx<'a, ()> for FieldSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x6 {
             return Err(scroll::Error::Custom(format!("bad field tag {:#04x}", tag)));
         }
 
         let prev_offset = *offset;
-        let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+        let opt_mod = from.gread(offset).ok();
         if opt_mod.is_none() {
             *offset = prev_offset;
         }
 
-        Ok((FieldSig(opt_mod, from.gread_with(offset, ctx)?), *offset))
+        Ok((FieldSig(opt_mod, from.gread(offset)?), *offset))
     }
 }
 
@@ -232,13 +229,13 @@ pub struct PropertySig {
     pub params: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for PropertySig {
+impl<'a> TryFromCtx<'a, ()> for PropertySig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag & 0x8 != 0x8 {
             return Err(scroll::Error::Custom(format!(
                 "bad property signature tag {:#04x}",
@@ -248,19 +245,19 @@ impl<'a> TryFromCtx<'a, Endian> for PropertySig {
 
         let has_this = tag & 0x20 == 0x20;
 
-        let compressed::Unsigned(param_count) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(param_count) = from.gread(offset)?;
 
         let prev_offset = *offset;
-        let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+        let opt_mod = from.gread(offset).ok();
         if opt_mod.is_none() {
             *offset = prev_offset;
         }
 
-        let ret_type = from.gread_with(offset, ctx)?;
+        let ret_type = from.gread(offset)?;
 
         let mut params = vec![];
         for _ in 0..param_count {
-            params.push(from.gread_with(offset, ctx)?);
+            params.push(from.gread(offset)?);
         }
 
         Ok((
@@ -289,13 +286,13 @@ pub enum LocalVar {
 #[derive(Debug)]
 pub struct LocalVarSig(pub Vec<LocalVar>);
 
-impl<'a> TryFromCtx<'a, Endian> for LocalVarSig {
+impl<'a> TryFromCtx<'a, ()> for LocalVarSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let tag: u8 = from.gread_with(offset, ctx)?;
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x7 {
             return Err(scroll::Error::Custom(format!(
                 "bad local var signature tag {:#04x}",
@@ -303,26 +300,26 @@ impl<'a> TryFromCtx<'a, Endian> for LocalVarSig {
             )));
         }
 
-        let compressed::Unsigned(var_count) = from.gread_with(offset, ctx)?;
+        let compressed::Unsigned(var_count) = from.gread(offset)?;
 
         let mut vars = vec![];
         for _ in 0..var_count {
-            let var_tag: u8 = from.gread_with(offset, ctx)?;
+            let var_tag: u8 = from.gread_with(offset, scroll::LE)?;
             vars.push(if var_tag == ELEMENT_TYPE_TYPEDBYREF {
                 LocalVar::TypedByRef
             } else {
                 let prev_offset = *offset;
-                let opt_mod = from.gread_with::<CustomMod>(offset, ctx).ok();
+                let opt_mod = from.gread(offset).ok();
                 if opt_mod.is_none() {
                     *offset = prev_offset;
                 }
 
-                let pinned = from.gread_with::<u8>(offset, ctx)? == ELEMENT_TYPE_PINNED;
+                let pinned = from.gread_with::<u8>(offset, scroll::LE)? == ELEMENT_TYPE_PINNED;
                 if !pinned {
                     *offset -= 1;
                 }
 
-                let by_ref = from.gread_with::<u8>(offset, ctx)? == ELEMENT_TYPE_BYREF;
+                let by_ref = from.gread_with::<u8>(offset, scroll::LE)? == ELEMENT_TYPE_BYREF;
                 if !by_ref {
                     *offset -= 1;
                 }
@@ -331,11 +328,36 @@ impl<'a> TryFromCtx<'a, Endian> for LocalVarSig {
                     custom_modifier: opt_mod,
                     pinned,
                     by_ref,
-                    var_type: from.gread_with(offset, ctx)?,
+                    var_type: from.gread(offset)?,
                 }
             });
         }
 
         Ok((LocalVarSig(vars), *offset))
+    }
+}
+
+#[derive(Debug)]
+pub struct MethodSpec(pub Vec<Type>);
+
+impl<'a> TryFromCtx<'a, ()> for MethodSpec {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
+        if tag != 0x0a {
+            return Err(scroll::Error::Custom("bad method spec tag".to_string()));
+        }
+
+        let compressed::Unsigned(type_count) = from.gread(offset)?;
+
+        let mut types = vec![];
+        for _ in 0..type_count {
+            types.push(from.gread(offset)?);
+        }
+
+        Ok((MethodSpec(types), *offset))
     }
 }

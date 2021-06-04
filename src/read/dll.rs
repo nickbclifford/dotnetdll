@@ -69,7 +69,7 @@ impl<'a> DLL<'a> {
         let cli_b = dirs[14].data(bytes, &sections).map_err(PE)?;
         Ok(DLL {
             buffer: bytes,
-            cli: cli_b.pread_with(0, scroll::Endian::Little).map_err(CLI)?,
+            cli: cli_b.pread_with(0, scroll::LE).map_err(CLI)?,
             sections,
         })
     }
@@ -104,20 +104,14 @@ impl<'a> DLL<'a> {
     }
 
     pub fn get_cli_metadata(&self) -> Result<Metadata> {
-        self.at_rva(&self.cli.metadata)?
-            .pread_with(0, scroll::Endian::Little)
-            .map_err(CLI)
+        self.at_rva(&self.cli.metadata)?.pread(0).map_err(CLI)
     }
 
     pub fn get_logical_metadata(&self) -> Result<metadata::header::Header> {
-        self.get_stream("#~")?
-            .pread_with(0, scroll::Endian::Little)
-            .map_err(CLI)
+        self.get_stream("#~")?.pread(0).map_err(CLI)
     }
 
     pub fn get_method(&self, def: &metadata::table::MethodDef) -> Result<method::Method> {
-        self.raw_rva(def.rva)?
-            .pread_with(0, scroll::Endian::Little)
-            .map_err(CLI)
+        self.raw_rva(def.rva)?.pread(0).map_err(CLI)
     }
 }

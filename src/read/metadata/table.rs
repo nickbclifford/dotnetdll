@@ -27,10 +27,10 @@ macro_rules! tables {
                 }
             }
 
-            impl<'a> TryFromCtx<'a, index::Context<'a>> for $name {
+            impl<'a> TryFromCtx<'a, index::Sizes<'a>> for $name {
                 type Error = scroll::Error;
 
-                fn try_from_ctx(from: &[u8], ctx: index::Context<'a>) -> Result<(Self, usize), Self::Error> {
+                fn try_from_ctx(from: &[u8], ctx: index::Sizes<'a>) -> Result<(Self, usize), Self::Error> {
                     let offset = &mut 0;
 
                     Ok(($name {

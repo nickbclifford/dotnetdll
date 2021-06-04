@@ -1,7 +1,7 @@
 use super::stream;
 use scroll::{
     ctx::{StrCtx, TryFromCtx},
-    Endian, Pread,
+    Pread,
 };
 use scroll_derive::Pread;
 
@@ -40,24 +40,24 @@ pub struct Metadata<'a> {
     pub stream_headers: Vec<stream::Header<'a>>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for Metadata<'a> {
+impl<'a> TryFromCtx<'a, ()> for Metadata<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
-        let sig = from.gread_with(offset, ctx)?;
-        let maj = from.gread_with(offset, ctx)?;
-        let min = from.gread_with(offset, ctx)?;
-        let res = from.gread_with(offset, ctx)?;
-        let len: u32 = from.gread_with(offset, ctx)?;
+        let sig = from.gread_with(offset, scroll::LE)?;
+        let maj = from.gread_with(offset, scroll::LE)?;
+        let min = from.gread_with(offset, scroll::LE)?;
+        let res = from.gread_with(offset, scroll::LE)?;
+        let len: u32 = from.gread_with(offset, scroll::LE)?;
 
         let version: &str = from.gread_with(offset, StrCtx::Length(len as usize))?;
 
-        let flags = from.gread_with(offset, ctx)?;
-        let n_streams = from.gread_with(offset, ctx)?;
+        let flags = from.gread_with(offset, scroll::LE)?;
+        let n_streams = from.gread_with(offset, scroll::LE)?;
         let mut headers = vec![];
         for _ in 0..n_streams {
-            let header = from.gread_with(offset, ctx)?;
+            let header = from.gread(offset)?;
             headers.push(header);
         }
 

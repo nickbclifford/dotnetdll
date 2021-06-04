@@ -164,7 +164,7 @@ mod tests {
         ) -> String {
             let sig = blobs
                 .at_index(self.signature)
-                .and_then(|d| d.pread_with::<MethodDefSig>(0, scroll::LE))
+                .and_then(|d| d.pread_with::<MethodDefSig>(0, ()))
                 .unwrap();
 
             let mut buf = String::new();
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -333,7 +333,7 @@ mod tests {
         #[derive(Debug)]
         struct PropSemantics {
             get: Option<MethodDef>,
-            set: Option<MethodDef>
+            set: Option<MethodDef>,
         }
         let mut prop_semantics: HashMap<usize, PropSemantics> = HashMap::new();
         for s in meta.tables.method_semantics.iter() {
@@ -341,7 +341,7 @@ mod tests {
             if kind == Kind::Property {
                 let sem = prop_semantics.entry(idx - 1).or_insert(PropSemantics {
                     get: None,
-                    set: None
+                    set: None,
                 });
                 let method = meta.tables.method_def[s.method.0 - 1];
                 if s.semantics & 0x1 == 0x1 {

@@ -1,5 +1,5 @@
 use super::{metadata::index, signature::compressed};
-use scroll::{ctx::StrCtx, Endian, Error, Pread};
+use scroll::{ctx::StrCtx, Error, Pread};
 
 pub trait Heap<'a> {
     type Index;
@@ -43,7 +43,7 @@ heap_struct!(Blob, {
     fn at_index(&self, index::Blob(idx): Self::Index) -> Result<Self::Value, Error> {
         let mut offset = idx;
 
-        let compressed::Unsigned(size) = self.bytes.gread_with(&mut offset, scroll::LE)?;
+        let compressed::Unsigned(size) = self.bytes.gread(&mut offset)?;
 
         let bytes = self.bytes.pread_with(offset, size as usize)?;
 
@@ -55,6 +55,6 @@ heap_struct!(GUID, {
     type Value = u128;
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value, Error> {
-        self.bytes.pread_with((idx - 1) * 16, Endian::Little)
+        self.bytes.pread_with((idx - 1) * 16, scroll::LE)
     }
 });

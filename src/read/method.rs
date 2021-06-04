@@ -1,4 +1,4 @@
-use scroll::{ctx::TryFromCtx, Endian, Pread};
+use scroll::{ctx::TryFromCtx, Pread};
 use scroll_derive::Pread;
 
 #[derive(Debug)]
@@ -14,26 +14,26 @@ pub enum Header {
     },
 }
 
-impl<'a> TryFromCtx<'a, Endian> for Header {
+impl<'a> TryFromCtx<'a, ()> for Header {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let b1: u8 = from.gread_with(offset, ctx)?;
+        let b1: u8 = from.gread_with(offset, scroll::LE)?;
         Ok((
             if b1 & 0b11 == 2 {
                 Header::Tiny {
                     size: (b1 >> 2) as usize,
                 }
             } else {
-                let b2: u8 = from.gread_with(offset, ctx)?;
+                let b2: u8 = from.gread_with(offset, scroll::LE)?;
 
                 Header::Fat {
                     flags: ((b2 as u16 & 0b1111) << 8) | b1 as u16,
-                    max_stack: from.gread_with(offset, ctx)?,
-                    size: from.gread_with::<u32>(offset, ctx)? as usize,
-                    local_var_sig_tok: from.gread_with(offset, ctx)?,
+                    max_stack: from.gread_with(offset, scroll::LE)?,
+                    size: from.gread_with::<u32>(offset, scroll::LE)? as usize,
+                    local_var_sig_tok: from.gread_with(offset, scroll::LE)?,
                 }
             },
             *offset,
@@ -64,23 +64,23 @@ pub struct DataSection {
     more_sections: bool,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for DataSection {
+impl<'a> TryFromCtx<'a, ()> for DataSection {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let kind: u8 = from.gread_with(offset, ctx)?;
+        let kind: u8 = from.gread_with(offset, scroll::LE)?;
         let is_exception = kind & 1 == 1;
         let is_fat = kind & 0x40 == 0x40;
         let more_sections = kind & 0x80 == 0x80;
 
         let length = if is_fat {
             let mut bytes = [0u8; 3];
-            from.gread_inout_with(offset, &mut bytes, ctx)?;
+            from.gread_inout_with(offset, &mut bytes, scroll::LE)?;
             u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0])
         } else {
-            from.gread_with::<u8>(offset, ctx)? as u32
+            from.gread_with::<u8>(offset, scroll::LE)? as u32
         } as usize;
 
         let section = if is_exception {
@@ -89,16 +89,16 @@ impl<'a> TryFromCtx<'a, Endian> for DataSection {
 
             for _ in 0..n {
                 let e = if is_fat {
-                    from.gread_with(offset, ctx)?
+                    from.gread_with(offset, scroll::LE)?
                 } else {
                     Exception {
-                        flags: from.gread_with::<u16>(offset, ctx)? as u32,
-                        try_offset: from.gread_with::<u16>(offset, ctx)? as u32,
-                        try_length: from.gread_with::<u8>(offset, ctx)? as u32,
-                        handler_offset: from.gread_with::<u16>(offset, ctx)? as u32,
-                        handler_length: from.gread_with::<u8>(offset, ctx)? as u32,
-                        class_token: from.gread_with(offset, ctx)?,
-                        filter_offset: from.gread_with(offset, ctx)?,
+                        flags: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                        try_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                        try_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
+                        handler_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                        handler_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
+                        class_token: from.gread_with(offset, scroll::LE)?,
+                        filter_offset: from.gread_with(offset, scroll::LE)?,
                     }
                 };
 
@@ -128,12 +128,12 @@ pub struct Method<'a> {
     pub data_sections: Vec<DataSection>,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for Method<'a> {
+impl<'a> TryFromCtx<'a, ()> for Method<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
-        let header = from.gread_with(offset, ctx)?;
+        let header = from.gread(offset)?;
 
         let body_size = match header {
             Header::Tiny { size } => size,
@@ -154,7 +154,7 @@ impl<'a> TryFromCtx<'a, Endian> for Method<'a> {
             }
 
             while has_next {
-                let sec: DataSection = from.gread_with(offset, ctx)?;
+                let sec: DataSection = from.gread(offset)?;
                 has_next = sec.more_sections;
                 data_sections.push(sec);
             }

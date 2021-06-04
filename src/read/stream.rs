@@ -1,6 +1,6 @@
 use scroll::{
     ctx::{StrCtx, TryFromCtx},
-    Endian, Pread,
+    Pread,
 };
 
 #[derive(Debug)]
@@ -10,13 +10,13 @@ pub struct Header<'a> {
     pub name: &'a str,
 }
 
-impl<'a> TryFromCtx<'a, Endian> for Header<'a> {
+impl<'a> TryFromCtx<'a, ()> for Header<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
-        let stream_offset = from.gread_with(offset, ctx)?;
-        let stream_size = from.gread_with(offset, ctx)?;
+        let stream_offset = from.gread_with(offset, scroll::LE)?;
+        let stream_size = from.gread_with(offset, scroll::LE)?;
 
         let name = from.gread_with(offset, StrCtx::Delimiter(0))?;
 
