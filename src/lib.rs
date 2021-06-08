@@ -3,6 +3,7 @@ pub mod read;
 #[cfg(test)]
 mod tests {
     use crate::read::*;
+    use context::*;
     use heap::Heap;
     use metadata::table::*;
     use signature::{compressed::*, encoded::*, kinds::*};
@@ -11,140 +12,13 @@ mod tests {
     use scroll::Pread;
     use std::collections::{HashMap, HashSet};
 
-    macro_rules! name_impl {
-        ($t:ident) => {
-            impl $t {
-                fn type_name(&self, heap: &heap::Strings) -> String {
-                    format!(
-                        "{}.{}",
-                        heap.at_index(self.type_namespace).unwrap(),
-                        heap.at_index(self.type_name).unwrap()
-                    )
-                }
-            }
-        };
-    }
-
-    name_impl!(TypeDef);
-    name_impl!(TypeRef);
-
-    fn get_type_name(
-        kind: Kind,
-        index: usize,
-        strs: &heap::Strings,
-        blobs: &heap::Blob,
-        tables: &Tables,
-    ) -> String {
-        match kind {
-            Kind::TypeDef => tables.type_def[index - 1].type_name(strs),
-            Kind::TypeRef => tables.type_ref[index - 1].type_name(strs),
-            Kind::TypeSpec => tables.type_spec[index - 1].to_string(strs, blobs, tables),
-            _ => unreachable!(),
-        }
-    }
-
-    impl TypeDefOrRefOrSpec {
-        fn to_string(&self, strs: &heap::Strings, blobs: &heap::Blob, tables: &Tables) -> String {
-            use metadata::index::*;
-            let Token { target, index } = self.0;
-            let table = match target {
-                TokenTarget::Table(t) => t,
-                _ => unreachable!()
-            };
-            get_type_name(table, index, strs, blobs, tables)
-        }
-    }
-
-    impl Type {
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
-            use Type::*;
-
-            match self {
-                Boolean => "bool".to_string(),
-                Char => "char".to_string(),
-                Int8 => "sbyte".to_string(),
-                UInt8 => "byte".to_string(),
-                Int16 => "short".to_string(),
-                UInt16 => "ushort".to_string(),
-                Int32 => "int".to_string(),
-                UInt32 => "uint".to_string(),
-                Int64 => "long".to_string(),
-                UInt64 => "ulong".to_string(),
-                Float32 => "float".to_string(),
-                Float64 => "double".to_string(),
-                IntPtr => "nint".to_string(),
-                UIntPtr => "nuint".to_string(),
-                Array(t, shape) => {
-                    format!(
-                        "{}{}",
-                        t.to_string(strs, blobs, tables),
-                        "[]".repeat(shape.rank)
-                    )
-                }
-                Class(t) => t.to_string(strs, blobs, tables),
-                FnPtrDef(_) => "{function}".to_string(),
-                FnPtrRef(_) => "{function}".to_string(),
-                GenericInstClass(token, types) | GenericInstValueType(token, types) => format!(
-                    "{}<{}>",
-                    token
-                        .to_string(strs, blobs, tables)
-                        .trim_end_matches(|c: char| c == '`' || c.is_digit(10)),
-                    types
-                        .iter()
-                        .map(|t| t.to_string(strs, blobs, tables))
-                        .collect::<Vec<std::string::String>>()
-                        .join(", ")
-                ),
-                MVar(n) => format!("M{}", n),
-                Object => "object".to_string(),
-                Ptr(_, ptrt) => format!(
-                    "{}*",
-                    match &**ptrt {
-                        Some(t) => t.to_string(strs, blobs, tables),
-                        None => "void".to_string(),
-                    }
-                ),
-                String => "string".to_string(),
-                SzArray(_, t) => format!("{}[]", t.to_string(strs, blobs, tables)),
-                ValueType(token) => token.to_string(strs, blobs, tables),
-                Var(n) => format!("T{}", n),
-            }
-        }
-    }
-
-    impl signature::encoded::Param {
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
+    impl ToCtxString for signature::encoded::Param {
+        fn to_string(&self, ctx: Context) -> String {
             match &self.1 {
-                ParamType::Type(t) => t.to_string(strs, blobs, tables),
-                ParamType::ByRef(t) => format!("ref {}", t.to_string(strs, blobs, tables)),
+                ParamType::Type(t) => t.to_string(ctx),
+                ParamType::ByRef(t) => format!("ref {}", t.to_string(ctx)),
                 ParamType::TypedByRef => "wtf".to_string(),
             }
-        }
-    }
-
-    impl TypeSpec {
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
-            let sig = blobs
-                .at_index(self.signature)
-                .and_then(|b| b.pread::<Type>(0))
-                .unwrap();
-
-            sig.to_string(strs, blobs, tables)
         }
     }
 
@@ -160,14 +34,12 @@ mod tests {
                 _ => "",
             }
         }
+    }
 
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
-            let sig = blobs
+    impl ToCtxString for MethodDef {
+        fn to_string(&self, ctx: Context) -> String {
+            let sig = ctx
+                .blobs
                 .at_index(self.signature)
                 .and_then(|d| d.pread_with::<MethodDefSig>(0, ()))
                 .unwrap();
@@ -187,15 +59,15 @@ mod tests {
             }
 
             buf.push_str(&match sig.ret_type.1 {
-                RetTypeType::Type(t) => t.to_string(strs, blobs, tables),
-                RetTypeType::ByRef(t) => format!("ref {}", t.to_string(strs, blobs, tables)),
+                RetTypeType::Type(t) => t.to_string(ctx),
+                RetTypeType::ByRef(t) => format!("ref {}", t.to_string(ctx)),
                 RetTypeType::TypedByRef => "wtf".to_string(),
                 RetTypeType::Void => "void".to_string(),
             });
 
             buf.push(' ');
 
-            buf.push_str(strs.at_index(self.name).unwrap());
+            buf.push_str(ctx.strs.at_index(self.name).unwrap());
 
             if let CallingConvention::Generic(num) = sig.calling_convention {
                 buf.push('<');
@@ -214,7 +86,7 @@ mod tests {
             buf.push_str(
                 &sig.params
                     .iter()
-                    .map(|p| p.to_string(strs, blobs, tables))
+                    .map(|p| p.to_string(ctx))
                     .collect::<Vec<String>>()
                     .join(", "),
             );
@@ -225,16 +97,12 @@ mod tests {
         }
     }
 
-    impl Field {
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
+    impl ToCtxString for Field {
+        fn to_string(&self, ctx: Context) -> String {
             let mut buf = String::new();
 
-            let FieldSig(_, field_type) = blobs
+            let FieldSig(_, field_type) = ctx
+                .blobs
                 .at_index(self.signature)
                 .and_then(|b| b.pread(0))
                 .unwrap();
@@ -249,26 +117,26 @@ mod tests {
                 _ => "",
             });
 
-            buf.push_str(&field_type.to_string(strs, blobs, tables));
+            if self.flags & 0x10 == 0x10 {
+                buf.push_str("static ");
+            }
+
+            buf.push_str(&field_type.to_string(ctx));
 
             buf.push(' ');
 
-            buf.push_str(&strs.at_index(self.name).unwrap());
+            buf.push_str(&ctx.strs.at_index(self.name).unwrap());
 
             buf
         }
     }
 
-    impl Property {
-        pub fn to_string(
-            &self,
-            strs: &heap::Strings,
-            blobs: &heap::Blob,
-            tables: &Tables,
-        ) -> String {
+    impl ToCtxString for Property {
+        fn to_string(&self, ctx: Context) -> String {
             let mut buf = String::new();
 
-            let sig: PropertySig = blobs
+            let sig: PropertySig = ctx
+                .blobs
                 .at_index(self.property_type)
                 .and_then(|b| b.pread(0))
                 .unwrap();
@@ -277,18 +145,18 @@ mod tests {
                 buf.push_str("static ")
             }
 
-            buf.push_str(&sig.ret_type.to_string(strs, blobs, tables));
+            buf.push_str(&sig.ret_type.to_string(ctx));
 
             buf.push(' ');
 
-            buf.push_str(&strs.at_index(self.name).unwrap());
+            buf.push_str(&ctx.strs.at_index(self.name).unwrap());
 
             if !sig.params.is_empty() {
                 buf.push('[');
                 buf.push_str(
                     &sig.params
                         .iter()
-                        .map(|p| p.to_string(strs, blobs, tables))
+                        .map(|p| p.to_string(ctx))
                         .collect::<Vec<String>>()
                         .join(", "),
                 );
@@ -301,171 +169,203 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/System.Text.Json.dll")?;
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
-        let field_len = meta.tables.field.len();
-        let method_len = meta.tables.method_def.len();
-        let prop_len = meta.tables.property.len();
+        let ctx = Context {
+            strs: &strs,
+            blobs: &blobs,
+            tables: &meta.tables,
+        };
 
-        let property_map: HashMap<_, _> = meta
-            .tables
-            .property_map
-            .iter()
-            .enumerate()
-            .map(|(idx, p)| {
-                let last_prop = match meta.tables.property_map.get(idx + 1) {
-                    Some(n) => n.property_list.0,
-                    None => prop_len + 1,
-                } - 1;
-                (
-                    p.parent.0 - 1,
-                    &meta.tables.property[p.property_list.0 - 1..last_prop],
-                )
-            })
-            .collect();
-
-        let semantic_methods: HashSet<_> = meta
-            .tables
-            .method_semantics
-            .iter()
-            .map(|s| s.method.0 - 1)
-            .collect();
-
-        #[derive(Debug)]
-        struct PropSemantics {
-            get: Option<MethodDef>,
-            set: Option<MethodDef>,
-        }
-        let mut prop_semantics: HashMap<usize, PropSemantics> = HashMap::new();
-        for s in meta.tables.method_semantics.iter() {
-            let metadata::index::HasSemantics(idx, kind) = s.association;
-            if kind == Kind::Property {
-                let sem = prop_semantics.entry(idx - 1).or_insert(PropSemantics {
-                    get: None,
-                    set: None,
-                });
-                let method = meta.tables.method_def[s.method.0 - 1];
-                if s.semantics & 0x1 == 0x1 {
-                    sem.set = Some(method);
+        for attr in meta.tables.custom_attribute.iter() {
+            use metadata::index::*;
+            let sig = match attr.attr_type {
+                CustomAttributeType(idx, Kind::MethodDef) => blobs
+                    .at_index(meta.tables.method_def[idx - 1].signature)?
+                    .pread_with::<MethodDefSig>(0, ())?,
+                CustomAttributeType(idx, Kind::MemberRef) => {
+                    let member_ref = meta.tables.member_ref[idx - 1];
+                    let sig = blobs
+                        .at_index(member_ref.signature)?
+                        .pread::<MethodRefSig>(0)?;
+                    sig.method_def
                 }
-                if s.semantics & 0x2 == 0x2 {
-                    sem.get = Some(method);
-                }
-            }
-        }
-
-        for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
-            let name = row.type_name(&strs);
-
-            let gen_name = Regex::new(r"`(\d+)")
-                .unwrap()
-                .replace(&name, |c: &Captures| {
-                    let mut buf = String::new();
-                    let num_gen: usize = c[1].parse().unwrap();
-                    buf.push('<');
-                    buf.push_str(
-                        &(0..num_gen)
-                            .into_iter()
-                            .map(|i| format!("T{}", i))
-                            .collect::<Vec<String>>()
-                            .join(", "),
-                    );
-                    buf.push('>');
-                    buf
-                });
-
-            match row.flags & 0x7 {
-                0 => print!("internal "),
-                1 => print!("public "),
-                _ => {}
-            }
-
-            if row.flags & 0x80 == 0x80 {
-                print!("abstract ");
-            }
-
-            if row.flags & 0x100 == 0x100 {
-                print!("sealed ");
-            }
-
-            let metadata::index::TypeDefOrRef(extends_idx, kind) = row.extends;
-            let mut ext_name: Option<String> = None;
-            let mut is_value_type = false;
-            if extends_idx != 0 {
-                let name = get_type_name(kind, extends_idx, &strs, &blobs, &meta.tables);
-                is_value_type = name == "System.ValueType";
-                ext_name = Some(name);
-            }
-
-            if is_value_type {
-                print!("struct ");
-            } else {
-                match row.flags & 0x20 {
-                    0x00 => print!("class "),
-                    0x20 => print!("interface "),
-                    _ => {}
-                }
-            }
-
-            print!("{} ", gen_name);
-
-            match ext_name {
-                Some(n) if !is_value_type && n != "System.Object" => print!(": {} ", n),
-                _ => {}
-            }
-
-            println!("{{");
-
-            let field_idx = row.field_list.0;
-            if field_idx != 0 {
-                let last_field = match meta.tables.type_def.get(t_idx + 1) {
-                    Some(t) => t.field_list.0,
-                    None => field_len + 1,
-                } - 1;
-
-                for field in &meta.tables.field[field_idx - 1..last_field] {
-                    println!("\t{};", field.to_string(&strs, &blobs, &meta.tables));
-                }
-            }
-
-            if let Some(props) = property_map.get(&t_idx) {
-                for (p_idx, prop) in props.iter().enumerate() {
-                    print!("\t{} {{ ", prop.to_string(&strs, &blobs, &meta.tables));
-                    let sem = &prop_semantics[&p_idx];
-                    if let Some(m) = sem.get {
-                        print!("{} get; ", m.access_mod())
-                    }
-                    if let Some(m) = sem.set {
-                        print!("{} set; ", m.access_mod())
-                    }
-                    println!("}}")
-                }
-            }
-
-            let method_idx = row.method_list.0;
-            if method_idx != 0 {
-                let last_method = match meta.tables.type_def.get(t_idx + 1) {
-                    Some(t) => t.method_list.0,
-                    None => method_len + 1,
-                } - 1;
-
-                for (m_idx, method) in meta.tables.method_def[method_idx - 1..last_method]
+                _ => unreachable!(),
+            };
+            println!(
+                "({}): {:x?}",
+                sig.params
                     .iter()
-                    .enumerate()
-                {
-                    if semantic_methods.contains(&(m_idx + method_idx - 1)) {
-                        continue;
-                    }
-                    println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
-                }
-            }
-
-            println!("}}");
+                    .map(|p| p.to_string(ctx))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                blobs.at_index(attr.value)?
+            );
         }
+
+        // let field_len = meta.tables.field.len();
+        // let method_len = meta.tables.method_def.len();
+        // let prop_len = meta.tables.property.len();
+        //
+        // let property_map: HashMap<_, _> = meta
+        //     .tables
+        //     .property_map
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(idx, p)| {
+        //         let last_prop = match meta.tables.property_map.get(idx + 1) {
+        //             Some(n) => n.property_list.0,
+        //             None => prop_len + 1,
+        //         } - 1;
+        //         (
+        //             p.parent.0 - 1,
+        //             &meta.tables.property[p.property_list.0 - 1..last_prop],
+        //         )
+        //     })
+        //     .collect();
+        //
+        // let semantic_methods: HashSet<_> = meta
+        //     .tables
+        //     .method_semantics
+        //     .iter()
+        //     .map(|s| s.method.0 - 1)
+        //     .collect();
+        //
+        // #[derive(Debug)]
+        // struct PropSemantics {
+        //     get: Option<MethodDef>,
+        //     set: Option<MethodDef>,
+        // }
+        // let mut prop_semantics: HashMap<usize, PropSemantics> = HashMap::new();
+        // for s in meta.tables.method_semantics.iter() {
+        //     let metadata::index::HasSemantics(idx, kind) = s.association;
+        //     if kind == Kind::Property {
+        //         let sem = prop_semantics.entry(idx - 1).or_insert(PropSemantics {
+        //             get: None,
+        //             set: None,
+        //         });
+        //         let method = meta.tables.method_def[s.method.0 - 1];
+        //         if s.semantics & 0x1 == 0x1 {
+        //             sem.set = Some(method);
+        //         }
+        //         if s.semantics & 0x2 == 0x2 {
+        //             sem.get = Some(method);
+        //         }
+        //     }
+        // }
+        //
+        // for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
+        //     let name = row.type_name(&strs);
+        //
+        //     let gen_name = Regex::new(r"`(\d+)")
+        //         .unwrap()
+        //         .replace(&name, |c: &Captures| {
+        //             let mut buf = String::new();
+        //             let num_gen: usize = c[1].parse().unwrap();
+        //             buf.push('<');
+        //             buf.push_str(
+        //                 &(0..num_gen)
+        //                     .into_iter()
+        //                     .map(|i| format!("T{}", i))
+        //                     .collect::<Vec<String>>()
+        //                     .join(", "),
+        //             );
+        //             buf.push('>');
+        //             buf
+        //         });
+        //
+        //     match row.flags & 0x7 {
+        //         0 => print!("internal "),
+        //         1 => print!("public "),
+        //         _ => {}
+        //     }
+        //
+        //     if row.flags & 0x80 == 0x80 {
+        //         print!("abstract ");
+        //     }
+        //
+        //     if row.flags & 0x100 == 0x100 {
+        //         print!("sealed ");
+        //     }
+        //
+        //     let metadata::index::TypeDefOrRef(extends_idx, kind) = row.extends;
+        //     let mut ext_name: Option<String> = None;
+        //     let mut is_value_type = false;
+        //     if extends_idx != 0 {
+        //         let name = get_type_name(kind, extends_idx, &strs, &blobs, &meta.tables);
+        //         is_value_type = name == "System.ValueType";
+        //         ext_name = Some(name);
+        //     }
+        //
+        //     if is_value_type {
+        //         print!("struct ");
+        //     } else {
+        //         match row.flags & 0x20 {
+        //             0x00 => print!("class "),
+        //             0x20 => print!("interface "),
+        //             _ => {}
+        //         }
+        //     }
+        //
+        //     print!("{} ", gen_name);
+        //
+        //     match ext_name {
+        //         Some(n) if !is_value_type && n != "System.Object" => print!(": {} ", n),
+        //         _ => {}
+        //     }
+        //
+        //     println!("{{");
+        //
+        //     let field_idx = row.field_list.0;
+        //     if field_idx != 0 {
+        //         let last_field = match meta.tables.type_def.get(t_idx + 1) {
+        //             Some(t) => t.field_list.0,
+        //             None => field_len + 1,
+        //         } - 1;
+        //
+        //         for field in &meta.tables.field[field_idx - 1..last_field] {
+        //             println!("\t{};", field.to_string(&strs, &blobs, &meta.tables));
+        //         }
+        //     }
+        //
+        //     if let Some(props) = property_map.get(&t_idx) {
+        //         for (p_idx, prop) in props.iter().enumerate() {
+        //             print!("\t{} {{ ", prop.to_string(&strs, &blobs, &meta.tables));
+        //             let sem = &prop_semantics[&p_idx];
+        //             if let Some(m) = sem.get {
+        //                 print!("{} get; ", m.access_mod())
+        //             }
+        //             if let Some(m) = sem.set {
+        //                 print!("{} set; ", m.access_mod())
+        //             }
+        //             println!("}}")
+        //         }
+        //     }
+        //
+        //     let method_idx = row.method_list.0;
+        //     if method_idx != 0 {
+        //         let last_method = match meta.tables.type_def.get(t_idx + 1) {
+        //             Some(t) => t.method_list.0,
+        //             None => method_len + 1,
+        //         } - 1;
+        //
+        //         for (m_idx, method) in meta.tables.method_def[method_idx - 1..last_method]
+        //             .iter()
+        //             .enumerate()
+        //         {
+        //             if semantic_methods.contains(&(m_idx + method_idx - 1)) {
+        //                 continue;
+        //             }
+        //             println!("\t{};", method.to_string(&strs, &blobs, &meta.tables));
+        //         }
+        //     }
+        //
+        //     println!("}}");
+        // }
         Ok(())
     }
 

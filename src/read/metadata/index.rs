@@ -10,7 +10,7 @@ use paste::paste;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenTarget {
     Table(Kind),
-    UserString
+    UserString,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,11 +30,17 @@ impl<'a> TryFromCtx<'a, ()> for Token {
 
         let index = (num & 0xFFFFFF) as usize;
 
-        Ok((Token { target: if tag == 0x70 {
-            TokenTarget::UserString
-        } else {
-            TokenTarget::Table(Kind::from_u8(tag).unwrap())
-        }, index }, *offset))
+        Ok((
+            Token {
+                target: if tag == 0x70 {
+                    TokenTarget::UserString
+                } else {
+                    TokenTarget::Table(Kind::from_u8(tag).unwrap())
+                },
+                index,
+            },
+            *offset,
+        ))
     }
 }
 

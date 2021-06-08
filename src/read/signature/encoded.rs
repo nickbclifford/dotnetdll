@@ -371,22 +371,3 @@ impl<'a> TryFromCtx<'a, ()> for RetType {
         Ok((RetType(opt_mod, val), *offset))
     }
 }
-
-struct SerString<'a>(&'a str);
-impl<'a> TryFromCtx<'a, ()> for SerString<'a> {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
-        let offset = &mut 0;
-        let len: u8 = from.gread_with(offset, scroll::LE)?;
-        let val = if len == 0x00 || len == 0xFF {
-            ""
-        } else {
-            from.gread_with(offset, scroll::ctx::StrCtx::Length(len as usize))?
-        };
-
-        Ok((SerString(val), *offset))
-    }
-}
-
-// TODO: custom attributes, decode contexts
