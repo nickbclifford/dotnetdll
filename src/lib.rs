@@ -1,8 +1,8 @@
-pub mod read;
+pub mod binary;
 
 #[cfg(test)]
 mod tests {
-    use crate::read::*;
+    use crate::binary::*;
     use context::*;
     use heap::Heap;
     use metadata::table::*;
