@@ -99,14 +99,14 @@ impl<'a> TryFromCtx<'a, ()> for ArrayShape {
         let compressed::Unsigned(rank) = from.gread(offset)?;
 
         let compressed::Unsigned(num_sizes) = from.gread(offset)?;
-        let mut sizes = vec![];
+        let mut sizes = Vec::with_capacity(num_sizes as usize);
         for _ in 0..num_sizes {
             let compressed::Unsigned(size) = from.gread(offset)?;
             sizes.push(size as usize);
         }
 
         let compressed::Unsigned(num_bounds) = from.gread(offset)?;
-        let mut lower_bounds = vec![];
+        let mut lower_bounds = Vec::with_capacity(num_bounds as usize);
         for _ in 0..num_bounds {
             let compressed::Signed(bound) = from.gread(offset)?;
             lower_bounds.push(bound as isize);
@@ -231,7 +231,7 @@ impl<'a> TryFromCtx<'a, ()> for Type {
                 let token = from.gread(offset)?;
 
                 let compressed::Unsigned(arg_count) = from.gread(offset)?;
-                let mut types = vec![];
+                let mut types = Vec::with_capacity(arg_count as usize);
                 for _ in 0..arg_count {
                     types.push(from.gread(offset)?);
                 }

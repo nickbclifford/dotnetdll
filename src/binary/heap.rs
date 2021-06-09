@@ -69,7 +69,7 @@ heap_struct!(UserString, {
 
         let num_utf16 = (bytes.len() - 1) / 2;
         let offset = &mut 0;
-        let mut chars = vec![];
+        let mut chars = Vec::with_capacity(num_utf16);
         for _ in 0..num_utf16 {
             chars.push(bytes.gread_with::<u16>(offset, scroll::LE)?);
         }

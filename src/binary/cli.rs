@@ -54,8 +54,8 @@ impl<'a> TryFromCtx<'a, ()> for Metadata<'a> {
         let version: &str = from.gread_with(offset, StrCtx::Length(len as usize))?;
 
         let flags = from.gread_with(offset, scroll::LE)?;
-        let n_streams = from.gread_with(offset, scroll::LE)?;
-        let mut headers = vec![];
+        let n_streams: u16 = from.gread_with(offset, scroll::LE)?;
+        let mut headers = Vec::with_capacity(n_streams as usize);
         for _ in 0..n_streams {
             let header = from.gread(offset)?;
             headers.push(header);

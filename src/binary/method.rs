@@ -84,8 +84,9 @@ impl<'a> TryFromCtx<'a, ()> for DataSection {
         } as usize;
 
         let section = if is_exception {
-            let mut exceptions = vec![];
             let n = (length - 4) / if is_fat { 16 } else { 28 };
+
+            let mut exceptions = Vec::with_capacity(n);
 
             for _ in 0..n {
                 let e = if is_fat {

@@ -55,8 +55,9 @@ impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
 
         let ret_type = from.gread(offset)?;
 
-        let mut params = vec![];
-        for _ in 0..(if is_ref { param_count / 2 } else { param_count }) {
+        let len = if is_ref { param_count / 2 } else { param_count };
+        let mut params = Vec::with_capacity(len as usize);
+        for _ in 0..len {
             params.push(from.gread(offset)?);
         }
 
@@ -166,7 +167,7 @@ impl<'a> TryFromCtx<'a, ()> for StandAloneMethodSig {
 
         let ret_type = from.gread(offset)?;
 
-        let mut params = vec![];
+        let mut params = Vec::with_capacity(count as usize);
         for _ in 0..count {
             params.push(from.gread(offset)?);
         }
@@ -255,7 +256,7 @@ impl<'a> TryFromCtx<'a, ()> for PropertySig {
 
         let ret_type = from.gread(offset)?;
 
-        let mut params = vec![];
+        let mut params = Vec::with_capacity(param_count as usize);
         for _ in 0..param_count {
             params.push(from.gread(offset)?);
         }
@@ -302,7 +303,7 @@ impl<'a> TryFromCtx<'a, ()> for LocalVarSig {
 
         let compressed::Unsigned(var_count) = from.gread(offset)?;
 
-        let mut vars = vec![];
+        let mut vars = Vec::with_capacity(var_count as usize);
         for _ in 0..var_count {
             let var_tag: u8 = from.gread_with(offset, scroll::LE)?;
             vars.push(if var_tag == ELEMENT_TYPE_TYPEDBYREF {
@@ -353,7 +354,7 @@ impl<'a> TryFromCtx<'a, ()> for MethodSpec {
 
         let compressed::Unsigned(type_count) = from.gread(offset)?;
 
-        let mut types = vec![];
+        let mut types = Vec::with_capacity(type_count as usize);
         for _ in 0..type_count {
             types.push(from.gread(offset)?);
         }
