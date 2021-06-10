@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -181,190 +181,190 @@ mod tests {
             tables: &meta.tables,
         };
 
-        for attr in meta.tables.custom_attribute.iter() {
+        for t_ref in meta.tables.type_ref.iter() {
             use metadata::index::*;
-            let sig = match attr.attr_type {
-                CustomAttributeType(idx, Kind::MethodDef) => blobs
-                    .at_index(meta.tables.method_def[idx - 1].signature)?
-                    .pread_with::<MethodDefSig>(0, ())?,
-                CustomAttributeType(idx, Kind::MemberRef) => {
-                    let member_ref = meta.tables.member_ref[idx - 1];
-                    let sig = blobs
-                        .at_index(member_ref.signature)?
-                        .pread::<MethodRefSig>(0)?;
-                    sig.method_def
-                }
+            let ResolutionScope(idx, kind) = t_ref.resolution_scope;
+            print!("references {} from ", t_ref.to_string(ctx));
+            match kind {
+                Kind::Module => print!(
+                    "module {}",
+                    strs.at_index(meta.tables.module[idx - 1].name)?
+                ),
+                Kind::ModuleRef => print!(
+                    "module ref {}",
+                    strs.at_index(meta.tables.module_ref[idx - 1].name)?
+                ),
+                Kind::AssemblyRef => print!(
+                    "assembly ref {}",
+                    strs.at_index(meta.tables.assembly_ref[idx - 1].name)?
+                ),
+                Kind::TypeRef => print!(
+                    "nested type {}",
+                    meta.tables.type_ref[idx - 1].to_string(ctx)
+                ),
                 _ => unreachable!(),
-            };
-            println!(
-                "({}): {:x?}",
-                sig.params
-                    .iter()
-                    .map(|p| p.to_string(ctx))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                blobs.at_index(attr.value)?
-            );
+            }
+            println!();
         }
 
-        let field_len = meta.tables.field.len();
-        let method_len = meta.tables.method_def.len();
-        let prop_len = meta.tables.property.len();
-
-        let property_map: HashMap<_, _> = meta
-            .tables
-            .property_map
-            .iter()
-            .enumerate()
-            .map(|(idx, p)| {
-                let last_prop = match meta.tables.property_map.get(idx + 1) {
-                    Some(n) => n.property_list.0,
-                    None => prop_len + 1,
-                } - 1;
-                (
-                    p.parent.0 - 1,
-                    &meta.tables.property[p.property_list.0 - 1..last_prop],
-                )
-            })
-            .collect();
-
-        let semantic_methods: HashSet<_> = meta
-            .tables
-            .method_semantics
-            .iter()
-            .map(|s| s.method.0 - 1)
-            .collect();
-
-        #[derive(Debug)]
-        struct PropSemantics {
-            get: Option<MethodDef>,
-            set: Option<MethodDef>,
-        }
-        let mut prop_semantics: HashMap<usize, PropSemantics> = HashMap::new();
-        for s in meta.tables.method_semantics.iter() {
-            let metadata::index::HasSemantics(idx, kind) = s.association;
-            if kind == Kind::Property {
-                let sem = prop_semantics.entry(idx - 1).or_insert(PropSemantics {
-                    get: None,
-                    set: None,
-                });
-                let method = meta.tables.method_def[s.method.0 - 1];
-                if s.semantics & 0x1 == 0x1 {
-                    sem.set = Some(method);
-                }
-                if s.semantics & 0x2 == 0x2 {
-                    sem.get = Some(method);
-                }
-            }
-        }
-
-        for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
-            let name = row.to_string(ctx);
-
-            let gen_name = Regex::new(r"`(\d+)")
-                .unwrap()
-                .replace(&name, |c: &Captures| {
-                    let mut buf = String::new();
-                    let num_gen: usize = c[1].parse().unwrap();
-                    buf.push('<');
-                    buf.push_str(
-                        &(0..num_gen)
-                            .into_iter()
-                            .map(|i| format!("T{}", i))
-                            .collect::<Vec<String>>()
-                            .join(", "),
-                    );
-                    buf.push('>');
-                    buf
-                });
-
-            match row.flags & 0x7 {
-                0 => print!("internal "),
-                1 => print!("public "),
-                _ => {}
-            }
-
-            if row.flags & 0x80 == 0x80 {
-                print!("abstract ");
-            }
-
-            if row.flags & 0x100 == 0x100 {
-                print!("sealed ");
-            }
-
-            let mut ext_name: Option<String> = None;
-            let mut is_value_type = false;
-            if row.extends.0 != 0 {
-                let name = row.extends.to_string(ctx);
-                is_value_type = name == "System.ValueType";
-                ext_name = Some(name);
-            }
-
-            if is_value_type {
-                print!("struct ");
-            } else {
-                match row.flags & 0x20 {
-                    0x00 => print!("class "),
-                    0x20 => print!("interface "),
-                    _ => {}
-                }
-            }
-
-            print!("{} ", gen_name);
-
-            match ext_name {
-                Some(n) if !is_value_type && n != "System.Object" => print!(": {} ", n),
-                _ => {}
-            }
-
-            println!("{{");
-
-            let field_idx = row.field_list.0;
-            if field_idx != 0 {
-                let last_field = match meta.tables.type_def.get(t_idx + 1) {
-                    Some(t) => t.field_list.0,
-                    None => field_len + 1,
-                } - 1;
-
-                for field in &meta.tables.field[field_idx - 1..last_field] {
-                    println!("\t{};", field.to_string(ctx));
-                }
-            }
-
-            if let Some(props) = property_map.get(&t_idx) {
-                for (p_idx, prop) in props.iter().enumerate() {
-                    print!("\t{} {{ ", prop.to_string(ctx));
-                    let sem = &prop_semantics[&p_idx];
-                    if let Some(m) = sem.get {
-                        print!("{} get; ", m.access_mod())
-                    }
-                    if let Some(m) = sem.set {
-                        print!("{} set; ", m.access_mod())
-                    }
-                    println!("}}")
-                }
-            }
-
-            let method_idx = row.method_list.0;
-            if method_idx != 0 {
-                let last_method = match meta.tables.type_def.get(t_idx + 1) {
-                    Some(t) => t.method_list.0,
-                    None => method_len + 1,
-                } - 1;
-
-                for (m_idx, method) in meta.tables.method_def[method_idx - 1..last_method]
-                    .iter()
-                    .enumerate()
-                {
-                    if semantic_methods.contains(&(m_idx + method_idx - 1)) {
-                        continue;
-                    }
-                    println!("\t{};", method.to_string(ctx));
-                }
-            }
-
-            println!("}}");
-        }
+        // let field_len = meta.tables.field.len();
+        // let method_len = meta.tables.method_def.len();
+        // let prop_len = meta.tables.property.len();
+        //
+        // let property_map: HashMap<_, _> = meta
+        //     .tables
+        //     .property_map
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(idx, p)| {
+        //         let last_prop = match meta.tables.property_map.get(idx + 1) {
+        //             Some(n) => n.property_list.0,
+        //             None => prop_len + 1,
+        //         } - 1;
+        //         (
+        //             p.parent.0 - 1,
+        //             &meta.tables.property[p.property_list.0 - 1..last_prop],
+        //         )
+        //     })
+        //     .collect();
+        //
+        // let semantic_methods: HashSet<_> = meta
+        //     .tables
+        //     .method_semantics
+        //     .iter()
+        //     .map(|s| s.method.0 - 1)
+        //     .collect();
+        //
+        // #[derive(Debug)]
+        // struct PropSemantics {
+        //     get: Option<MethodDef>,
+        //     set: Option<MethodDef>,
+        // }
+        // let mut prop_semantics: HashMap<usize, PropSemantics> = HashMap::new();
+        // for s in meta.tables.method_semantics.iter() {
+        //     let metadata::index::HasSemantics(idx, kind) = s.association;
+        //     if kind == Kind::Property {
+        //         let sem = prop_semantics.entry(idx - 1).or_insert(PropSemantics {
+        //             get: None,
+        //             set: None,
+        //         });
+        //         let method = meta.tables.method_def[s.method.0 - 1];
+        //         if s.semantics & 0x1 == 0x1 {
+        //             sem.set = Some(method);
+        //         }
+        //         if s.semantics & 0x2 == 0x2 {
+        //             sem.get = Some(method);
+        //         }
+        //     }
+        // }
+        //
+        // for (t_idx, row) in meta.tables.type_def.iter().enumerate() {
+        //     let name = row.to_string(ctx);
+        //
+        //     let gen_name = Regex::new(r"`(\d+)")
+        //         .unwrap()
+        //         .replace(&name, |c: &Captures| {
+        //             let mut buf = String::new();
+        //             let num_gen: usize = c[1].parse().unwrap();
+        //             buf.push('<');
+        //             buf.push_str(
+        //                 &(0..num_gen)
+        //                     .into_iter()
+        //                     .map(|i| format!("T{}", i))
+        //                     .collect::<Vec<String>>()
+        //                     .join(", "),
+        //             );
+        //             buf.push('>');
+        //             buf
+        //         });
+        //
+        //     match row.flags & 0x7 {
+        //         0 => print!("internal "),
+        //         1 => print!("public "),
+        //         _ => {}
+        //     }
+        //
+        //     if row.flags & 0x80 == 0x80 {
+        //         print!("abstract ");
+        //     }
+        //
+        //     if row.flags & 0x100 == 0x100 {
+        //         print!("sealed ");
+        //     }
+        //
+        //     let mut ext_name: Option<String> = None;
+        //     let mut is_value_type = false;
+        //     if row.extends.0 != 0 {
+        //         let name = row.extends.to_string(ctx);
+        //         is_value_type = name == "System.ValueType";
+        //         ext_name = Some(name);
+        //     }
+        //
+        //     if is_value_type {
+        //         print!("struct ");
+        //     } else {
+        //         match row.flags & 0x20 {
+        //             0x00 => print!("class "),
+        //             0x20 => print!("interface "),
+        //             _ => {}
+        //         }
+        //     }
+        //
+        //     print!("{} ", gen_name);
+        //
+        //     match ext_name {
+        //         Some(n) if !is_value_type && n != "System.Object" => print!(": {} ", n),
+        //         _ => {}
+        //     }
+        //
+        //     println!("{{");
+        //
+        //     let field_idx = row.field_list.0;
+        //     if field_idx != 0 {
+        //         let last_field = match meta.tables.type_def.get(t_idx + 1) {
+        //             Some(t) => t.field_list.0,
+        //             None => field_len + 1,
+        //         } - 1;
+        //
+        //         for field in &meta.tables.field[field_idx - 1..last_field] {
+        //             println!("\t{};", field.to_string(ctx));
+        //         }
+        //     }
+        //
+        //     if let Some(props) = property_map.get(&t_idx) {
+        //         for (p_idx, prop) in props.iter().enumerate() {
+        //             print!("\t{} {{ ", prop.to_string(ctx));
+        //             let sem = &prop_semantics[&p_idx];
+        //             if let Some(m) = sem.get {
+        //                 print!("{} get; ", m.access_mod())
+        //             }
+        //             if let Some(m) = sem.set {
+        //                 print!("{} set; ", m.access_mod())
+        //             }
+        //             println!("}}")
+        //         }
+        //     }
+        //
+        //     let method_idx = row.method_list.0;
+        //     if method_idx != 0 {
+        //         let last_method = match meta.tables.type_def.get(t_idx + 1) {
+        //             Some(t) => t.method_list.0,
+        //             None => method_len + 1,
+        //         } - 1;
+        //
+        //         for (m_idx, method) in meta.tables.method_def[method_idx - 1..last_method]
+        //             .iter()
+        //             .enumerate()
+        //         {
+        //             if semantic_methods.contains(&(m_idx + method_idx - 1)) {
+        //                 continue;
+        //             }
+        //             println!("\t{};", method.to_string(ctx));
+        //         }
+        //     }
+        //
+        //     println!("}}");
+        // }
         Ok(())
     }
 
