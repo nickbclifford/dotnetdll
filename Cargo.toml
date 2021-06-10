@@ -6,14 +6,16 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+
 [dependencies]
 bitvec = "0.22.3"
+dotnetdll-macros = { path = "dotnetdll-macros" }
 num-traits = "0.2"
 num-derive = "0.3"
 object = "0.24.0"
 paste = "1.0.5"
-scroll = "0.10.2"
-scroll_derive = "0.10.5"
+scroll = { version = "0.10.2", features = ['derive'] }
 
 [dev-dependencies]
 regex = "1"

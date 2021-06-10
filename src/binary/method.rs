@@ -1,5 +1,4 @@
 use scroll::{ctx::TryFromCtx, Pread};
-use scroll_derive::Pread;
 
 #[derive(Debug)]
 pub enum Header {

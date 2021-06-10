@@ -3,7 +3,6 @@ use scroll::{
     ctx::{StrCtx, TryFromCtx},
     Pread,
 };
-use scroll_derive::Pread;
 
 #[derive(Debug, Pread)]
 pub struct RVASize {
