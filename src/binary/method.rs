@@ -14,10 +14,10 @@ pub enum Header {
     },
 }
 
-impl<'a> TryFromCtx<'a, ()> for Header {
+impl TryFromCtx<'_> for Header {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1: u8 = from.gread_with(offset, scroll::LE)?;
@@ -64,10 +64,10 @@ pub struct DataSection {
     more_sections: bool,
 }
 
-impl<'a> TryFromCtx<'a, ()> for DataSection {
+impl TryFromCtx<'_> for DataSection {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let kind: u8 = from.gread_with(offset, scroll::LE)?;
@@ -129,7 +129,7 @@ pub struct Method<'a> {
     pub data_sections: Vec<DataSection>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for Method<'a> {
+impl<'a> TryFromCtx<'a> for Method<'a> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {

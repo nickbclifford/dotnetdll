@@ -4,10 +4,10 @@ use scroll::{ctx::TryFromCtx, Pread};
 #[derive(Debug)]
 pub struct Unsigned(pub u32);
 
-impl<'a> TryFromCtx<'a, ()> for Unsigned {
+impl TryFromCtx<'_> for Unsigned {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
@@ -45,10 +45,10 @@ fn from_twos_complement(bits: usize, source: u32) -> i32 {
             .sum::<i32>()
 }
 
-impl<'a> TryFromCtx<'a, ()> for Signed {
+impl TryFromCtx<'_> for Signed {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1 = from.gread_with::<u8>(offset, scroll::LE)? as u32;

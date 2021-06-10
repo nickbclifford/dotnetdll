@@ -1,7 +1,7 @@
 use scroll::{ctx::TryFromCtx, Pread};
 
 struct SerString<'a>(pub Option<&'a str>);
-impl<'a> TryFromCtx<'a, ()> for SerString<'a> {
+impl<'a> TryFromCtx<'a> for SerString<'a> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {

@@ -17,10 +17,10 @@ pub struct MethodDefSig {
     pub params: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for MethodDefSig {
+impl TryFromCtx<'_> for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         TryFromCtx::try_from_ctx(from, false)
     }
 }
@@ -80,10 +80,10 @@ pub struct MethodRefSig {
     pub varargs: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for MethodRefSig {
+impl TryFromCtx<'_> for MethodRefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let method_def = from.gread_with::<MethodDefSig>(offset, true)?;
@@ -130,10 +130,10 @@ pub struct StandAloneMethodSig {
     pub varargs: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for StandAloneMethodSig {
+impl TryFromCtx<'_> for StandAloneMethodSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -201,10 +201,10 @@ impl<'a> TryFromCtx<'a, ()> for StandAloneMethodSig {
 #[derive(Debug)]
 pub struct FieldSig(pub Option<CustomMod>, pub Type);
 
-impl<'a> TryFromCtx<'a, ()> for FieldSig {
+impl TryFromCtx<'_> for FieldSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -230,10 +230,10 @@ pub struct PropertySig {
     pub params: Vec<Param>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for PropertySig {
+impl TryFromCtx<'_> for PropertySig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -287,10 +287,10 @@ pub enum LocalVar {
 #[derive(Debug)]
 pub struct LocalVarSig(pub Vec<LocalVar>);
 
-impl<'a> TryFromCtx<'a, ()> for LocalVarSig {
+impl TryFromCtx<'_> for LocalVarSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -341,10 +341,10 @@ impl<'a> TryFromCtx<'a, ()> for LocalVarSig {
 #[derive(Debug)]
 pub struct MethodSpec(pub Vec<Type>);
 
-impl<'a> TryFromCtx<'a, ()> for MethodSpec {
+impl TryFromCtx<'_> for MethodSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;

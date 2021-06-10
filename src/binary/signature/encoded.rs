@@ -56,10 +56,10 @@ element_types! {
 #[derive(Debug)]
 pub struct TypeDefOrRefOrSpec(pub index::Token);
 
-impl<'a> TryFromCtx<'a, ()> for TypeDefOrRefOrSpec {
+impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(value) = from.gread(offset)?;
@@ -90,10 +90,10 @@ pub struct ArrayShape {
     pub lower_bounds: Vec<isize>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for ArrayShape {
+impl TryFromCtx<'_> for ArrayShape {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(rank) = from.gread(offset)?;
@@ -129,10 +129,10 @@ pub enum CustomMod {
     Optional(TypeDefOrRefOrSpec),
 }
 
-impl<'a> TryFromCtx<'a, ()> for CustomMod {
+impl TryFromCtx<'_> for CustomMod {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(tag) = from.gread(offset)?;
@@ -185,10 +185,10 @@ pub enum Type {
     Var(u32),
 }
 
-impl<'a> TryFromCtx<'a, ()> for Type {
+impl TryFromCtx<'_> for Type {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -308,10 +308,10 @@ pub enum ParamType {
 #[derive(Debug)]
 pub struct Param(pub Option<CustomMod>, pub ParamType);
 
-impl<'a> TryFromCtx<'a, ()> for Param {
+impl TryFromCtx<'_> for Param {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let prev_offset = *offset;
@@ -345,10 +345,10 @@ pub enum RetTypeType {
 #[derive(Debug)]
 pub struct RetType(pub Option<CustomMod>, pub RetTypeType);
 
-impl<'a> TryFromCtx<'a, ()> for RetType {
+impl TryFromCtx<'_> for RetType {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let prev_offset = *offset;

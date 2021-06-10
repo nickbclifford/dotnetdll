@@ -40,7 +40,7 @@ pub struct Metadata<'a> {
     pub stream_headers: Vec<stream::Header<'a>>,
 }
 
-impl<'a> TryFromCtx<'a, ()> for Metadata<'a> {
+impl<'a> TryFromCtx<'a> for Metadata<'a> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {

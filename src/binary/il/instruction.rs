@@ -1,5 +1,4 @@
 use super::super::metadata::index::Token;
-use scroll::{ctx::TryFromCtx, Pread};
 
 #[derive(Debug)]
 pub enum Instruction<'a> {

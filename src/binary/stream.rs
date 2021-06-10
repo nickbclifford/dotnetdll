@@ -10,7 +10,7 @@ pub struct Header<'a> {
     pub name: &'a str,
 }
 
-impl<'a> TryFromCtx<'a, ()> for Header<'a> {
+impl<'a> TryFromCtx<'a> for Header<'a> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
