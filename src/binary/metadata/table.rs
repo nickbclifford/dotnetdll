@@ -12,7 +12,6 @@ macro_rules! tables {
             $(
                 $name = $val,
             )*
-            Unused = 0xFF
         }
 
         $(
@@ -64,7 +63,6 @@ macro_rules! tables {
                         $(
                             Kind::$name => $tables.[<$name:snake>].push($add),
                         )*
-                        Kind::Unused => unreachable!()
                     }
                 }
             }
