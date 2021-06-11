@@ -183,7 +183,6 @@ impl Parse for CodedIndex {
 pub fn coded_index(input: TokenStream) -> TokenStream {
     let CodedIndex { name, tables } = parse_macro_input!(input as CodedIndex);
 
-    // doesn't work unless collected? borrow checker says the iterator is used after move, idfk
     let variants: Vec<_> = tables.iter().filter(|&n| n != "Unused").collect();
 
     let log = (tables.len() as f32).log2().ceil() as u32;
