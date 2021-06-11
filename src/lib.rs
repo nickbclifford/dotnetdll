@@ -396,4 +396,33 @@ mod tests {
         assert_eq!(t.target, metadata::index::TokenTarget::Table(Kind::TypeRef));
         assert_eq!(t.index, 0x12);
     }
+
+    #[test]
+    fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
+        let dll = dll::DLL::parse(&file)?;
+        let strs: heap::Strings = dll.get_heap("#Strings")?;
+        let blobs: heap::Blob = dll.get_heap("#Blob")?;
+        let meta = dll.get_logical_metadata()?;
+
+        let ctx = Context {
+            strs: &strs,
+            blobs: &blobs,
+            tables: &meta.tables,
+        };
+
+        for row in meta.tables.method_def.iter() {
+            if row.rva == 0 { continue; }
+            let meth = dll.get_method(&row)?;
+
+            let len = meth.body.len();
+
+            let offset = &mut 0;
+            while *offset < len {
+                println!("{:?}", meth.body.gread::<il::instruction::Instruction>(offset)?);
+            }
+        }
+
+        Ok(())
+    }
 }

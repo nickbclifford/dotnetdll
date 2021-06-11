@@ -136,6 +136,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             }
         }
 
+        #[derive(Debug)]
         pub enum Instruction {
             #(#variants),*
         }
