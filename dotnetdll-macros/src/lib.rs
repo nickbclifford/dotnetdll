@@ -1,10 +1,9 @@
 use proc_macro::*;
 
-use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, parse_macro_input, Fields, Result, Token, Variant};
+use syn::{braced, parse_macro_input, Fields, Ident, Result, Token, Variant};
 
 #[derive(Eq, PartialEq)]
 enum InstructionKind {
@@ -104,7 +103,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     ]
     .iter()
-    .map(|n| Ident::new(n, Span::call_site()));
+    .map(|n| Ident::new(n, Span::call_site().into()));
 
     TokenStream::from(quote! {
         use scroll::Pread;
@@ -147,14 +146,82 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
                 let offset = &mut 0;
 
-                let byte: u8 = from.gread_with(offset, scroll::LE)?;
-                let val = match byte {
+                let val = match from.gread_with::<u8>(offset, scroll::LE)? {
                     #(#normal),*,
                     0xFE => match from.gread_with::<u8>(offset, scroll::LE)? {
                         #(#extended),*,
                         bad => return Err(scroll::Error::Custom(format!("unknown extended opcode 0xFE {:#04x}", bad)))
                     },
-                    _ => return Err(scroll::Error::Custom(format!("unknown opcode {:#04x}", byte)))
+                    bad => return Err(scroll::Error::Custom(format!("unknown opcode {:#04x}", bad)))
+                };
+
+                Ok((val, *offset))
+            }
+        }
+    })
+}
+
+struct CodedIndex {
+    name: Ident,
+    tables: Punctuated<Ident, Token![,]>,
+}
+
+impl Parse for CodedIndex {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let name = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let tables;
+        braced!(tables in input);
+        Ok(CodedIndex {
+            name,
+            tables: tables.parse_terminated(Ident::parse)?,
+        })
+    }
+}
+
+#[proc_macro]
+pub fn coded_index(input: TokenStream) -> TokenStream {
+    let CodedIndex { name, tables } = parse_macro_input!(input as CodedIndex);
+
+    // doesn't work unless collected? borrow checker says the iterator is used after move, idfk
+    let variants: Vec<_> = tables.iter().filter(|&n| n != "Unused").collect();
+
+    let log = (tables.len() as f32).log2().ceil() as u32;
+
+    let match_arms = tables.iter().enumerate().filter_map(|(idx, n)| {
+        if n == "Unused" {
+            None
+        } else {
+            Some(quote! { #idx => #name::#n(index) })
+        }
+    });
+
+    TokenStream::from(quote! {
+        #[derive(Debug, Copy, Clone)]
+        pub enum #name {
+            #(#variants(usize)),*
+        }
+
+        impl<'a> TryFromCtx<'a, Sizes<'a>> for #name {
+            type Error = scroll::Error;
+
+            fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
+                let offset = &mut 0;
+
+                let max_size = [#(Kind::#variants),*].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
+
+                let coded = if *max_size < (1 << (16 - #log)) {
+                    from.gread_with::<u16>(offset, scroll::LE)? as u32
+                } else {
+                    from.gread_with::<u32>(offset, scroll::LE)?
+                };
+
+                let mask = (1 << #log) - 1;
+                let index = (coded >> #log) as usize;
+
+                let val = match (coded & mask) as usize {
+                    #(#match_arms),*,
+                    bad_tag => return Err(scroll::Error::Custom(format!("bad {} coded index tag {}", stringify!(#name), bad_tag)))
                 };
 
                 Ok((val, *offset))

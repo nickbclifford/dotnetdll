@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -182,23 +182,22 @@ mod tests {
         };
 
         for t_ref in meta.tables.type_ref.iter() {
-            use metadata::index::*;
-            let ResolutionScope(idx, kind) = t_ref.resolution_scope;
+            use metadata::index::ResolutionScope::*;
             print!("references {} from ", t_ref.to_string(ctx));
-            match kind {
-                Kind::Module => print!(
+            match t_ref.resolution_scope {
+                Module(idx) => print!(
                     "module {}",
                     strs.at_index(meta.tables.module[idx - 1].name)?
                 ),
-                Kind::ModuleRef => print!(
+                ModuleRef(idx) => print!(
                     "module ref {}",
                     strs.at_index(meta.tables.module_ref[idx - 1].name)?
                 ),
-                Kind::AssemblyRef => print!(
+                AssemblyRef(idx) => print!(
                     "assembly ref {}",
                     strs.at_index(meta.tables.assembly_ref[idx - 1].name)?
                 ),
-                Kind::TypeRef => print!(
+                TypeRef(idx) => print!(
                     "nested type {}",
                     meta.tables.type_ref[idx - 1].to_string(ctx)
                 ),
@@ -399,7 +398,7 @@ mod tests {
 
     #[test]
     fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.203/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -412,14 +411,19 @@ mod tests {
         };
 
         for row in meta.tables.method_def.iter() {
-            if row.rva == 0 { continue; }
+            if row.rva == 0 {
+                continue;
+            }
             let meth = dll.get_method(&row)?;
 
             let len = meth.body.len();
 
             let offset = &mut 0;
             while *offset < len {
-                println!("{:?}", meth.body.gread::<il::instruction::Instruction>(offset)?);
+                println!(
+                    "{:?}",
+                    meth.body.gread::<il::instruction::Instruction>(offset)?
+                );
             }
         }
 

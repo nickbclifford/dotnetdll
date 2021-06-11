@@ -115,11 +115,11 @@ impl ToCtxString for Type {
 
 impl ToCtxString for index::TypeDefOrRef {
     fn to_string(&self, ctx: Context) -> String {
-        use index::*;
-        TypeDefOrRefOrSpec(Token {
-            target: TokenTarget::Table(self.1),
-            index: self.0,
-        })
-        .to_string(ctx)
+        use index::TypeDefOrRef::*;
+        match self {
+            TypeDef(i) => ctx.tables.type_def[i - 1].to_string(ctx),
+            TypeRef(i) => ctx.tables.type_ref[i - 1].to_string(ctx),
+            TypeSpec(i) => ctx.tables.type_spec[i - 1].to_string(ctx),
+        }
     }
 }

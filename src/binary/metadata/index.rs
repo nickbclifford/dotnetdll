@@ -4,8 +4,7 @@ use num_traits::FromPrimitive;
 use scroll::{ctx::TryFromCtx, Pread};
 use std::{collections::HashMap, marker::PhantomData};
 
-// paste! macro
-use paste::paste;
+use dotnetdll_macros::coded_index;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenTarget {
@@ -113,54 +112,6 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Sizes<'a>> for Simple<T> {
         Ok((Simple(idx, PhantomData), *offset))
     }
 }
-
-macro_rules! count_items {
-    ($name:ident) => { 1 };
-    ($first:ident, $($rest:ident),*) => {
-        1 + count_items!($($rest),*)
-    }
-}
-
-macro_rules! coded_index {
-    ($name:ident, {$($tag:ident),+}) => {
-        #[derive(Debug, Copy, Clone)]
-        pub struct $name(pub usize, pub Kind);
-
-        paste! {
-            const [<$name:snake:upper _NUM_TABLES>]: usize = count_items!($($tag),*);
-            const [<$name:snake:upper _TAGS>]: [Kind; [<$name:snake:upper _NUM_TABLES>]] = [$($tag),*];
-
-            impl<'a> TryFromCtx<'a, Sizes<'a>> for $name {
-                type Error = scroll::Error;
-
-                fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
-                    let offset = &mut 0;
-
-                    let log = ([<$name:snake:upper _NUM_TABLES>] as f32).log2().ceil() as u32;
-
-                    let max_size = [<$name:snake:upper _TAGS>].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
-
-                    let coded = if *max_size < (1 << (16 - log)) {
-                        from.gread_with::<u16>(offset, scroll::LE)? as u32
-                    } else {
-                        from.gread_with::<u32>(offset, scroll::LE)?
-                    };
-
-                    let mask = (1 << log) - 1;
-                    let tag = (coded & mask) as usize;
-                    let index = (coded >> log) as usize;
-
-                    Ok((
-                        $name(index, [<$name:snake:upper _TAGS>][tag]),
-                        *offset
-                    ))
-                }
-            }
-        }
-    }
-}
-
-use Kind::*;
 
 coded_index!(TypeDefOrRef, {
     TypeDef,
