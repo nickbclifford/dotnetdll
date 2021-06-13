@@ -1,4 +1,4 @@
-use super::super::metadata::index::Token;
+use super::metadata::index::Token;
 use dotnetdll_macros::instructions;
 
 instructions! {

@@ -1,16 +1,20 @@
 pub mod binary;
+pub mod dll;
+pub mod resolved;
 
 #[cfg(test)]
 mod tests {
-    use crate::binary::*;
+    use std::collections::{HashMap, HashSet};
+
+    use regex::{Captures, Regex};
+    use scroll::Pread;
+
+    use super::{binary::*, dll};
+
     use context::*;
     use heap::Heap;
     use metadata::table::*;
     use signature::{compressed::*, encoded::*, kinds::*};
-
-    use regex::{Captures, Regex};
-    use scroll::Pread;
-    use std::collections::{HashMap, HashSet};
 
     impl ToCtxString for signature::encoded::Param {
         fn to_string(&self, ctx: Context) -> String {
@@ -200,8 +204,7 @@ mod tests {
                 TypeRef(idx) => print!(
                     "nested type {}",
                     meta.tables.type_ref[idx - 1].to_string(ctx)
-                ),
-                _ => unreachable!(),
+                )
             }
             println!();
         }
@@ -420,10 +423,7 @@ mod tests {
 
             let offset = &mut 0;
             while *offset < len {
-                println!(
-                    "{:?}",
-                    meth.body.gread::<il::instruction::Instruction>(offset)?
-                );
+                println!("{:?}", meth.body.gread::<il::Instruction>(offset)?);
             }
         }
 

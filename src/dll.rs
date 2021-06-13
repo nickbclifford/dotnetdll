@@ -1,4 +1,4 @@
-use super::{
+use super::binary::{
     cli::{Header, Metadata, RVASize},
     heap::Heap,
     metadata, method,
