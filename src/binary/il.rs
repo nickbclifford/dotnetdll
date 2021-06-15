@@ -3,6 +3,8 @@ use dotnetdll_macros::instructions;
 
 instructions! {
     prefixes {
+        // I've changed my mind on this
+        // TODO: generate variants for only legal suffixes
         #[extended] Constrained(Token) = 0x16,
         #[extended] No(u8) = 0x19,
         #[extended] Readonly = 0x1E,

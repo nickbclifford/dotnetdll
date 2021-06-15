@@ -1,3 +1,4 @@
+use super::il;
 use scroll::{ctx::TryFromCtx, Pread};
 
 #[derive(Debug)]
@@ -122,16 +123,16 @@ impl TryFromCtx<'_> for DataSection {
 }
 
 #[derive(Debug)]
-pub struct Method<'a> {
+pub struct Method {
     pub header: Header,
-    pub body: &'a [u8],
+    pub body: Vec<il::Instruction>,
     pub data_sections: Vec<DataSection>,
 }
 
-impl<'a> TryFromCtx<'a> for Method<'a> {
+impl TryFromCtx<'_> for Method {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let header = from.gread(offset)?;
 
@@ -140,7 +141,12 @@ impl<'a> TryFromCtx<'a> for Method<'a> {
             Header::Fat { size, .. } => size,
         };
 
-        let body = from.gread_with(offset, body_size)?;
+        let body_bytes = from.gread_with(offset, body_size)?;
+        let mut body = vec![];
+        let mut body_offset = 0;
+        while body_offset < body_size {
+            body.push(body_bytes.gread(&mut body_offset)?);
+        }
 
         let mut data_sections = vec![];
 
