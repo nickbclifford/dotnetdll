@@ -141,7 +141,7 @@ impl TryFromCtx<'_> for Method {
             Header::Fat { size, .. } => size,
         };
 
-        let body_bytes = from.gread_with(offset, body_size)?;
+        let body_bytes: &[u8] = from.gread_with(offset, body_size)?;
         let mut body = vec![];
         let mut body_offset = 0;
         while body_offset < body_size {

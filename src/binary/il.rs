@@ -3,14 +3,20 @@ use dotnetdll_macros::instructions;
 
 instructions! {
     prefixes {
-        // I've changed my mind on this
-        // TODO: generate variants for only legal suffixes
-        #[extended] Constrained(Token) = 0x16,
-        #[extended] No(u8) = 0x19,
-        #[extended] Readonly = 0x1E,
-        #[extended] Tail = 0x14,
-        #[extended] Unaligned(u8) = 0x12,
-        #[extended] Volatile = 0x13
+        #[target(Callvirt)]
+        Constrained(Token) = 0x16,
+        #[target(Castclass, Unbox, Ldelem*, Stelem*, Ldfld, Stfld, Callvirt, Ldvirtftn)]
+        Nocheck(u8) = 0x19,
+        #[target(Ldelema)]
+        Readonly = 0x1E,
+        #[target(Call, Calli, Callvirt)]
+        Tail = 0x14,
+        #[target(Ldind*, Stind*, Ldfld, Stfld, Ldobj, Stobj, Initblk, Cpblk)]
+        #[compose(Volatile)]
+        Unaligned(u8) = 0x12,
+        #[target(Ldind*, Stind*, Ldfld, Stfld, Ldobj, Stobj, Initblk, Cpblk, Ldsfld, Stsfld)]
+        #[compose(Unaligned)]
+        Volatile = 0x13
     }
 
     // base instructions
