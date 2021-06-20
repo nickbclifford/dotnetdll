@@ -104,11 +104,14 @@ impl ToCtxString for Type {
                     .collect::<Vec<std::string::String>>()
                     .join(", ")
             ),
-            MVar(n) => todo!(),
-            Ptr(_, ptrt) => todo!(),
+            MVar(n) => format!("M{}", n),
+            Ptr(_, ptrt) => format!("{}*", match &**ptrt {
+                None => "void".to_string(),
+                Some(t) => t.to_string(ctx)
+            }),
             SzArray(_, t) => format!("{}[]", t.to_string(ctx)),
             ValueType(token) => token.to_string(ctx),
-            Var(n) => todo!(),
+            Var(n) => format!("T{}", n),
         }
     }
 }

@@ -11,7 +11,7 @@ mod tests {
 
     use super::{binary::*, dll};
 
-    use crate::binary::metadata::index::TypeDefOrRef;
+    use crate::binary::metadata::index::{TypeDefOrRef, TypeOrMethodDef};
     use context::*;
     use heap::Heap;
     use metadata::table::*;
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/ref/netstandard.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/MSBuild.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -186,28 +186,37 @@ mod tests {
             tables: &meta.tables,
         };
 
-        for row in meta.tables.interface_impl.iter() {
-            let class = meta.tables.type_def[row.class.0 - 1];
-            match row.interface {
-                TypeDefOrRef::TypeSpec(i) => println!(
-                    "{} implements typespec {:?}",
-                    class.to_string(ctx),
-                    blobs
-                        .at_index(meta.tables.type_spec[i - 1].signature)?
-                        .pread::<Type>(0)?
-                ),
-                TypeDefOrRef::TypeDef(i) | TypeDefOrRef::TypeRef(i) => {
-                    if i == 0 {
-                        println!("{} implements no interface", class.to_string(ctx));
-                    } else {
-                        println!(
-                            "{} implements {}",
-                            class.to_string(ctx),
-                            row.interface.to_string(ctx)
-                        );
-                    }
-                }
+        for (idx, param) in meta.tables.generic_param.iter().enumerate() {
+            print!("generic parameter {} ({}) for ", param.number, strs.at_index(param.name)?);
+            match param.owner {
+                TypeOrMethodDef::TypeDef(i) => print!("{}", meta.tables.type_def[i - 1].to_string(ctx)),
+                TypeOrMethodDef::MethodDef(i) => print!("{}", meta.tables.method_def[i - 1].to_string(ctx))
             }
+            println!();
+
+            match param.flags & 0x3 {
+                0x0 => println!("\tinvariant"),
+                0x1 => println!("\tcovariant"),
+                0x2 => println!("\tcontravariant"),
+                _ => {}
+            }
+
+            match param.flags & 0x1C {
+                0x04 => println!("\tclass"),
+                0x08 => println!("\tstruct"),
+                0x10 => println!("\tnew()"),
+                _ => {}
+            }
+
+            for row in meta.tables.generic_param_constraint.iter().filter(|c| c.owner.0 - 1 == idx) {
+                print!("\t");
+                if let TypeDefOrRef::TypeSpec(_) = row.constraint {
+                    print!("typespec ");
+                }
+                println!("{}", row.constraint.to_string(ctx))
+            }
+
+            println!();
         }
 
         Ok(())

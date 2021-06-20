@@ -1,23 +1,60 @@
-use super::{members, signature};
+use super::{generic::TypeGeneric, members, signature};
 use crate::binary::signature::encoded::ArrayShape;
 
 #[derive(Debug)]
-pub enum TypeKind {
+pub enum Kind {
     Class,
     Interface,
     ValueType,
 }
 
 #[derive(Debug)]
+pub enum Accessibility {
+    NotPublic,
+    Public,
+    Nested(members::Accessibility)
+}
+
+#[derive(Debug)]
+pub enum Layout {
+    Automatic,
+    Sequential,
+    Explicit
+}
+
+#[derive(Debug)]
+pub enum StringFormatting {
+    ANSI,
+    Unicode,
+    Automatic,
+    Custom(bool, bool) // two-bit mask with non-standard meanings
+}
+
+#[derive(Debug)]
 pub struct TypeDefinition<'a> {
     pub name: &'a str,
     pub namespace: Option<&'a str>,
-    pub kind: TypeKind,
+    pub kind: Kind,
     pub fields: Vec<members::Field<'a>>,
     pub properties: Vec<members::Property<'a>>,
     pub methods: Vec<members::Method<'a>>,
     pub extends: Option<Supertype<'a>>,
-    pub implements: Vec<Supertype<'a>> // TODO: flags, generic params
+    pub implements: Vec<Supertype<'a>>,
+    pub generic_parameters: Vec<TypeGeneric<'a>>,
+    pub accessibility: Accessibility,
+    pub layout: Layout,
+    pub abstract_type: bool,
+    pub sealed: bool,
+    pub special_name: bool,
+    pub imported: bool,
+    pub serializable: bool,
+    pub string_formatting: StringFormatting,
+    pub before_field_init: bool,
+    pub runtime_special_name: bool,
+    // TODO: security
+    pub has_security: bool,
+    // TODO: exporting
+    pub type_forwarder: bool,
 }
 
 #[derive(Debug)]
