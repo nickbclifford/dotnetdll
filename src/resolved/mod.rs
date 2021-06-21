@@ -1,3 +1,4 @@
+pub mod assembly;
 pub mod generic;
 pub mod members;
 pub mod signature;

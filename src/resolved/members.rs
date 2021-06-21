@@ -25,6 +25,7 @@ pub struct Field<'a> {
     pub static_member: bool,
     pub init_only: bool,
     pub constant: bool,
+    pub default: Option<Constant>,
     pub not_serialized: bool,
     pub special_name: bool,
 }
@@ -38,7 +39,7 @@ pub struct Property<'a> {
     pub return_type: MemberType<'a>,
     pub special_name: bool,
     pub runtime_special_name: bool,
-    pub has_default: bool
+    pub default: Option<Constant>,
 }
 
 #[derive(Debug)]
@@ -48,12 +49,23 @@ pub enum VtableLayout {
 }
 
 #[derive(Debug)]
+pub struct ParameterMetadata<'a> {
+    pub name: &'a str,
+    pub is_in: bool,
+    pub is_out: bool,
+    pub optional: bool,
+    pub default: Option<Constant>,
+    pub has_field_marshal: bool
+}
+
+#[derive(Debug)]
 pub struct Method<'a> {
     pub name: &'a str,
     pub body: Option<method::Method>,
     pub signature: signature::ManagedMethod<'a>,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,
+    pub parameter_metadata: Vec<ParameterMetadata<'a>>,
     pub static_member: bool,
     pub sealed: bool,
     pub virtual_member: bool,
@@ -68,4 +80,22 @@ pub struct Method<'a> {
     pub has_security: bool,
     pub require_sec_object: bool
     // TODO: implementation, semantics
+}
+
+#[derive(Debug)]
+pub enum Constant {
+    Boolean(bool),
+    Char(char),
+    Int8(i8),
+    UInt8(u8),
+    Int16(i16),
+    UInt16(u16),
+    Int32(i32),
+    UInt32(u32),
+    Int64(i64),
+    UInt64(u64),
+    Float32(f32),
+    Float64(f64),
+    String(String), // UTF16, which we parse into an owned String
+    Null
 }

@@ -18,8 +18,8 @@ pub enum Accessibility {
 #[derive(Debug)]
 pub enum Layout {
     Automatic,
-    Sequential,
-    Explicit
+    Sequential { packing_size: usize, class_size: usize },
+    Explicit { packing_size: usize, class_size: usize }
 }
 
 #[derive(Debug)]

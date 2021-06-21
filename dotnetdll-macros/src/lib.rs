@@ -382,7 +382,7 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
     });
 
     TokenStream::from(quote! {
-        #[derive(Debug, Copy, Clone)]
+        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         pub enum #name {
             #(#variants(usize)),*
         }
