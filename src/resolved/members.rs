@@ -1,9 +1,9 @@
 use super::{
+    body,
     generic::MethodGeneric,
     signature,
     types::{CustomTypeModifier, MemberType},
 };
-use crate::binary::method;
 
 #[derive(Debug)]
 pub enum Accessibility {
@@ -75,7 +75,7 @@ pub enum BodyManagement {
 #[derive(Debug)]
 pub struct Method<'a> {
     pub name: &'a str,
-    pub body: Option<method::Method>,
+    pub body: Option<body::Method<'a>>,
     pub signature: signature::ManagedMethod<'a>,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,

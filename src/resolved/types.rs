@@ -167,6 +167,17 @@ pub enum MethodType<'a> {
     MethodGeneric(usize),
 }
 
+#[derive(Debug)]
+pub enum LocalVariable<'a> {
+    TypedReference,
+    Variable {
+        custom_modifier: Option<CustomTypeModifier<'a>>,
+        pinned: bool,
+        by_ref: bool,
+        var_type: MethodType<'a>,
+    },
+}
+
 pub trait Resolver {
     type Error: std::error::Error;
     fn find_type<'a>(&self, name: &str) -> Result<&'a TypeDefinition<'a>, Self::Error>;
