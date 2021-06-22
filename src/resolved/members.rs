@@ -35,6 +35,7 @@ pub struct Property<'a> {
     pub name: &'a str,
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
+    pub other: Vec<Method<'a>>,
     pub type_modifier: Option<CustomTypeModifier<'a>>,
     pub return_type: MemberType<'a>,
     pub special_name: bool,
@@ -59,6 +60,19 @@ pub struct ParameterMetadata<'a> {
 }
 
 #[derive(Debug)]
+pub enum BodyFormat {
+    IL,
+    Native,
+    Runtime
+}
+
+#[derive(Debug)]
+pub enum BodyManagement {
+    Unmanaged,
+    Managed
+}
+
+#[derive(Debug)]
 pub struct Method<'a> {
     pub name: &'a str,
     pub body: Option<method::Method>,
@@ -78,8 +92,14 @@ pub struct Method<'a> {
     pub runtime_special_name: bool,
     // TODO: security
     pub has_security: bool,
-    pub require_sec_object: bool
-    // TODO: implementation, semantics
+    pub require_sec_object: bool,
+    pub body_format: BodyFormat,
+    pub body_management: BodyManagement,
+    pub forward_ref: bool,
+    pub preserve_sig: bool,
+    pub synchronized: bool,
+    pub no_inlining: bool,
+    pub no_optimization: bool,
 }
 
 #[derive(Debug)]
@@ -98,4 +118,16 @@ pub enum Constant {
     Float64(f64),
     String(String), // UTF16, which we parse into an owned String
     Null
+}
+
+#[derive(Debug)]
+pub struct Event<'a> {
+    pub name: &'a str,
+    pub delegate_type: MemberType<'a>, // standard says this can be null, but that doesn't make any sense
+    pub add_listener: Method<'a>,
+    pub remove_listener: Method<'a>,
+    pub raise_event: Option<Method<'a>>,
+    pub other: Vec<Method<'a>>,
+    pub special_name: bool,
+    pub runtime_special_name: bool,
 }

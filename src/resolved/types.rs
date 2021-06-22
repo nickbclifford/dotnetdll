@@ -31,6 +31,12 @@ pub enum StringFormatting {
 }
 
 #[derive(Debug)]
+pub struct MethodOverride<'a> {
+    implementation: &'a members::Method<'a>,
+    declaration: &'a members::Method<'a>
+}
+
+#[derive(Debug)]
 pub struct TypeDefinition<'a> {
     pub name: &'a str,
     pub namespace: Option<&'a str>,
@@ -38,6 +44,9 @@ pub struct TypeDefinition<'a> {
     pub fields: Vec<members::Field<'a>>,
     pub properties: Vec<members::Property<'a>>,
     pub methods: Vec<members::Method<'a>>,
+    pub events: Vec<members::Event<'a>>,
+    pub nested_types: Vec<TypeDefinition<'a>>,
+    pub overrides: Vec<MethodOverride<'a>>,
     pub extends: Option<Supertype<'a>>,
     pub implements: Vec<Supertype<'a>>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
