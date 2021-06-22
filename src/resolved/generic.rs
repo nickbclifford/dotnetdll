@@ -4,14 +4,14 @@ use super::types;
 pub enum Variance {
     Invariant,
     Covariant,
-    Contravariant
+    Contravariant,
 }
 
 #[derive(Debug)]
 pub enum SpecialConstraint {
     ReferenceType,
     ValueType,
-    HasDefaultConstructor
+    HasDefaultConstructor,
 }
 
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub struct Generic<'a, ConstraintType> {
     pub name: &'a str,
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,
-    pub type_constraint: ConstraintType
+    pub type_constraint: ConstraintType,
 }
 
 pub type TypeGeneric<'a> = Generic<'a, types::MemberType<'a>>;

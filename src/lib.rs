@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = dll::DLL::parse(&file)?;
         let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
@@ -184,6 +184,10 @@ mod tests {
             blobs: &blobs,
             tables: &meta.tables,
         };
+
+        for attr in meta.tables.custom_attribute.iter() {
+            println!("{:x?}", blobs.at_index(attr.value)?)
+        }
 
         Ok(())
     }

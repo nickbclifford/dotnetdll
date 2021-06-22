@@ -13,7 +13,7 @@ pub enum Accessibility {
     Internal,          // Assem
     Protected,         // Family
     ProtectedInternal, // FamORAssem
-    Public
+    Public,
 }
 
 #[derive(Debug)]
@@ -46,7 +46,7 @@ pub struct Property<'a> {
 #[derive(Debug)]
 pub enum VtableLayout {
     ReuseSlot,
-    NewSlot
+    NewSlot,
 }
 
 #[derive(Debug)]
@@ -56,20 +56,20 @@ pub struct ParameterMetadata<'a> {
     pub is_out: bool,
     pub optional: bool,
     pub default: Option<Constant>,
-    pub has_field_marshal: bool
+    pub has_field_marshal: bool,
 }
 
 #[derive(Debug)]
 pub enum BodyFormat {
     IL,
     Native,
-    Runtime
+    Runtime,
 }
 
 #[derive(Debug)]
 pub enum BodyManagement {
     Unmanaged,
-    Managed
+    Managed,
 }
 
 #[derive(Debug)]
@@ -117,7 +117,7 @@ pub enum Constant {
     Float32(f32),
     Float64(f64),
     String(String), // UTF16, which we parse into an owned String
-    Null
+    Null,
 }
 
 #[derive(Debug)]

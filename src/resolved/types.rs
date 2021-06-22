@@ -12,14 +12,19 @@ pub enum Kind {
 pub enum Accessibility {
     NotPublic,
     Public,
-    Nested(members::Accessibility)
+    Nested(members::Accessibility),
 }
 
 #[derive(Debug)]
 pub enum Layout {
     Automatic,
-    Sequential { packing_size: usize, class_size: usize },
-    Explicit { packing_size: usize, class_size: usize }
+    Sequential {
+        packing_size: usize,
+        class_size: usize,
+    },
+    Explicit {
+        class_size: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -27,13 +32,26 @@ pub enum StringFormatting {
     ANSI,
     Unicode,
     Automatic,
-    Custom(bool, bool) // two-bit mask with non-standard meanings
+    Custom(bool, bool), // two-bit mask with non-standard meanings
 }
 
 #[derive(Debug)]
 pub struct MethodOverride<'a> {
     implementation: &'a members::Method<'a>,
-    declaration: &'a members::Method<'a>
+    declaration: &'a members::Method<'a>,
+}
+
+macro_rules! type_name_impl {
+    ($i:ty) => {
+        impl $i {
+            pub fn type_name(&self) -> String {
+                match self.namespace {
+                    Some(ns) => format!("{}.{}", ns, self.name),
+                    None => self.name.to_string(),
+                }
+            }
+        }
+    };
 }
 
 #[derive(Debug)]
@@ -72,10 +90,22 @@ pub struct ExternalTypeReference<'a> {
     pub namespace: Option<&'a str>, // TODO: resolution scope
 }
 
+type_name_impl!(TypeDefinition<'_>);
+type_name_impl!(ExternalTypeReference<'_>);
+
 #[derive(Debug)]
 pub enum UserType<'a> {
     Definition(&'a TypeDefinition<'a>),
     Reference(&'a ExternalTypeReference<'a>),
+}
+
+impl UserType<'_> {
+    pub fn type_name(&self) -> String {
+        match *self {
+            UserType::Definition(t) => t.type_name(),
+            UserType::Reference(t) => t.type_name(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -135,4 +165,9 @@ pub enum MethodType<'a> {
     Base(Box<BaseType<'a, MethodType<'a>>>),
     TypeGeneric(usize),
     MethodGeneric(usize),
+}
+
+pub trait Resolver {
+    type Error: std::error::Error;
+    fn find_type<'a>(&self, name: &str) -> Result<&'a TypeDefinition<'a>, Self::Error>;
 }

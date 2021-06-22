@@ -1,6 +1,7 @@
+use super::encoded::*;
 use scroll::{ctx::TryFromCtx, Pread};
 
-struct SerString<'a>(pub Option<&'a str>);
+pub struct SerString<'a>(pub Option<&'a str>);
 impl<'a> TryFromCtx<'a> for SerString<'a> {
     type Error = scroll::Error;
 
@@ -19,6 +20,71 @@ impl<'a> TryFromCtx<'a> for SerString<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum FieldOrPropType<'a> {
+    Boolean,
+    Char,
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
+    Int32,
+    UInt32,
+    Int64,
+    UInt64,
+    Float32,
+    Float64,
+    String,
+    Type,
+    Object,
+    Vector(Box<FieldOrPropType<'a>>),
+    Enum(&'a str),
+}
+
+impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+
+        use FieldOrPropType::*;
+
+        let val = match from.gread_with::<u8>(offset, scroll::LE)? {
+            ELEMENT_TYPE_BOOLEAN => Boolean,
+            ELEMENT_TYPE_CHAR => Char,
+            ELEMENT_TYPE_I1 => Int8,
+            ELEMENT_TYPE_U1 => UInt8,
+            ELEMENT_TYPE_I2 => Int16,
+            ELEMENT_TYPE_U2 => UInt16,
+            ELEMENT_TYPE_I4 => Int32,
+            ELEMENT_TYPE_U4 => UInt32,
+            ELEMENT_TYPE_I8 => Int64,
+            ELEMENT_TYPE_U8 => UInt64,
+            ELEMENT_TYPE_R4 => Float32,
+            ELEMENT_TYPE_R8 => Float64,
+            ELEMENT_TYPE_STRING => String,
+            ELEMENT_TYPE_SZARRAY => Vector(Box::new(from.gread(offset)?)),
+            0x50 => Type,
+            0x51 => Object,
+            0x55 => Enum(
+                from.gread::<SerString>(offset)?
+                    .0
+                    .ok_or(scroll::Error::Custom(
+                        "null enum name encountered when parsing custom attribute".to_string(),
+                    ))?,
+            ),
+            bad => {
+                return Err(scroll::Error::Custom(format!(
+                    "bad custom attribute type tag {:#04x}",
+                    bad
+                )))
+            }
+        };
+
+        Ok((val, *offset))
+    }
+}
+
 #[derive(Debug)]
 pub enum IntegralParam {
     Int8(i8),
@@ -32,33 +98,27 @@ pub enum IntegralParam {
 }
 
 #[derive(Debug)]
-pub enum ValueParam<'a> {
-    Bool(bool),
+pub enum FixedArg<'a> {
+    Boolean(bool),
     Char(char),
     Float32(f32),
     Float64(f64),
     String(Option<&'a str>),
     Integral(IntegralParam),
-}
-
-#[derive(Debug)]
-pub enum BoxedParam<'a> {
-    Value(ValueParam<'a>),
     Enum(&'a str, IntegralParam),
-    Array(Vec<BoxedParam<'a>>),
+    Type(&'a str),
+    Array(Option<Vec<FixedArg<'a>>>),
+    Object(Box<FixedArg<'a>>),
 }
 
 #[derive(Debug)]
-pub enum Elem<'a> {
-    Simple(ValueParam<'a>),
-    Boxed(BoxedParam<'a>),
-    Type(&'a str),
+pub enum NamedArg<'a> {
+    Field(&'a str, FixedArg<'a>),
+    Property(&'a str, FixedArg<'a>),
 }
 
-pub enum FixedArg<'a> {
-    Array(Option<Vec<Elem<'a>>>),
-    Scalar(Elem<'a>),
+#[derive(Debug)]
+pub struct CustomAttributeData<'a> {
+    pub constructor_args: Vec<FixedArg<'a>>,
+    pub named_args: Vec<NamedArg<'a>>,
 }
-
-// TODO: attribute signatures require fully-resolved type knowledge for parsing
-// not only dependent on constructor parameter types, but boxed types require full type name lookup

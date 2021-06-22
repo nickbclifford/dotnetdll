@@ -105,10 +105,13 @@ impl ToCtxString for Type {
                     .join(", ")
             ),
             MVar(n) => format!("M{}", n),
-            Ptr(_, ptrt) => format!("{}*", match &**ptrt {
-                None => "void".to_string(),
-                Some(t) => t.to_string(ctx)
-            }),
+            Ptr(_, ptrt) => format!(
+                "{}*",
+                match &**ptrt {
+                    None => "void".to_string(),
+                    Some(t) => t.to_string(ctx),
+                }
+            ),
             SzArray(_, t) => format!("{}[]", t.to_string(ctx)),
             ValueType(token) => token.to_string(ctx),
             Var(n) => format!("T{}", n),
