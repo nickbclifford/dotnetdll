@@ -47,7 +47,7 @@ pub struct ExternalFieldReference<'a> {
 #[derive(Debug)]
 pub enum FieldSource<'a> {
     Definition(&'a Field<'a>),
-    Reference(&'a ExternalFieldReference<'a>),
+    Reference(ExternalFieldReference<'a>),
 }
 
 #[derive(Debug)]
@@ -139,12 +139,12 @@ pub struct ExternalMethodReference<'a> {
 #[derive(Debug)]
 pub enum UserMethod<'a> {
     Definition(&'a Method<'a>),
-    Reference(&'a ExternalMethodReference<'a>),
+    Reference(ExternalMethodReference<'a>),
 }
 
 impl<'a> UserMethod<'a> {
     pub fn signature(&self) -> &signature::ManagedMethod<'a> {
-        match *self {
+        match self {
             UserMethod::Definition(d) => &d.signature,
             UserMethod::Reference(r) => &r.signature,
         }

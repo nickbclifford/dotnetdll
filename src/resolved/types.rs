@@ -1,11 +1,10 @@
-use super::{generic::TypeGeneric, members, signature};
+use super::{assembly, generic::TypeGeneric, members, module, signature};
 use crate::binary::signature::encoded::ArrayShape;
 
 #[derive(Debug)]
 pub enum Kind {
     Class,
     Interface,
-    ValueType,
 }
 
 #[derive(Debug)]
@@ -55,21 +54,10 @@ macro_rules! type_name_impl {
 }
 
 #[derive(Debug)]
-pub struct TypeDefinition<'a> {
-    pub name: &'a str,
-    pub namespace: Option<&'a str>,
-    pub kind: Kind,
-    pub fields: Vec<members::Field<'a>>,
-    pub properties: Vec<members::Property<'a>>,
-    pub methods: Vec<members::Method<'a>>,
-    pub events: Vec<members::Event<'a>>,
-    pub nested_types: Vec<TypeDefinition<'a>>,
-    pub overrides: Vec<MethodOverride<'a>>,
-    pub extends: Option<TypeSource<'a, MemberType<'a>>>,
-    pub implements: Vec<TypeSource<'a, MemberType<'a>>>,
-    pub generic_parameters: Vec<TypeGeneric<'a>>,
+pub struct TypeFlags {
     pub accessibility: Accessibility,
     pub layout: Layout,
+    pub kind: Kind,
     pub abstract_type: bool,
     pub sealed: bool,
     pub special_name: bool,
@@ -80,28 +68,71 @@ pub struct TypeDefinition<'a> {
     pub runtime_special_name: bool,
     // TODO: security
     pub has_security: bool,
-    // TODO: exporting
-    pub type_forwarder: bool,
+}
+
+#[derive(Debug)]
+pub struct TypeDefinition<'a> {
+    pub name: &'a str,
+    pub namespace: Option<&'a str>,
+    pub fields: Vec<members::Field<'a>>,
+    pub properties: Vec<members::Property<'a>>,
+    pub methods: Vec<members::Method<'a>>,
+    pub events: Vec<members::Event<'a>>,
+    pub nested_types: Vec<TypeDefinition<'a>>,
+    pub overrides: Vec<MethodOverride<'a>>,
+    pub extends: Option<TypeSource<'a, MemberType<'a>>>,
+    pub implements: Vec<TypeSource<'a, MemberType<'a>>>,
+    pub generic_parameters: Vec<TypeGeneric<'a>>,
+    pub flags: TypeFlags,
+}
+
+#[derive(Debug)]
+pub enum ResolutionScope<'a> {
+    Nested(Box<ExternalTypeReference<'a>>),
+    ExternalModule(module::ExternalModuleReference<'a>),
+    CurrentModule(&'a module::Module<'a>), // TODO: reference?
+    Assembly(assembly::ExternalAssemblyReference<'a>),
+    Exported(&'a ExportedType<'a>)
 }
 
 #[derive(Debug)]
 pub struct ExternalTypeReference<'a> {
     pub name: &'a str,
-    pub namespace: Option<&'a str>, // TODO: resolution scope
+    pub namespace: Option<&'a str>,
+    pub scope: ResolutionScope<'a>,
+}
+
+#[derive(Debug)]
+pub enum TypeImplementation<'a> {
+    Nested(&'a ExportedType<'a>),
+    ModuleFile {
+        type_def_idx: usize,
+        file: &'a module::File<'a>,
+    },
+    TypeForwarder(assembly::ExternalAssemblyReference<'a>),
+}
+
+#[derive(Debug)]
+pub struct ExportedType<'a> {
+    pub flags: TypeFlags,
+    pub name: &'a str,
+    pub namespace: Option<&'a str>,
+    pub implementation: TypeImplementation<'a>,
 }
 
 type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
+type_name_impl!(ExportedType<'_>);
 
 #[derive(Debug)]
 pub enum UserType<'a> {
     Definition(&'a TypeDefinition<'a>),
-    Reference(&'a ExternalTypeReference<'a>),
+    Reference(ExternalTypeReference<'a>),
 }
 
 impl UserType<'_> {
     pub fn type_name(&self) -> String {
-        match *self {
+        match self {
             UserType::Definition(t) => t.type_name(),
             UserType::Reference(t) => t.type_name(),
         }
