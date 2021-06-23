@@ -1,10 +1,13 @@
-use super::{il::Instruction, types::{LocalVariable, MethodType}};
+use super::{
+    il::Instruction,
+    types::{LocalVariable, MethodType},
+};
 
 #[derive(Debug)]
 pub struct Header<'a> {
     pub initialize_locals: bool,
     pub maximum_stack_size: usize,
-    pub local_variables: Vec<LocalVariable<'a>>
+    pub local_variables: Vec<LocalVariable<'a>>,
 }
 
 #[derive(Debug)]
@@ -17,10 +20,10 @@ pub struct Method<'a> {
 #[derive(Debug)]
 pub enum DataSection<'a> {
     Unrecognized,
-    ExceptionHandlers(Vec<Exception<'a>>)
+    ExceptionHandlers(Vec<Exception<'a>>),
 }
 
-#[derive(debug)]
+#[derive(Debug)]
 pub struct Exception<'a> {
     pub exception: bool,
     pub filter: bool,

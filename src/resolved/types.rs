@@ -65,8 +65,8 @@ pub struct TypeDefinition<'a> {
     pub events: Vec<members::Event<'a>>,
     pub nested_types: Vec<TypeDefinition<'a>>,
     pub overrides: Vec<MethodOverride<'a>>,
-    pub extends: Option<Supertype<'a>>,
-    pub implements: Vec<Supertype<'a>>,
+    pub extends: Option<TypeSource<'a, MemberType<'a>>>,
+    pub implements: Vec<TypeSource<'a, MemberType<'a>>>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
     pub accessibility: Accessibility,
     pub layout: Layout,
@@ -123,15 +123,14 @@ pub struct GenericInstantiation<'a, CtxBaseType> {
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
 #[derive(Debug)]
-pub enum Supertype<'a> {
+pub enum TypeSource<'a, EnclosingType> {
     User(UserType<'a>),
-    Generic(GenericInstantiation<'a, MemberType<'a>>),
+    Generic(GenericInstantiation<'a, EnclosingType>),
 }
 
 #[derive(Debug)]
 pub enum BaseType<'a, EnclosingType> {
-    User(UserType<'a>),
-    Generic(GenericInstantiation<'a, EnclosingType>),
+    Type(TypeSource<'a, EnclosingType>),
     Boolean,
     Char,
     Int8,

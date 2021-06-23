@@ -1,8 +1,9 @@
 use super::{
     body,
     generic::MethodGeneric,
+    module::ExternalModuleReference,
     signature,
-    types::{CustomTypeModifier, MemberType},
+    types::{CustomTypeModifier, MemberType, MethodType, TypeSource},
 };
 
 #[derive(Debug)]
@@ -28,6 +29,25 @@ pub struct Field<'a> {
     pub default: Option<Constant>,
     pub not_serialized: bool,
     pub special_name: bool,
+}
+
+#[derive(Debug)]
+pub enum FieldReferenceParent<'a> {
+    Type(TypeSource<'a, MemberType<'a>>),
+    Module(ExternalModuleReference<'a>),
+}
+
+#[derive(Debug)]
+pub struct ExternalFieldReference<'a> {
+    pub parent: FieldReferenceParent<'a>,
+    pub name: &'a str,
+    pub return_type: MemberType<'a>,
+}
+
+#[derive(Debug)]
+pub enum FieldSource<'a> {
+    Definition(&'a Field<'a>),
+    Reference(&'a ExternalFieldReference<'a>),
 }
 
 #[derive(Debug)]
@@ -100,6 +120,38 @@ pub struct Method<'a> {
     pub synchronized: bool,
     pub no_inlining: bool,
     pub no_optimization: bool,
+}
+
+#[derive(Debug)]
+pub enum MethodReferenceParent<'a> {
+    Type(TypeSource<'a, MethodType<'a>>),
+    Module(ExternalModuleReference<'a>),
+    VarargMethod(&'a Method<'a>),
+}
+
+#[derive(Debug)]
+pub struct ExternalMethodReference<'a> {
+    pub parent: MethodReferenceParent<'a>,
+    pub name: &'a str,
+    pub signature: signature::ManagedMethod<'a>,
+}
+
+#[derive(Debug)]
+pub enum UserMethod<'a> {
+    Definition(&'a Method<'a>),
+    Reference(&'a ExternalMethodReference<'a>),
+}
+
+#[derive(Debug)]
+pub struct GenericMethodInstantiation<'a> {
+    pub base: UserMethod<'a>,
+    pub parameters: Vec<MethodType<'a>>,
+}
+
+#[derive(Debug)]
+pub enum MethodSource<'a> {
+    User(UserMethod<'a>),
+    Generic(GenericMethodInstantiation<'a>),
 }
 
 #[derive(Debug)]

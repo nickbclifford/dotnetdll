@@ -120,7 +120,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                 None => return Ok(FieldOrPropType::Object),
             };
             match supertype {
-                Supertype::User(u) if u.type_name() == "System.Enum" => def
+                TypeSource::User(u) if u.type_name() == "System.Enum" => def
                     .fields
                     .iter()
                     .find(|f| f.name == "value__")
@@ -161,16 +161,26 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                 MethodType::Base(b) => {
                     use BaseType::*;
                     let t = match &**b {
-                        User(t) => {
-                            if t.type_name() == "System.Type" {
-                                FieldOrPropType::Type
-                            } else {
-                                match t {
-                                    UserType::Definition(ref d) => process_def(d),
-                                    UserType::Reference(r) => process_def(resolve(&r.type_name())?),
-                                }?
+                        Type(ts) => match ts {
+                            TypeSource::User(t) => {
+                                if t.type_name() == "System.Type" {
+                                    FieldOrPropType::Type
+                                } else {
+                                    match t {
+                                        UserType::Definition(ref d) => process_def(d),
+                                        UserType::Reference(r) => {
+                                            process_def(resolve(&r.type_name())?)
+                                        }
+                                    }?
+                                }
                             }
-                        }
+                            TypeSource::Generic(g) => {
+                                return Err(scroll::Error::Custom(format!(
+                                    "bad type {:?} in custom attribute constructor",
+                                    g
+                                )))
+                            }
+                        },
                         Boolean => FieldOrPropType::Boolean,
                         Char => FieldOrPropType::Char,
                         Int8 => FieldOrPropType::Int8,
