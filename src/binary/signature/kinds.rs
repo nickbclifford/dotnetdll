@@ -362,3 +362,47 @@ impl TryFromCtx<'_> for MethodSpec {
         Ok((MethodSpec(types), *offset))
     }
 }
+
+#[derive(Debug)]
+pub enum MarshalSpec {
+    Primitive(NativeIntrinsic),
+    Array {
+        element_type: NativeIntrinsic,
+        length_parameter: Option<usize>,
+        additional_elements: Option<usize>,
+    },
+}
+
+impl TryFromCtx<'_> for MarshalSpec {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+
+        use MarshalSpec::*;
+
+        let tag: u8 = from.gread_with(offset, scroll::LE)?;
+        if tag != NATIVE_TYPE_ARRAY {
+            return Ok((Primitive(from.gread(offset)?), *offset));
+        }
+
+        let element_type = from.gread(offset)?;
+        let length_parameter = from
+            .gread::<compressed::Unsigned>(offset)
+            .ok()
+            .map(|u| u.0 as usize);
+        let additional_elements = from
+            .gread::<compressed::Unsigned>(offset)
+            .ok()
+            .map(|u| u.0 as usize);
+
+        Ok((
+            Array {
+                element_type,
+                length_parameter,
+                additional_elements,
+            },
+            *offset,
+        ))
+    }
+}

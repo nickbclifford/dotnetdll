@@ -371,3 +371,87 @@ impl TryFromCtx<'_> for RetType {
         Ok((RetType(opt_mod, val), *offset))
     }
 }
+
+#[derive(Debug)]
+pub enum NativeIntrinsic {
+    Boolean,
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
+    Int32,
+    UInt32,
+    Int64,
+    UInt64,
+    Float32,
+    Float64,
+    LPStr,
+    LPWStr,
+    IntPtr,
+    UIntPtr,
+    Function,
+}
+
+macro_rules! native_types {
+    ($($name:ident = $val:literal),+) => {
+        $(
+            paste! {
+                pub const [<NATIVE_TYPE_ $name>]: u8 = $val;
+            }
+        )*
+    }
+}
+
+native_types! {
+    BOOLEAN = 0x02,
+    I1 = 0x03,
+    U1 = 0x04,
+    I2 = 0x05,
+    U2 = 0x06,
+    I4 = 0x07,
+    U4 = 0x08,
+    I8 = 0x09,
+    U8 = 0x0a,
+    R4 = 0x0b,
+    R8 = 0x0c,
+    LPSTR = 0x14,
+    LPWSTR = 0x15,
+    INT = 0x1f,
+    UINT = 0x20,
+    FUNC = 0x26,
+    ARRAY = 0x2a
+}
+
+impl TryFromCtx<'_> for NativeIntrinsic {
+    type Error = scroll::Error;
+
+    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+        let offset = &mut 0;
+        
+        use NativeIntrinsic::*;
+        
+        let val = match from.gread_with::<u8>(offset, scroll::LE) {
+            NATIVE_TYPE_BOOLEAN => Boolean,
+            NATIVE_TYPE_I1 => Int8,
+            NATIVE_TYPE_U1 => UInt8,
+            NATIVE_TYPE_I1 => Int8,
+            NATIVE_TYPE_U1 => UInt8,
+            NATIVE_TYPE_I2 => Int16,
+            NATIVE_TYPE_U2 => UInt16,
+            NATIVE_TYPE_I4 => Int32,
+            NATIVE_TYPE_U4 => UInt32,
+            NATIVE_TYPE_I8 => Int64,
+            NATIVE_TYPE_U8 => UInt64,
+            NATIVE_TYPE_R4 => Float32,
+            NATIVE_TYPE_R8 => Float64,
+            NATIVE_TYPE_LPSTR => LPStr,
+            NATIVE_TYPE_LPWSTR => LPWStr,
+            NATIVE_TYPE_INT => IntPtr,
+            NATIVE_TYPE_UINT => UIntPtr,
+            NATIVE_TYPE_FUNC => Function,
+            bad => return Err(scroll::Error::Custom(format!("bad native instrinsic value {:#04x}", bad)))
+        };
+
+        Ok((val, *offset))
+    }
+}

@@ -6,6 +6,7 @@ use super::{
     signature,
     types::{CustomTypeModifier, MemberType, MethodType, TypeSource},
 };
+use crate::binary::signature::kinds::MarshalSpec;
 
 #[derive(Debug)]
 pub enum Accessibility {
@@ -30,6 +31,9 @@ pub struct Field<'a> {
     pub default: Option<Constant>,
     pub not_serialized: bool,
     pub special_name: bool,
+    pub offset: Option<usize>,
+    pub marshal: Option<MarshalSpec>,
+    pub start_of_initial_value: Option<&'a [u8]>,
 }
 
 #[derive(Debug)]
@@ -77,7 +81,7 @@ pub struct ParameterMetadata<'a> {
     pub is_out: bool,
     pub optional: bool,
     pub default: Option<Constant>,
-    pub has_field_marshal: bool,
+    pub marshal: Option<MarshalSpec>,
 }
 
 #[derive(Debug)]
