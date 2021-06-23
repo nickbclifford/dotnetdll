@@ -11,7 +11,7 @@ pub struct Attribute<'def, 'inst> {
     // 'def is the lifetime of the defining metadata
     // 'inst is the lifetime of the metadata where the attribute is instantiated
     // these are not necessarily the same, so defining them separately allows for more flexibility
-    pub constructor: &'def members::Method<'def>,
+    pub constructor: members::UserMethod<'def>,
     value: &'inst [u8],
 }
 
@@ -30,12 +30,12 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
             )));
         }
 
-        fn parse_from_type<'a>(
-            f_type: FieldOrPropType<'a>,
-            src: &'a [u8],
+        fn parse_from_type<'def, 'inst>(
+            f_type: FieldOrPropType<'inst>,
+            src: &'inst [u8],
             offset: &mut usize,
-            resolver: &impl Resolver,
-        ) -> Result<FixedArg<'a>> {
+            resolve: &impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
+        ) -> Result<FixedArg<'inst>> {
             use FieldOrPropType::*;
             Ok(match f_type {
                 Boolean => FixedArg::Boolean(src.gread_with::<u8>(offset, scroll::LE)? == 1),
@@ -79,7 +79,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                     src.gread(offset)?,
                     src,
                     offset,
-                    resolver,
+                    resolve,
                 )?)),
                 Vector(t) => {
                     let num_elem: u32 = src.gread_with(offset, scroll::LE)?;
@@ -88,18 +88,14 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                     } else {
                         let mut elems = Vec::with_capacity(num_elem as usize);
                         for _ in 0..num_elem {
-                            elems.push(parse_from_type(*t.clone(), src, offset, resolver)?);
+                            elems.push(parse_from_type(*t.clone(), src, offset, resolve)?);
                         }
                         Some(elems)
                     })
                 }
                 Enum(name) => {
-                    let t = process_def(
-                        resolver
-                            .find_type(name)
-                            .map_err(|e| scroll::Error::Custom(e.to_string()))?,
-                    )?;
-                    match parse_from_type(t, src, offset, resolver)? {
+                    let t = process_def(resolve(name)?)?;
+                    match parse_from_type(t, src, offset, resolve)? {
                         FixedArg::Integral(i) => FixedArg::Enum(name, i),
                         bad => {
                             return Err(scroll::Error::Custom(format!(
@@ -155,7 +151,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
 
         fn method_to_type<'def, 'inst>(
             m: &'def MethodType<'def>,
-            resolve: impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
+            resolve: &impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
         ) -> Result<FieldOrPropType<'inst>> {
             return match m {
                 MethodType::Base(b) => {
@@ -217,20 +213,24 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
             };
         }
 
-        let mut fixed = Vec::with_capacity(self.constructor.signature.parameters.len());
+        let sig = self.constructor.signature();
 
-        for Parameter(_, param) in self.constructor.signature.parameters.iter() {
+        let mut fixed = Vec::with_capacity(sig.parameters.len());
+
+        let resolve = |s: &str| {
+            resolver
+                .find_type(s)
+                .map_err(|e| scroll::Error::Custom(e.to_string()))
+        };
+
+        for Parameter(_, param) in sig.parameters.iter() {
             match param {
                 ParameterType::Value(p_type) => {
                     fixed.push(parse_from_type(
-                        method_to_type(p_type, |s| {
-                            resolver
-                                .find_type(s)
-                                .map_err(|e| scroll::Error::Custom(e.to_string()))
-                        })?,
+                        method_to_type(p_type, &resolve)?,
                         self.value,
                         offset,
-                        resolver,
+                        &resolve,
                     )?);
                 }
                 ParameterType::Ref(_) => {
@@ -261,7 +261,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                     "null string name found when parsing".to_string(),
                 ))?;
 
-            let value = parse_from_type(f_type, self.value, offset, resolver)?;
+            let value = parse_from_type(f_type, self.value, offset, &resolve)?;
 
             named.push(match kind {
                 0x53 => NamedArg::Field(name, value),

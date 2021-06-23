@@ -142,6 +142,15 @@ pub enum UserMethod<'a> {
     Reference(&'a ExternalMethodReference<'a>),
 }
 
+impl<'a> UserMethod<'a> {
+    pub fn signature(&self) -> &signature::ManagedMethod<'a> {
+        match *self {
+            UserMethod::Definition(d) => &d.signature,
+            UserMethod::Reference(r) => &r.signature,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct GenericMethodInstantiation<'a> {
     pub base: UserMethod<'a>,
