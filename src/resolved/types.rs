@@ -1,4 +1,6 @@
-use super::{assembly, generic::TypeGeneric, members, module, signature};
+use super::{
+    assembly, attribute::SecurityDeclaration, generic::TypeGeneric, members, module, signature,
+};
 use crate::binary::signature::encoded::ArrayShape;
 
 #[derive(Debug)]
@@ -66,8 +68,6 @@ pub struct TypeFlags {
     pub string_formatting: StringFormatting,
     pub before_field_init: bool,
     pub runtime_special_name: bool,
-    // TODO: security
-    pub has_security: bool,
 }
 
 #[derive(Debug)]
@@ -84,6 +84,7 @@ pub struct TypeDefinition<'a> {
     pub implements: Vec<TypeSource<'a, MemberType<'a>>>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
     pub flags: TypeFlags,
+    pub security: Option<SecurityDeclaration<'a>>,
 }
 
 #[derive(Debug)]
@@ -92,7 +93,7 @@ pub enum ResolutionScope<'a> {
     ExternalModule(module::ExternalModuleReference<'a>),
     CurrentModule(&'a module::Module<'a>), // TODO: reference?
     Assembly(assembly::ExternalAssemblyReference<'a>),
-    Exported(&'a ExportedType<'a>)
+    Exported(&'a ExportedType<'a>),
 }
 
 #[derive(Debug)]

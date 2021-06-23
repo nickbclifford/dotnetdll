@@ -1,4 +1,5 @@
 use super::{
+    attribute::SecurityDeclaration,
     body,
     generic::MethodGeneric,
     module::ExternalModuleReference,
@@ -110,8 +111,7 @@ pub struct Method<'a> {
     pub special_name: bool,
     pub pinvoke: bool,
     pub runtime_special_name: bool,
-    // TODO: security
-    pub has_security: bool,
+    pub security: Option<SecurityDeclaration<'a>>,
     pub require_sec_object: bool,
     pub body_format: BodyFormat,
     pub body_management: BodyManagement,

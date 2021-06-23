@@ -1,3 +1,5 @@
+use super::attribute::SecurityDeclaration;
+
 #[derive(Debug)]
 pub struct Flags {
     pub has_public_key: bool,
@@ -29,6 +31,7 @@ pub struct Assembly<'a> {
     pub public_key: Option<&'a [u8]>,
     pub name: &'a str,
     pub culture: Option<&'a str>,
+    pub security: SecurityDeclaration<'a>,
 }
 
 #[derive(Debug)]
