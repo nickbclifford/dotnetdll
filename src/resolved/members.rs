@@ -113,7 +113,7 @@ pub struct Method<'a> {
     pub strict: bool,
     pub abstract_member: bool,
     pub special_name: bool,
-    pub pinvoke: bool,
+    pub pinvoke: Option<PInvoke<'a>>,
     pub runtime_special_name: bool,
     pub security: Option<SecurityDeclaration<'a>>,
     pub require_sec_object: bool,
@@ -124,6 +124,33 @@ pub struct Method<'a> {
     pub synchronized: bool,
     pub no_inlining: bool,
     pub no_optimization: bool,
+}
+
+#[derive(Debug)]
+pub enum CharacterSet {
+    NotSpecified,
+    Ansi,
+    Unicode,
+    Auto,
+}
+
+#[derive(Debug)]
+pub enum UnmanagedCallingConvention {
+    Platformapi,
+    Cdecl,
+    Stdcall,
+    Thiscall,
+    Fastcall,
+}
+
+#[derive(Debug)]
+pub struct PInvoke<'a> {
+    pub no_mangle: bool,
+    pub character_set: CharacterSet,
+    pub supports_last_error: bool,
+    pub calling_convention: UnmanagedCallingConvention,
+    pub import_name: &'a str,
+    pub import_scope: ExternalModuleReference<'a>,
 }
 
 #[derive(Debug)]

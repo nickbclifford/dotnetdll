@@ -5,5 +5,6 @@ pub mod generic;
 pub mod il;
 pub mod members;
 pub mod module;
+pub mod resource;
 pub mod signature;
 pub mod types;
