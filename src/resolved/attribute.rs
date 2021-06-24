@@ -201,23 +201,21 @@ fn parse_named<'def, 'inst>(
 }
 
 #[derive(Debug)]
-pub struct Attribute<'def, 'inst> {
-    // TODO: owner
-    // 'def is the lifetime of the defining metadata
-    // 'inst is the lifetime of the metadata where the attribute is instantiated
-    // these are not necessarily the same, so defining them separately allows for more flexibility
-    pub constructor: members::UserMethod<'def>,
-    value: &'inst [u8],
+pub struct Attribute<'a> {
+    pub constructor: members::UserMethod<'a>,
+    value: Option<&'a [u8]>,
 }
 
-impl<'def, 'inst> Attribute<'def, 'inst> {
+impl<'a> Attribute<'a> {
     pub fn instantiation_data(
         &self,
         resolver: &impl Resolver,
-    ) -> Result<CustomAttributeData<'inst>> {
+    ) -> Result<CustomAttributeData<'a>> {
+        let bytes = self.value.ok_or(scroll::Error::Custom("null data for custom attribute".to_string()))?;
+
         let offset = &mut 0;
 
-        let prolog: u16 = self.value.gread_with(offset, scroll::LE)?;
+        let prolog: u16 = bytes.gread_with(offset, scroll::LE)?;
         if prolog != 0x0001 {
             return Err(scroll::Error::Custom(format!(
                 "bad custom attribute data prolog {:#06x}",
@@ -240,7 +238,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
                 ParameterType::Value(p_type) => {
                     fixed.push(parse_from_type(
                         method_to_type(p_type, &resolve)?,
-                        self.value,
+                        bytes,
                         offset,
                         &resolve,
                     )?);
@@ -259,7 +257,7 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
             }
         }
 
-        let named = parse_named(self.value, offset, &resolve)?;
+        let named = parse_named(bytes, offset, &resolve)?;
 
         Ok(CustomAttributeData {
             constructor_args: fixed,
@@ -268,8 +266,11 @@ impl<'def, 'inst> Attribute<'def, 'inst> {
     }
 }
 
+// TODO: attribute owners for StandAloneSig and TypeSpec
+
 #[derive(Debug)]
 pub struct SecurityDeclaration<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub action: u16,
     value: &'a [u8],
 }

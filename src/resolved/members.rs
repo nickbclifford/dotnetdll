@@ -1,5 +1,5 @@
 use super::{
-    attribute::SecurityDeclaration,
+    attribute::{Attribute, SecurityDeclaration},
     body,
     generic::MethodGeneric,
     module::ExternalModuleReference,
@@ -21,6 +21,7 @@ pub enum Accessibility {
 
 #[derive(Debug)]
 pub struct Field<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub type_modifier: Option<CustomTypeModifier<'a>>,
     pub return_type: MemberType<'a>,
@@ -44,6 +45,7 @@ pub enum FieldReferenceParent<'a> {
 
 #[derive(Debug)]
 pub struct ExternalFieldReference<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub parent: FieldReferenceParent<'a>,
     pub name: &'a str,
     pub return_type: MemberType<'a>,
@@ -57,6 +59,7 @@ pub enum FieldSource<'a> {
 
 #[derive(Debug)]
 pub struct Property<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
@@ -76,6 +79,7 @@ pub enum VtableLayout {
 
 #[derive(Debug)]
 pub struct ParameterMetadata<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub is_in: bool,
     pub is_out: bool,
@@ -99,6 +103,7 @@ pub enum BodyManagement {
 
 #[derive(Debug)]
 pub struct Method<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub body: Option<body::Method<'a>>,
     pub signature: signature::ManagedMethod<'a>,
@@ -162,6 +167,7 @@ pub enum MethodReferenceParent<'a> {
 
 #[derive(Debug)]
 pub struct ExternalMethodReference<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub parent: MethodReferenceParent<'a>,
     pub name: &'a str,
     pub signature: signature::ManagedMethod<'a>,
@@ -184,6 +190,7 @@ impl<'a> UserMethod<'a> {
 
 #[derive(Debug)]
 pub struct GenericMethodInstantiation<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub base: UserMethod<'a>,
     pub parameters: Vec<MethodType<'a>>,
 }
@@ -214,6 +221,7 @@ pub enum Constant {
 
 #[derive(Debug)]
 pub struct Event<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub delegate_type: MemberType<'a>, // standard says this can be null, but that doesn't make any sense
     pub add_listener: Method<'a>,

@@ -1,4 +1,4 @@
-use super::attribute::SecurityDeclaration;
+use super::attribute::{Attribute, SecurityDeclaration};
 
 #[derive(Debug)]
 pub struct Flags {
@@ -25,6 +25,7 @@ pub enum HashAlgorithm {
 
 #[derive(Debug)]
 pub struct Assembly<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub hash_algorithm: HashAlgorithm,
     pub version: Version,
     pub flags: Flags,
@@ -36,6 +37,7 @@ pub struct Assembly<'a> {
 
 #[derive(Debug)]
 pub struct ExternalAssemblyReference<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub version: Version,
     pub flags: Flags,
     pub public_key_or_token: Option<&'a [u8]>,

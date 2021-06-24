@@ -1,5 +1,8 @@
 use super::{
-    assembly, attribute::SecurityDeclaration, generic::TypeGeneric, members, module, signature,
+    assembly,
+    attribute::{Attribute, SecurityDeclaration},
+    generic::TypeGeneric,
+    members, module, signature,
 };
 use crate::binary::signature::encoded::ArrayShape;
 
@@ -72,6 +75,7 @@ pub struct TypeFlags {
 
 #[derive(Debug)]
 pub struct TypeDefinition<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub namespace: Option<&'a str>,
     pub fields: Vec<members::Field<'a>>,
@@ -81,7 +85,7 @@ pub struct TypeDefinition<'a> {
     pub nested_types: Vec<TypeDefinition<'a>>,
     pub overrides: Vec<MethodOverride<'a>>,
     pub extends: Option<TypeSource<'a, MemberType<'a>>>,
-    pub implements: Vec<TypeSource<'a, MemberType<'a>>>,
+    pub implements: Vec<(Attribute<'a>, TypeSource<'a, MemberType<'a>>)>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
     pub flags: TypeFlags,
     pub security: Option<SecurityDeclaration<'a>>,
@@ -91,13 +95,14 @@ pub struct TypeDefinition<'a> {
 pub enum ResolutionScope<'a> {
     Nested(Box<ExternalTypeReference<'a>>),
     ExternalModule(module::ExternalModuleReference<'a>),
-    CurrentModule(&'a module::Module<'a>), // TODO: reference?
+    CurrentModule(&'a module::Module<'a>),
     Assembly(assembly::ExternalAssemblyReference<'a>),
     Exported(&'a ExportedType<'a>),
 }
 
 #[derive(Debug)]
 pub struct ExternalTypeReference<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub namespace: Option<&'a str>,
     pub scope: ResolutionScope<'a>,
@@ -115,6 +120,7 @@ pub enum TypeImplementation<'a> {
 
 #[derive(Debug)]
 pub struct ExportedType<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub flags: TypeFlags,
     pub name: &'a str,
     pub namespace: Option<&'a str>,

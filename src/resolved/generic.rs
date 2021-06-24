@@ -1,4 +1,4 @@
-use super::types;
+use super::{attribute::Attribute, types};
 
 #[derive(Debug)]
 pub enum Variance {
@@ -16,10 +16,11 @@ pub enum SpecialConstraint {
 
 #[derive(Debug)]
 pub struct Generic<'a, ConstraintType> {
+    pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub variance: Variance,
-    pub special_constraint: SpecialConstraint,
-    pub type_constraint: ConstraintType,
+    pub special_constraint: (Vec<Attribute<'a>>, SpecialConstraint),
+    pub type_constraint: (Vec<Attribute<'a>>, ConstraintType),
 }
 
 pub type TypeGeneric<'a> = Generic<'a, types::MemberType<'a>>;

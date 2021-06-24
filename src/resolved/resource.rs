@@ -1,4 +1,4 @@
-use super::{assembly, module};
+use super::{assembly, attribute::Attribute, module};
 
 #[derive(Debug)]
 pub enum Implementation<'a> {
@@ -14,6 +14,7 @@ pub enum Visibility {
 
 #[derive(Debug)]
 pub struct ManifestResource<'a> {
+    pub attributes: Vec<Attribute<'a>>,
     pub offset: usize,
     pub name: &'a str,
     pub visibility: Visibility,
