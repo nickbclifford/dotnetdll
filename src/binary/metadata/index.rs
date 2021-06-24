@@ -88,6 +88,12 @@ macro_rules! heap_index {
                 Ok(($name(idx), *offset))
             }
         }
+
+        impl $name {
+            pub fn is_null(&self) -> bool {
+                self.0 == 0
+            }
+        }
     };
 }
 
@@ -110,6 +116,12 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Sizes<'a>> for Simple<T> {
         };
 
         Ok((Simple(idx, PhantomData), *offset))
+    }
+}
+
+impl<T: HasKind> Simple<T> {
+    pub fn is_null(&self) -> bool {
+        self.0 == 0
     }
 }
 

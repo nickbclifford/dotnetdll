@@ -1,191 +1,26 @@
 pub mod binary;
 pub mod dll;
 pub mod resolved;
+pub mod context;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
-
-    use regex::{Captures, Regex};
     use scroll::Pread;
 
     use super::{binary::*, dll};
-
-    use context::*;
     use heap::Heap;
-    use metadata::table::*;
-    use signature::{compressed::*, encoded::*, kinds::*};
-
-    impl ToCtxString for signature::encoded::Param {
-        fn to_string(&self, ctx: Context) -> String {
-            match &self.1 {
-                ParamType::Type(t) => t.to_string(ctx),
-                ParamType::ByRef(t) => format!("ref {}", t.to_string(ctx)),
-                ParamType::TypedByRef => "wtf".to_string(),
-            }
-        }
-    }
-
-    impl MethodDef {
-        pub fn access_mod(&self) -> &str {
-            match self.flags & 0x7 {
-                1 => "private",
-                2 => "private protected",
-                3 => "internal",
-                4 => "protected",
-                5 => "protected internal",
-                6 => "public",
-                _ => "",
-            }
-        }
-    }
-
-    impl ToCtxString for MethodDef {
-        fn to_string(&self, ctx: Context) -> String {
-            let sig = ctx
-                .blobs
-                .at_index(self.signature)
-                .and_then(|d| d.pread_with::<MethodDefSig>(0, ()))
-                .unwrap();
-
-            let mut buf = String::new();
-
-            buf.push_str(self.access_mod());
-
-            buf.push(' ');
-
-            if self.flags & 0x10 == 0x10 {
-                buf.push_str("static ");
-            }
-
-            if self.flags & 0x400 == 0x400 {
-                buf.push_str("abstract ");
-            }
-
-            buf.push_str(&match sig.ret_type.1 {
-                RetTypeType::Type(t) => t.to_string(ctx),
-                RetTypeType::ByRef(t) => format!("ref {}", t.to_string(ctx)),
-                RetTypeType::TypedByRef => "wtf".to_string(),
-                RetTypeType::Void => "void".to_string(),
-            });
-
-            buf.push(' ');
-
-            buf.push_str(ctx.strs.at_index(self.name).unwrap());
-
-            if let CallingConvention::Generic(num) = sig.calling_convention {
-                buf.push('<');
-                buf.push_str(
-                    &(0..num)
-                        .into_iter()
-                        .map(|i| format!("M{}", i))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                );
-                buf.push('>');
-            }
-
-            buf.push('(');
-
-            buf.push_str(
-                &sig.params
-                    .iter()
-                    .map(|p| p.to_string(ctx))
-                    .collect::<Vec<String>>()
-                    .join(", "),
-            );
-
-            buf.push(')');
-
-            buf
-        }
-    }
-
-    impl ToCtxString for Field {
-        fn to_string(&self, ctx: Context) -> String {
-            let mut buf = String::new();
-
-            let FieldSig(_, field_type) = ctx
-                .blobs
-                .at_index(self.signature)
-                .and_then(|b| b.pread(0))
-                .unwrap();
-
-            buf.push_str(match self.flags & 0x7 {
-                1 => "private ",
-                2 => "private protected ",
-                3 => "internal ",
-                4 => "protected ",
-                5 => "protected internal ",
-                6 => "public ",
-                _ => "",
-            });
-
-            if self.flags & 0x10 == 0x10 {
-                buf.push_str("static ");
-            }
-
-            buf.push_str(&field_type.to_string(ctx));
-
-            buf.push(' ');
-
-            buf.push_str(&ctx.strs.at_index(self.name).unwrap());
-
-            buf
-        }
-    }
-
-    impl ToCtxString for Property {
-        fn to_string(&self, ctx: Context) -> String {
-            let mut buf = String::new();
-
-            let sig: PropertySig = ctx
-                .blobs
-                .at_index(self.property_type)
-                .and_then(|b| b.pread(0))
-                .unwrap();
-
-            if !sig.has_this {
-                buf.push_str("static ")
-            }
-
-            buf.push_str(&sig.ret_type.to_string(ctx));
-
-            buf.push(' ');
-
-            buf.push_str(&ctx.strs.at_index(self.name).unwrap());
-
-            if !sig.params.is_empty() {
-                buf.push('[');
-                buf.push_str(
-                    &sig.params
-                        .iter()
-                        .map(|p| p.to_string(ctx))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                );
-                buf.push(']');
-            }
-
-            buf
-        }
-    }
+    use metadata::table::Kind;
+    use signature::{encoded::TypeDefOrRefOrSpec, compressed::*};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let strs: heap::Strings = dll.get_heap("#Strings")?;
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
-        let ctx = Context {
-            strs: &strs,
-            blobs: &blobs,
-            tables: &meta.tables,
-        };
-
         for attr in meta.tables.custom_attribute.iter() {
+            println!("idx {:?}", attr.parent);
             println!("{:x?}", blobs.at_index(attr.value)?)
         }
 
@@ -225,15 +60,7 @@ mod tests {
     fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let strs: heap::Strings = dll.get_heap("#Strings")?;
-        let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
-
-        let ctx = Context {
-            strs: &strs,
-            blobs: &blobs,
-            tables: &meta.tables,
-        };
 
         for row in meta.tables.method_def.iter() {
             if row.rva == 0 {

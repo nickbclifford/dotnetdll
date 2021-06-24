@@ -3,7 +3,14 @@ use super::{
     signature::{Parameter, ParameterType},
     types::*,
 };
-use crate::binary::signature::{attribute::*, compressed::Unsigned};
+use crate::binary::heap::Heap;
+use crate::{
+    binary::{
+        metadata::index::HasCustomAttribute,
+        signature::{attribute::*, compressed::Unsigned},
+    },
+    context::Context,
+};
 use scroll::{Pread, Result};
 
 fn parse_from_type<'def, 'inst>(
@@ -207,11 +214,31 @@ pub struct Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub fn instantiation_data(
-        &self,
-        resolver: &impl Resolver,
-    ) -> Result<CustomAttributeData<'a>> {
-        let bytes = self.value.ok_or(scroll::Error::Custom("null data for custom attribute".to_string()))?;
+    pub fn get_for_row(ctx: &Context<'a>, idx: HasCustomAttribute) -> Result<Vec<Attribute<'a>>> {
+        let mut attrs = vec![];
+
+        for c in ctx.tables.custom_attribute.iter() {
+            if c.parent == idx {
+                attrs.push(Attribute {
+                    // we need to resolve everything else first before building attributes
+                    // otherwise trying to resolve in here would cause recursion problems
+                    constructor: todo!(),
+                    value: if c.value.is_null() {
+                        None
+                    } else {
+                        Some(ctx.blobs.at_index(c.value)?)
+                    },
+                });
+            }
+        }
+
+        Ok(attrs)
+    }
+
+    pub fn instantiation_data(&self, resolver: &impl Resolver) -> Result<CustomAttributeData<'a>> {
+        let bytes = self.value.ok_or(scroll::Error::Custom(
+            "null data for custom attribute".to_string(),
+        ))?;
 
         let offset = &mut 0;
 
@@ -266,7 +293,8 @@ impl<'a> Attribute<'a> {
     }
 }
 
-// TODO: attribute owners for StandAloneSig and TypeSpec
+// we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
+// it's not really possible to use those unless you're writing raw metadata though so we'll ignore them
 
 #[derive(Debug)]
 pub struct SecurityDeclaration<'a> {

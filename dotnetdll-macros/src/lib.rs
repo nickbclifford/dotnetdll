@@ -384,7 +384,8 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
     TokenStream::from(quote! {
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         pub enum #name {
-            #(#variants(usize)),*
+            #(#variants(usize),)*
+            Null
         }
 
         impl<'a> TryFromCtx<'a, Sizes<'a>> for #name {
@@ -401,6 +402,10 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
                 } else {
                     from.gread_with::<u32>(offset, scroll::LE)?
                 };
+
+                if coded == 0 {
+                    return Ok((#name::Null, *offset));
+                }
 
                 let mask = (1 << #log) - 1;
                 let index = (coded >> #log) as usize;

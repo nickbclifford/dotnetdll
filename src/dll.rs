@@ -1,7 +1,10 @@
-use super::binary::{
-    cli::{Header, Metadata, RVASize},
-    heap::Heap,
-    metadata, method,
+use super::{
+    binary::{
+        cli::{Header, Metadata, RVASize},
+        heap::Heap,
+        metadata, method,
+    },
+    context::Context,
 };
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -113,5 +116,15 @@ impl<'a> DLL<'a> {
 
     pub fn get_method(&self, def: &metadata::table::MethodDef) -> Result<method::Method> {
         self.raw_rva(def.rva)?.pread(0).map_err(CLI)
+    }
+
+    pub fn get_context(&self) -> Result<Context<'a>> {
+        Ok(Context {
+            strings: self.get_heap("#Strings")?,
+            blobs: self.get_heap("#Blob")?,
+            guids: self.get_heap("#GUID")?,
+            userstrings: self.get_heap("#US")?,
+            tables: self.get_logical_metadata()?.tables,
+        })
     }
 }
