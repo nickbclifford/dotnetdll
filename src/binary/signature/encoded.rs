@@ -430,10 +430,8 @@ impl TryFromCtx<'_> for NativeIntrinsic {
         
         use NativeIntrinsic::*;
         
-        let val = match from.gread_with::<u8>(offset, scroll::LE) {
+        let val = match from.gread_with::<u8>(offset, scroll::LE)? {
             NATIVE_TYPE_BOOLEAN => Boolean,
-            NATIVE_TYPE_I1 => Int8,
-            NATIVE_TYPE_U1 => UInt8,
             NATIVE_TYPE_I1 => Int8,
             NATIVE_TYPE_U1 => UInt8,
             NATIVE_TYPE_I2 => Int16,
