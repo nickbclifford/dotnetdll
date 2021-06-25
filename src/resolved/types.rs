@@ -21,15 +21,21 @@ pub enum Accessibility {
 }
 
 #[derive(Debug)]
+pub struct SequentialLayout {
+    pub packing_size: usize,
+    pub class_size: usize,
+}
+
+#[derive(Debug)]
+pub struct ExplicitLayout {
+    pub class_size: usize,
+}
+
+#[derive(Debug)]
 pub enum Layout {
     Automatic,
-    Sequential {
-        packing_size: usize,
-        class_size: usize,
-    },
-    Explicit {
-        class_size: usize,
-    },
+    Sequential(Option<SequentialLayout>),
+    Explicit(Option<ExplicitLayout>),
 }
 
 #[derive(Debug)]
@@ -134,10 +140,10 @@ pub struct TypeDefinition<'a> {
 
 #[derive(Debug)]
 pub enum ResolutionScope<'a> {
-    Nested(Box<ExternalTypeReference<'a>>),
-    ExternalModule(module::ExternalModuleReference<'a>),
+    Nested(&'a ExternalTypeReference<'a>),
+    ExternalModule(&'a module::ExternalModuleReference<'a>),
     CurrentModule(&'a module::Module<'a>),
-    Assembly(assembly::ExternalAssemblyReference<'a>),
+    Assembly(&'a assembly::ExternalAssemblyReference<'a>),
     Exported(&'a ExportedType<'a>),
 }
 
@@ -156,7 +162,7 @@ pub enum TypeImplementation<'a> {
         type_def_idx: usize,
         file: &'a module::File<'a>,
     },
-    TypeForwarder(assembly::ExternalAssemblyReference<'a>),
+    TypeForwarder(&'a assembly::ExternalAssemblyReference<'a>),
 }
 
 #[derive(Debug)]
@@ -172,10 +178,10 @@ type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UserType<'a> {
     Definition(&'a TypeDefinition<'a>),
-    Reference(ExternalTypeReference<'a>),
+    Reference(&'a ExternalTypeReference<'a>),
 }
 
 impl UserType<'_> {
@@ -187,13 +193,13 @@ impl UserType<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CustomTypeModifier<'a> {
     Optional(UserType<'a>),
     Required(UserType<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericInstantiation<'a, CtxBaseType> {
     pub base: UserType<'a>,
     pub parameters: Vec<CtxBaseType>,
@@ -201,13 +207,13 @@ pub struct GenericInstantiation<'a, CtxBaseType> {
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeSource<'a, EnclosingType> {
     User(UserType<'a>),
     Generic(GenericInstantiation<'a, EnclosingType>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BaseType<'a, EnclosingType> {
     Type(TypeSource<'a, EnclosingType>),
     Boolean,
@@ -232,13 +238,13 @@ pub enum BaseType<'a, EnclosingType> {
     FunctionPointer(signature::ManagedMethod<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MemberType<'a> {
     Base(Box<BaseType<'a, MemberType<'a>>>),
     TypeGeneric(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MethodType<'a> {
     Base(Box<BaseType<'a, MethodType<'a>>>),
     TypeGeneric(usize),

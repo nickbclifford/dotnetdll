@@ -2,7 +2,7 @@ use super::{compressed, encoded::*};
 use crate::utils::check_bitmask;
 use scroll::{ctx::TryFromCtx, Pread};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum CallingConvention {
     Default,
     Vararg,
@@ -111,7 +111,7 @@ impl TryFromCtx<'_> for MethodRefSig {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum StandAloneCallingConvention {
     Default,
     Vararg,

@@ -1,23 +1,23 @@
 use super::types::{CustomTypeModifier, MethodType};
 use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParameterType<'a> {
     Value(MethodType<'a>),
     Ref(MethodType<'a>),
     TypedReference,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parameter<'a>(pub Option<CustomTypeModifier<'a>>, pub ParameterType<'a>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReturnType<'a>(
     pub Option<CustomTypeModifier<'a>>,
     pub Option<ParameterType<'a>>,
 );
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MethodSignature<'a, CallConv> {
     pub instance: bool,
     pub explicit_this: bool,

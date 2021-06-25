@@ -17,6 +17,8 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 
+use std::mem::MaybeUninit;
+
 #[derive(Debug)]
 pub struct DLL<'a> {
     buffer: &'a [u8],
@@ -218,30 +220,23 @@ impl<'a> DLL<'a> {
 
             let name = heap_idx!(strings, t.type_name);
 
-            let mut new_type = TypeDefinition {
+            let new_type = TypeDefinition {
                 attributes: vec![],
                 flags: TypeFlags::new(
                     t.flags,
                     if layout_flags == 0x00 {
                         Layout::Automatic
                     } else {
-                        let layout = tables
-                            .class_layout
-                            .iter()
-                            .find(|c| c.parent.0 - 1 == idx)
-                            .ok_or(scroll::Error::Custom(format!(
-                                "could not find layout for type {}",
-                                name
-                            )))?;
+                        let layout = tables.class_layout.iter().find(|c| c.parent.0 - 1 == idx);
 
                         match layout_flags {
-                            0x08 => Layout::Sequential {
-                                packing_size: layout.packing_size as usize,
-                                class_size: layout.class_size as usize,
-                            },
-                            0x10 => Layout::Explicit {
-                                class_size: layout.class_size as usize,
-                            },
+                            0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
+                                packing_size: l.packing_size as usize,
+                                class_size: l.class_size as usize,
+                            })),
+                            0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
+                                class_size: l.class_size as usize,
+                            })),
                             _ => unreachable!(),
                         }
                     },
@@ -277,6 +272,51 @@ impl<'a> DLL<'a> {
             });
         }
 
+        let mut exports = Vec::with_capacity(tables.exported_type.len());
+
+        {
+            for e in tables.exported_type.iter() {
+                use metadata::index::Implementation;
+                use types::*;
+
+                exports.push(ExportedType {
+                    attributes: vec![],
+                    flags: TypeFlags::new(e.flags, Layout::Automatic),
+                    name: heap_idx!(strings, e.type_name),
+                    namespace: optional_idx!(strings, e.type_namespace),
+                    implementation: unsafe { MaybeUninit::uninit().assume_init() },
+                });
+            }
+
+            let ptr = exports.as_mut_ptr();
+
+            for (idx, e) in tables.exported_type.iter().enumerate() {
+                use metadata::index::Implementation;
+                use types::*;
+
+                unsafe {
+                    (*ptr.add(idx)).implementation = match e.implementation {
+                        Implementation::File(f) => TypeImplementation::ModuleFile {
+                            type_def_idx: e.type_def_id as usize,
+                            file: &files[f - 1],
+                        },
+                        Implementation::AssemblyRef(a) => {
+                            TypeImplementation::TypeForwarder(&assembly_refs[a - 1])
+                        }
+                        Implementation::ExportedType(t) => {
+                            TypeImplementation::Nested(&exports[t - 1])
+                        }
+                        Implementation::Null => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid null implementation index for exported type {}",
+                                heap_idx!(strings, e.type_name)
+                            ))))
+                        }
+                    }
+                }
+            }
+        }
+
         let module_row = tables.module.first().ok_or(scroll::Error::Custom(
             "missing required module metadata table".to_string(),
         ))?;
@@ -293,6 +333,53 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, r.name),
             });
         }
+
+        let mut type_refs = Vec::with_capacity(tables.type_ref.len());
+
+        {
+            for r in tables.type_ref.iter() {
+                use types::*;
+
+                type_refs.push(ExternalTypeReference {
+                    attributes: vec![],
+                    name: heap_idx!(strings, r.type_name),
+                    namespace: optional_idx!(strings, r.type_namespace),
+                    scope: unsafe { MaybeUninit::uninit().assume_init() },
+                });
+            }
+
+            let ptr = type_refs.as_mut_ptr();
+
+            for (idx, r) in tables.type_ref.iter().enumerate() {
+                use metadata::index::ResolutionScope as BinRS;
+                use types::*;
+
+                let name = heap_idx!(strings, r.type_name);
+                let namespace = optional_idx!(strings, r.type_namespace);
+
+                unsafe {
+                    (*ptr.add(idx)).scope = match r.resolution_scope {
+                        BinRS::Module(_) => ResolutionScope::CurrentModule(&module),
+                        BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(&module_refs[m - 1]),
+                        BinRS::AssemblyRef(a) => ResolutionScope::Assembly(&assembly_refs[a - 1]),
+                        BinRS::TypeRef(t) => ResolutionScope::Nested(&type_refs[t - 1]),
+                        BinRS::Null => ResolutionScope::Exported(
+                            exports
+                                .iter()
+                                .find(|e| e.name == name && e.namespace == namespace)
+                                .ok_or(scroll::Error::Custom(format!(
+                                    "missing exported type for type ref {}",
+                                    name
+                                )))?,
+                        ),
+                    }
+                }
+            }
+        }
+
+        println!("{:#?}", types);
+
+        // TODO: Box/Rc/something so that moving the Vecs when returning them doesn't break the internal references
 
         Ok(())
     }

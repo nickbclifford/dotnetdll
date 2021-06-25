@@ -83,7 +83,7 @@ impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArrayShape {
     pub rank: usize,
     pub sizes: Vec<usize>,

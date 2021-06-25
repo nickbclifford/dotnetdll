@@ -24,10 +24,7 @@ mod tests {
         let blobs: heap::Blob = dll.get_heap("#Blob")?;
         let meta = dll.get_logical_metadata()?;
 
-        for attr in meta.tables.custom_attribute.iter() {
-            println!("idx {:?}", attr.parent);
-            println!("{:x?}", blobs.at_index(attr.value)?)
-        }
+        dll.resolve()?;
 
         Ok(())
     }

@@ -35,7 +35,7 @@ pub struct Field<'a> {
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
     Type(TypeSource<'a, MemberType<'a>>),
-    Module(ExternalModuleReference<'a>),
+    Module(&'a ExternalModuleReference<'a>),
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub struct ExternalFieldReference<'a> {
 #[derive(Debug)]
 pub enum FieldSource<'a> {
     Definition(&'a Field<'a>),
-    Reference(ExternalFieldReference<'a>),
+    Reference(&'a ExternalFieldReference<'a>),
 }
 
 #[derive(Debug)]
@@ -156,7 +156,7 @@ pub struct PInvoke<'a> {
 #[derive(Debug)]
 pub enum MethodReferenceParent<'a> {
     Type(TypeSource<'a, MethodType<'a>>),
-    Module(ExternalModuleReference<'a>),
+    Module(&'a ExternalModuleReference<'a>),
     VarargMethod(&'a Method<'a>),
 }
 
@@ -171,7 +171,7 @@ pub struct ExternalMethodReference<'a> {
 #[derive(Debug)]
 pub enum UserMethod<'a> {
     Definition(&'a Method<'a>),
-    Reference(ExternalMethodReference<'a>),
+    Reference(&'a ExternalMethodReference<'a>),
 }
 
 impl<'a> UserMethod<'a> {
