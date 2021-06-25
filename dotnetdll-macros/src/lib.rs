@@ -418,5 +418,11 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
                 Ok((val, *offset))
             }
         }
+
+        impl #name {
+            pub fn is_null(&self) -> bool {
+                *self == #name::Null
+            }
+        }
     })
 }

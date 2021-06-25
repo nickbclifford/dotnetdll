@@ -1,11 +1,12 @@
 use super::{
     binary::{
         cli::{Header, Metadata, RVASize},
-        heap::Heap,
+        heap::*,
         metadata, method,
     },
-    context::Context,
+    resolved,
 };
+use crate::utils::check_bitmask;
 use object::{
     endian::{LittleEndian, U32Bytes},
     pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders32, ImageNtHeaders64},
@@ -40,13 +41,25 @@ impl std::fmt::Display for DLLError {
 }
 impl std::error::Error for DLLError {}
 
+// allows for clean usage with ? operator
+impl From<ObjectError> for DLLError {
+    fn from(e: ObjectError) -> Self {
+        PE(e)
+    }
+}
+impl From<ScrollError> for DLLError {
+    fn from(e: ScrollError) -> Self {
+        CLI(e)
+    }
+}
+
 use DLLError::*;
 
 type Result<T> = std::result::Result<T, DLLError>;
 
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
-        let dos = ImageDosHeader::parse(bytes).map_err(PE)?;
+        let dos = ImageDosHeader::parse(bytes)?;
         let dirs: &[ImageDataDirectory];
         let sections: SectionTable;
 
@@ -55,24 +68,25 @@ impl<'a> DLL<'a> {
         let mut offset = original_offset;
         match ImageNtHeaders32::parse(bytes, &mut offset) {
             Ok((nt, dirs32)) => {
-                sections = nt.sections(bytes, offset).map_err(PE)?;
+                sections = nt.sections(bytes, offset)?;
                 dirs = dirs32;
             }
             Err(_) => {
                 offset = original_offset;
-                match ImageNtHeaders64::parse(bytes, &mut offset) {
-                    Ok((nt, dirs64)) => {
-                        sections = nt.sections(bytes, offset).map_err(PE)?;
-                        dirs = dirs64;
-                    }
-                    Err(e) => return Err(PE(e)),
-                }
+
+                let (nt, dirs64) = ImageNtHeaders64::parse(bytes, &mut offset)?;
+
+                sections = nt.sections(bytes, offset)?;
+                dirs = dirs64;
             }
         }
-        let cli_b = dirs[14].data(bytes, &sections).map_err(PE)?;
+        let cli_b = dirs
+            .get(14)
+            .ok_or(Other("missing CLI metadata data directory in PE image"))?
+            .data(bytes, &sections)?;
         Ok(DLL {
             buffer: bytes,
-            cli: cli_b.pread_with(0, scroll::LE).map_err(CLI)?,
+            cli: cli_b.pread_with(0, scroll::LE)?,
             sections,
         })
     }
@@ -118,13 +132,168 @@ impl<'a> DLL<'a> {
         self.raw_rva(def.rva)?.pread(0).map_err(CLI)
     }
 
-    pub fn get_context(&self) -> Result<Context<'a>> {
-        Ok(Context {
-            strings: self.get_heap("#Strings")?,
-            blobs: self.get_heap("#Blob")?,
-            guids: self.get_heap("#GUID")?,
-            userstrings: self.get_heap("#US")?,
-            tables: self.get_logical_metadata()?.tables,
-        })
+    // TODO: return type?
+    pub fn resolve(&self) -> Result<()> {
+        let strings: Strings = self.get_heap("#Strings")?;
+        let blobs: Blob = self.get_heap("#Blob")?;
+        let guids: GUID = self.get_heap("#GUID")?;
+        let userstrings: UserString = self.get_heap("#US")?;
+        let tables = self.get_logical_metadata()?.tables;
+
+        use resolved::*;
+
+        macro_rules! heap_idx {
+            ($heap:ident, $idx:expr) => {
+                $heap.at_index($idx)?
+            };
+        }
+
+        macro_rules! optional_idx {
+            ($heap:ident, $idx:expr) => {
+                if $idx.is_null() {
+                    None
+                } else {
+                    Some(heap_idx!($heap, $idx))
+                }
+            };
+        }
+
+        macro_rules! build_version {
+            ($src:ident) => {
+                Version {
+                    major: $src.major_version,
+                    minor: $src.minor_version,
+                    build: $src.build_number,
+                    revision: $src.revision_number,
+                }
+            };
+        }
+
+        let mut assembly = None;
+        if let Some(a) = tables.assembly.first() {
+            use assembly::*;
+
+            assembly = Some(Assembly {
+                attributes: vec![],
+                hash_algorithm: match a.hash_alg_id {
+                    0x0000 => HashAlgorithm::None,
+                    0x8003 => HashAlgorithm::ReservedMD5,
+                    0x8004 => HashAlgorithm::SHA1,
+                    other => {
+                        return Err(CLI(scroll::Error::Custom(format!(
+                            "unrecognized assembly hash algorithm {:#06x}",
+                            other
+                        ))))
+                    }
+                },
+                version: build_version!(a),
+                flags: Flags::new(a.flags),
+                public_key: optional_idx!(blobs, a.public_key),
+                name: heap_idx!(strings, a.name),
+                culture: optional_idx!(strings, a.culture),
+                security: None,
+            });
+        }
+
+        let mut assembly_refs = Vec::with_capacity(tables.assembly_ref.len());
+        for a in tables.assembly_ref.iter() {
+            use assembly::*;
+
+            assembly_refs.push(ExternalAssemblyReference {
+                attributes: vec![],
+                version: build_version!(a),
+                flags: Flags::new(a.flags),
+                public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
+                name: heap_idx!(strings, a.name),
+                culture: optional_idx!(strings, a.culture),
+                hash_value: None,
+            });
+        }
+
+        let mut types = Vec::with_capacity(tables.type_def.len());
+        for (idx, t) in tables.type_def.iter().enumerate() {
+            use types::*;
+
+            let layout_flags = t.flags & 0x18;
+
+            let name = heap_idx!(strings, t.type_name);
+
+            let mut new_type = TypeDefinition {
+                attributes: vec![],
+                flags: TypeFlags::new(
+                    t.flags,
+                    if layout_flags == 0x00 {
+                        Layout::Automatic
+                    } else {
+                        let layout = tables
+                            .class_layout
+                            .iter()
+                            .find(|c| c.parent.0 - 1 == idx)
+                            .ok_or(scroll::Error::Custom(format!(
+                                "could not find layout for type {}",
+                                name
+                            )))?;
+
+                        match layout_flags {
+                            0x08 => Layout::Sequential {
+                                packing_size: layout.packing_size as usize,
+                                class_size: layout.class_size as usize,
+                            },
+                            0x10 => Layout::Explicit {
+                                class_size: layout.class_size as usize,
+                            },
+                            _ => unreachable!(),
+                        }
+                    },
+                ),
+                name,
+                namespace: optional_idx!(strings, t.type_namespace),
+                fields: vec![],
+                properties: vec![],
+                methods: vec![],
+                events: vec![],
+                nested_types: vec![],
+                overrides: vec![],
+                extends: None,
+                implements: vec![],
+                generic_parameters: vec![],
+                security: None,
+            };
+
+            // TODO: everything that's owned
+
+            types.push(new_type);
+        }
+
+        let mut files = Vec::with_capacity(tables.file.len());
+        for f in tables.file.iter() {
+            use module::*;
+
+            files.push(File {
+                attributes: vec![],
+                has_metadata: !check_bitmask(f.flags, 0x0001),
+                name: heap_idx!(strings, f.name),
+                hash_value: heap_idx!(blobs, f.hash_value),
+            });
+        }
+
+        let module_row = tables.module.first().ok_or(scroll::Error::Custom(
+            "missing required module metadata table".to_string(),
+        ))?;
+        let module = module::Module {
+            attributes: vec![],
+            name: heap_idx!(strings, module_row.name),
+            mvid: heap_idx!(guids, module_row.mvid),
+        };
+
+        let mut module_refs = Vec::with_capacity(tables.module_ref.len());
+        for r in tables.module_ref.iter() {
+            module_refs.push(module::ExternalModuleReference {
+                attributes: vec![],
+                name: heap_idx!(strings, r.name),
+            });
+        }
+
+        Ok(())
     }
 }

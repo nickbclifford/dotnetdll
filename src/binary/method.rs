@@ -1,4 +1,5 @@
 use super::il;
+use crate::utils::check_bitmask;
 use scroll::{ctx::TryFromCtx, Pread};
 
 #[derive(Debug)]
@@ -71,9 +72,9 @@ impl TryFromCtx<'_> for DataSection {
         let offset = &mut 0;
 
         let kind: u8 = from.gread_with(offset, scroll::LE)?;
-        let is_exception = kind & 1 == 1;
-        let is_fat = kind & 0x40 == 0x40;
-        let more_sections = kind & 0x80 == 0x80;
+        let is_exception = check_bitmask(kind, 1);
+        let is_fat = check_bitmask(kind, 0x40);
+        let more_sections = check_bitmask(kind, 0x80);
 
         let length = if is_fat {
             let mut bytes = [0u8; 3];
@@ -151,7 +152,7 @@ impl TryFromCtx<'_> for Method {
         let mut data_sections = vec![];
 
         if let Header::Fat { flags, .. } = header {
-            let mut has_next = flags & 0x8 == 0x8;
+            let mut has_next = check_bitmask(flags, 0x8);
 
             // align to next 4-byte boundary
             let rem = *offset % 4;

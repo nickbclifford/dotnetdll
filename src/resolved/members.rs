@@ -11,12 +11,7 @@ use crate::binary::signature::kinds::MarshalSpec;
 #[derive(Debug)]
 pub enum Accessibility {
     CompilerControlled,
-    Private,
-    PrivateProtected,  // FamANDAssem
-    Internal,          // Assem
-    Protected,         // Family
-    ProtectedInternal, // FamORAssem
-    Public,
+    Access(super::Accessibility)
 }
 
 #[derive(Debug)]

@@ -1,7 +1,12 @@
 pub mod binary;
 pub mod dll;
 pub mod resolved;
-pub mod context;
+
+mod utils {
+    pub fn check_bitmask<T: num_traits::PrimInt>(mask: T, value: T) -> bool {
+        mask & value == value
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -10,7 +15,7 @@ mod tests {
     use super::{binary::*, dll};
     use heap::Heap;
     use metadata::table::Kind;
-    use signature::{encoded::TypeDefOrRefOrSpec, compressed::*};
+    use signature::{compressed::*, encoded::TypeDefOrRefOrSpec};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {

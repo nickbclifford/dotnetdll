@@ -3,14 +3,7 @@ use super::{
     signature::{Parameter, ParameterType},
     types::*,
 };
-use crate::binary::heap::Heap;
-use crate::{
-    binary::{
-        metadata::index::HasCustomAttribute,
-        signature::{attribute::*, compressed::Unsigned},
-    },
-    context::Context,
-};
+use crate::binary::signature::{attribute::*, compressed::Unsigned};
 use scroll::{Pread, Result};
 
 fn parse_from_type<'def, 'inst>(
@@ -214,27 +207,6 @@ pub struct Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub fn get_for_row(ctx: &Context<'a>, idx: HasCustomAttribute) -> Result<Vec<Attribute<'a>>> {
-        let mut attrs = vec![];
-
-        for c in ctx.tables.custom_attribute.iter() {
-            if c.parent == idx {
-                attrs.push(Attribute {
-                    // we need to resolve everything else first before building attributes
-                    // otherwise trying to resolve in here would cause recursion problems
-                    constructor: todo!(),
-                    value: if c.value.is_null() {
-                        None
-                    } else {
-                        Some(ctx.blobs.at_index(c.value)?)
-                    },
-                });
-            }
-        }
-
-        Ok(attrs)
-    }
-
     pub fn instantiation_data(&self, resolver: &impl Resolver) -> Result<CustomAttributeData<'a>> {
         let bytes = self.value.ok_or(scroll::Error::Custom(
             "null data for custom attribute".to_string(),

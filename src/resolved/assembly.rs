@@ -1,4 +1,5 @@
 use super::attribute::{Attribute, SecurityDeclaration};
+use crate::utils::check_bitmask;
 
 #[derive(Debug)]
 pub struct Flags {
@@ -6,6 +7,17 @@ pub struct Flags {
     pub retargetable: bool,
     pub disable_jit_optimizer: bool,
     pub enable_jit_tracking: bool,
+}
+
+impl Flags {
+    pub fn new(bitmask: u32) -> Flags {
+        Flags {
+            has_public_key: check_bitmask(bitmask, 0x0001),
+            retargetable: check_bitmask(bitmask, 0x0100),
+            disable_jit_optimizer: check_bitmask(bitmask, 0x4000),
+            enable_jit_tracking: check_bitmask(bitmask, 0x8000),
+        }
+    }
 }
 
 #[derive(Debug)]

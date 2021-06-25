@@ -1,4 +1,5 @@
 use super::{compressed, encoded::*};
+use crate::utils::check_bitmask;
 use scroll::{ctx::TryFromCtx, Pread};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -33,8 +34,8 @@ impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
 
-        let has_this = tag & 0x20 == 0x20;
-        let explicit_this = tag & 0x40 == 0x40;
+        let has_this = check_bitmask(tag, 0x20);
+        let explicit_this = check_bitmask(tag, 0x40);
 
         let kind = match tag & 0x1f {
             0x10 => {
@@ -138,8 +139,8 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
 
-        let has_this = tag & 0x20 == 0x20;
-        let explicit_this = tag & 0x40 == 0x40;
+        let has_this = check_bitmask(tag, 0x20);
+        let explicit_this = check_bitmask(tag, 0x40);
 
         use StandAloneCallingConvention::*;
 
@@ -244,7 +245,7 @@ impl TryFromCtx<'_> for PropertySig {
             )));
         }
 
-        let has_this = tag & 0x20 == 0x20;
+        let has_this = check_bitmask(tag, 0x20);
 
         let compressed::Unsigned(param_count) = from.gread(offset)?;
 

@@ -5,6 +5,7 @@ use super::{
     members, module, signature,
 };
 use crate::binary::signature::encoded::ArrayShape;
+use crate::utils::check_bitmask;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -16,7 +17,7 @@ pub enum Kind {
 pub enum Accessibility {
     NotPublic,
     Public,
-    Nested(members::Accessibility),
+    Nested(super::Accessibility),
 }
 
 #[derive(Debug)]
@@ -36,7 +37,7 @@ pub enum StringFormatting {
     ANSI,
     Unicode,
     Automatic,
-    Custom(bool, bool), // two-bit mask with non-standard meanings
+    Custom(u32),
 }
 
 #[derive(Debug)]
@@ -71,6 +72,46 @@ pub struct TypeFlags {
     pub string_formatting: StringFormatting,
     pub before_field_init: bool,
     pub runtime_special_name: bool,
+}
+
+impl TypeFlags {
+    pub fn new(bitmask: u32, layout: Layout) -> TypeFlags {
+        use Accessibility::*;
+
+        TypeFlags {
+            accessibility: match bitmask & 0x7 {
+                0x0 => NotPublic,
+                0x1 => Public,
+                0x2 => Nested(super::Accessibility::Public),
+                0x3 => Nested(super::Accessibility::Private),
+                0x4 => Nested(super::Accessibility::Protected),
+                0x5 => Nested(super::Accessibility::Internal),
+                0x6 => Nested(super::Accessibility::PrivateProtected),
+                0x7 => Nested(super::Accessibility::ProtectedInternal),
+                _ => unreachable!(),
+            },
+            layout,
+            kind: match bitmask & 0x20 {
+                0x00 => Kind::Class,
+                0x20 => Kind::Interface,
+                _ => unreachable!(),
+            },
+            abstract_type: check_bitmask(bitmask, 0x80),
+            sealed: check_bitmask(bitmask, 0x100),
+            special_name: check_bitmask(bitmask, 0x400),
+            imported: check_bitmask(bitmask, 0x1000),
+            serializable: check_bitmask(bitmask, 0x2000),
+            string_formatting: match bitmask & 0x30000 {
+                0x00000 => StringFormatting::ANSI,
+                0x10000 => StringFormatting::Unicode,
+                0x20000 => StringFormatting::Automatic,
+                0x30000 => StringFormatting::Custom(bitmask & 0xC00000),
+                _ => unreachable!(),
+            },
+            before_field_init: check_bitmask(bitmask, 0x1000000),
+            runtime_special_name: check_bitmask(bitmask, 0x800),
+        }
+    }
 }
 
 #[derive(Debug)]
