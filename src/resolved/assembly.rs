@@ -32,7 +32,7 @@ pub struct Assembly<'a> {
     pub public_key: Option<&'a [u8]>,
     pub name: &'a str,
     pub culture: Option<&'a str>,
-    pub security: SecurityDeclaration<'a>,
+    pub security: Option<SecurityDeclaration<'a>>,
 }
 
 #[derive(Debug)]
