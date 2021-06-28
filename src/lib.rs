@@ -1,19 +1,31 @@
-pub mod binary;
-pub mod dll;
-pub mod resolved;
-
+#[macro_use]
 mod utils {
-    pub fn check_bitmask<T: num_traits::PrimInt>(mask: T, value: T) -> bool {
-        mask & value == value
+    macro_rules! check_bitmask {
+        ($mask:expr, $val:literal) => {
+            $mask & $val == $val
+        }
+    }
+
+    macro_rules! opt_map_try {
+        ($var:expr, |$capt: ident| $res:expr) => {
+            match $var {
+                Some($capt) => Some($res?),
+                None => None,
+            }
+        };
     }
 }
+
+pub mod binary;
+mod convert;
+pub mod dll;
+pub mod resolved;
 
 #[cfg(test)]
 mod tests {
     use scroll::Pread;
 
     use super::{binary::*, dll};
-    use heap::Heap;
     use metadata::table::Kind;
     use signature::{compressed::*, encoded::TypeDefOrRefOrSpec};
 

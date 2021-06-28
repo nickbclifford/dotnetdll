@@ -372,7 +372,7 @@ impl TryFromCtx<'_> for RetType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum NativeIntrinsic {
     Boolean,
     Int8,

@@ -200,7 +200,7 @@ fn parse_named<'def, 'inst>(
     Ok(named)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Attribute<'a> {
     pub constructor: members::UserMethod<'a>,
     value: Option<&'a [u8]>,

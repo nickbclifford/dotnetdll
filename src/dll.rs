@@ -4,9 +4,8 @@ use super::{
         heap::*,
         metadata, method,
     },
-    resolved,
+    convert, resolved,
 };
-use crate::utils::check_bitmask;
 use object::{
     endian::{LittleEndian, U32Bytes},
     pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders32, ImageNtHeaders64},
@@ -17,7 +16,7 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 
-use std::mem::MaybeUninit;
+use std::{collections::HashMap, mem::MaybeUninit};
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -57,7 +56,7 @@ impl From<ScrollError> for DLLError {
 
 use DLLError::*;
 
-type Result<T> = std::result::Result<T, DLLError>;
+pub type Result<T> = std::result::Result<T, DLLError>;
 
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
@@ -142,8 +141,6 @@ impl<'a> DLL<'a> {
         let userstrings: UserString = self.get_heap("#US")?;
         let tables = self.get_logical_metadata()?.tables;
 
-        use resolved::*;
-
         macro_rules! heap_idx {
             ($heap:ident, $idx:expr) => {
                 $heap.at_index($idx)?
@@ -170,6 +167,17 @@ impl<'a> DLL<'a> {
                 }
             };
         }
+
+        macro_rules! range_index {
+            (($idx:expr, $var:expr), $field:ident, $len:expr, $table:ident) => {
+                ($var.$field.0 - 1)..(match tables.$table.get($idx + 1) {
+                    Some(r) => r.$field.0,
+                    None => $len + 1,
+                } - 1)
+            };
+        }
+
+        use resolved::*;
 
         let mut assembly = None;
         if let Some(a) = tables.assembly.first() {
@@ -212,15 +220,22 @@ impl<'a> DLL<'a> {
             });
         }
 
-        let mut types = Vec::with_capacity(tables.type_def.len());
+        let type_len = tables.type_def.len();
+        let mut types = Vec::with_capacity(type_len);
+        let mut owned_fields = Vec::with_capacity(type_len);
+        let mut owned_methods = Vec::with_capacity(type_len);
+
+        let fields_len = tables.field.len();
+        let method_len = tables.method_def.len();
+
         for (idx, t) in tables.type_def.iter().enumerate() {
             use types::*;
 
             let layout_flags = t.flags & 0x18;
 
-            let name = heap_idx!(strings, t.type_name);
+            // TODO: everything that's owned
 
-            let new_type = TypeDefinition {
+            types.push(TypeDefinition {
                 attributes: vec![],
                 flags: TypeFlags::new(
                     t.flags,
@@ -241,7 +256,7 @@ impl<'a> DLL<'a> {
                         }
                     },
                 ),
-                name,
+                name: heap_idx!(strings, t.type_name),
                 namespace: optional_idx!(strings, t.type_namespace),
                 fields: vec![],
                 properties: vec![],
@@ -253,20 +268,22 @@ impl<'a> DLL<'a> {
                 implements: vec![],
                 generic_parameters: vec![],
                 security: None,
-            };
+            });
 
-            // TODO: everything that's owned
+            let f_range = range_index!((idx, t), field_list, fields_len, type_def);
+            owned_fields.push(f_range.clone().zip(&tables.field[f_range]));
 
-            types.push(new_type);
+            let m_range = range_index!((idx, t), method_list, method_len, type_def);
+            owned_methods.push(m_range.clone().zip(&tables.method_def[m_range]));
         }
 
         let mut files = Vec::with_capacity(tables.file.len());
-        for f in tables.file.iter() {
+        for f in tables.file {
             use module::*;
 
             files.push(File {
                 attributes: vec![],
-                has_metadata: !check_bitmask(f.flags, 0x0001),
+                has_metadata: !check_bitmask!(f.flags, 0x0001),
                 name: heap_idx!(strings, f.name),
                 hash_value: heap_idx!(blobs, f.hash_value),
             });
@@ -274,47 +291,40 @@ impl<'a> DLL<'a> {
 
         let mut exports = Vec::with_capacity(tables.exported_type.len());
 
-        {
-            for e in tables.exported_type.iter() {
-                use metadata::index::Implementation;
-                use types::*;
+        for e in tables.exported_type.iter() {
+            use types::*;
 
-                exports.push(ExportedType {
-                    attributes: vec![],
-                    flags: TypeFlags::new(e.flags, Layout::Automatic),
-                    name: heap_idx!(strings, e.type_name),
-                    namespace: optional_idx!(strings, e.type_namespace),
-                    implementation: unsafe { MaybeUninit::uninit().assume_init() },
-                });
-            }
+            exports.push(ExportedType {
+                attributes: vec![],
+                flags: TypeFlags::new(e.flags, Layout::Automatic),
+                name: heap_idx!(strings, e.type_name),
+                namespace: optional_idx!(strings, e.type_namespace),
+                implementation: unsafe { MaybeUninit::uninit().assume_init() },
+            });
+        }
 
-            let ptr = exports.as_mut_ptr();
+        for (idx, e) in tables.exported_type.iter().enumerate() {
+            use metadata::index::Implementation;
+            use types::*;
 
-            for (idx, e) in tables.exported_type.iter().enumerate() {
-                use metadata::index::Implementation;
-                use types::*;
-
-                unsafe {
-                    (*ptr.add(idx)).implementation = match e.implementation {
-                        Implementation::File(f) => TypeImplementation::ModuleFile {
-                            type_def_idx: e.type_def_id as usize,
-                            file: &files[f - 1],
-                        },
-                        Implementation::AssemblyRef(a) => {
-                            TypeImplementation::TypeForwarder(&assembly_refs[a - 1])
-                        }
-                        Implementation::ExportedType(t) => {
-                            TypeImplementation::Nested(&exports[t - 1])
-                        }
-                        Implementation::Null => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid null implementation index for exported type {}",
-                                heap_idx!(strings, e.type_name)
-                            ))))
-                        }
-                    }
+            let new_impl = match e.implementation {
+                Implementation::File(f) => TypeImplementation::ModuleFile {
+                    type_def_idx: e.type_def_id as usize,
+                    file: &files[f - 1],
+                },
+                Implementation::AssemblyRef(a) => {
+                    TypeImplementation::TypeForwarder(&assembly_refs[a - 1])
                 }
-            }
+                Implementation::ExportedType(t) => TypeImplementation::Nested(&exports[t - 1]),
+                Implementation::Null => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid null implementation index for exported type {}",
+                        heap_idx!(strings, e.type_name)
+                    ))))
+                }
+            };
+
+            exports[idx].implementation = new_impl;
         }
 
         let module_row = tables.module.first().ok_or(scroll::Error::Custom(
@@ -336,48 +346,336 @@ impl<'a> DLL<'a> {
 
         let mut type_refs = Vec::with_capacity(tables.type_ref.len());
 
-        {
-            for r in tables.type_ref.iter() {
-                use types::*;
+        for r in tables.type_ref.iter() {
+            use types::*;
 
-                type_refs.push(ExternalTypeReference {
+            type_refs.push(ExternalTypeReference {
+                attributes: vec![],
+                name: heap_idx!(strings, r.type_name),
+                namespace: optional_idx!(strings, r.type_namespace),
+                scope: unsafe { MaybeUninit::uninit().assume_init() },
+            });
+        }
+
+        for (idx, r) in tables.type_ref.iter().enumerate() {
+            use metadata::index::ResolutionScope as BinRS;
+            use types::*;
+
+            let name = heap_idx!(strings, r.type_name);
+            let namespace = optional_idx!(strings, r.type_namespace);
+
+            let new_scope = match r.resolution_scope {
+                BinRS::Module(_) => ResolutionScope::CurrentModule(&module),
+                BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(&module_refs[m - 1]),
+                BinRS::AssemblyRef(a) => ResolutionScope::Assembly(&assembly_refs[a - 1]),
+                BinRS::TypeRef(t) => ResolutionScope::Nested(&type_refs[t - 1]),
+                BinRS::Null => ResolutionScope::Exported(
+                    exports
+                        .iter()
+                        .find(|e| e.name == name && e.namespace == namespace)
+                        .ok_or(scroll::Error::Custom(format!(
+                            "missing exported type for type ref {}",
+                            name
+                        )))?,
+                ),
+            };
+
+            type_refs[idx].scope = new_scope;
+        }
+
+        let ctx = convert::Context {
+            defs: &types,
+            refs: &type_refs,
+            specs: &tables.type_spec,
+            blobs: &blobs,
+        };
+
+        fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
+            use members::Accessibility::*;
+            use resolved::Accessibility::*;
+
+            Ok(match flags & 0x7 {
+                0x0 => CompilerControlled,
+                0x1 => Access(Private),
+                0x2 => Access(PrivateProtected),
+                0x3 => Access(Internal),
+                0x4 => Access(Protected),
+                0x5 => Access(ProtectedInternal),
+                0x6 => Access(Public),
+                _ => {
+                    return Err(CLI(scroll::Error::Custom(
+                        "flags value 0x7 has no meaning for member accessibility".to_string(),
+                    )))
+                }
+            })
+        }
+
+        let mut fields = Vec::with_capacity(fields_len);
+        unsafe {
+            fields.set_len(fields_len);
+        }
+        for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
+            use super::binary::signature::kinds::FieldSig;
+            use members::*;
+
+            for (f_idx, f) in type_fields {
+                let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
+
+                let parent_fields = &mut types[type_idx].fields;
+                parent_fields.push(Field {
                     attributes: vec![],
-                    name: heap_idx!(strings, r.type_name),
-                    namespace: optional_idx!(strings, r.type_namespace),
-                    scope: unsafe { MaybeUninit::uninit().assume_init() },
+                    name: heap_idx!(strings, f.name),
+                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c, &ctx)),
+                    return_type: convert::member_type_sig(t, &ctx)?,
+                    accessibility: member_accessibility(f.flags)?,
+                    static_member: check_bitmask!(f.flags, 0x10),
+                    init_only: check_bitmask!(f.flags, 0x20),
+                    literal: check_bitmask!(f.flags, 0x40),
+                    default: None,
+                    not_serialized: check_bitmask!(f.flags, 0x80),
+                    special_name: check_bitmask!(f.flags, 0x200),
+                    pinvoke: check_bitmask!(f.flags, 0x2000),
+                    runtime_special_name: check_bitmask!(f.flags, 0x400),
+                    offset: None,
+                    marshal: None,
+                    start_of_initial_value: None,
                 });
+                fields[f_idx] = parent_fields.last_mut().unwrap();
             }
+        }
 
-            let ptr = type_refs.as_mut_ptr();
-
-            for (idx, r) in tables.type_ref.iter().enumerate() {
-                use metadata::index::ResolutionScope as BinRS;
-                use types::*;
-
-                let name = heap_idx!(strings, r.type_name);
-                let namespace = optional_idx!(strings, r.type_namespace);
-
-                unsafe {
-                    (*ptr.add(idx)).scope = match r.resolution_scope {
-                        BinRS::Module(_) => ResolutionScope::CurrentModule(&module),
-                        BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(&module_refs[m - 1]),
-                        BinRS::AssemblyRef(a) => ResolutionScope::Assembly(&assembly_refs[a - 1]),
-                        BinRS::TypeRef(t) => ResolutionScope::Nested(&type_refs[t - 1]),
-                        BinRS::Null => ResolutionScope::Exported(
-                            exports
-                                .iter()
-                                .find(|e| e.name == name && e.namespace == namespace)
-                                .ok_or(scroll::Error::Custom(format!(
-                                    "missing exported type for type ref {}",
-                                    name
-                                )))?,
-                        ),
-                    }
+        for layout in tables.field_layout {
+            let idx = layout.field.0 - 1;
+            match fields.get_mut(idx) {
+                Some(field) => {
+                    field.offset = Some(layout.offset as usize);
+                }
+                None => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "bad parent field index {} for field layout specification",
+                        idx
+                    ))));
                 }
             }
         }
 
-        println!("{:#?}", types);
+        for rva in tables.field_rva {
+            let idx = rva.field.0 - 1;
+            match fields.get_mut(idx) {
+                Some(field) => {
+                    field.start_of_initial_value = Some(&self.buffer[rva.rva as usize..])
+                }
+                None => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "bad parent field index {} for field RVA specification",
+                        idx
+                    ))));
+                }
+            }
+        }
+
+        let params_len = tables.param.len();
+
+        let mut methods = Vec::with_capacity(method_len);
+        unsafe {
+            methods.set_len(method_len);
+        }
+
+        let mut owned_params = Vec::with_capacity(params_len);
+        for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
+            for (m_idx, m) in type_methods {
+                use members::*;
+
+                let name = heap_idx!(strings, m.name);
+                let range = range_index!((m_idx, m), param_list, params_len, method_def);
+
+                let parent_methods = &mut types[type_idx].methods;
+
+                let sig = convert::managed_method(
+                    heap_idx!(blobs, m.signature).pread_with(0, ())?,
+                    &ctx,
+                )?;
+                let param_len = sig.parameters.len();
+
+                println!(
+                    "[m_idx {}] {}: {} params, owns {} rows",
+                    m_idx,
+                    name,
+                    param_len,
+                    range.len()
+                );
+
+                parent_methods.push(Method {
+                    attributes: vec![],
+                    name,
+                    body: Some(body::Method {
+                        header: body::Header {
+                            initialize_locals: false,
+                            maximum_stack_size: 0,
+                            local_variables: vec![],
+                        },
+                        body: vec![],
+                        data_sections: vec![],
+                    }),
+                    signature: sig,
+                    accessibility: member_accessibility(m.flags)?,
+                    generic_parameters: vec![],
+                    parameter_metadata: vec![None; param_len],
+                    static_member: check_bitmask!(m.flags, 0x10),
+                    sealed: check_bitmask!(m.flags, 0x20),
+                    virtual_member: check_bitmask!(m.flags, 0x40),
+                    hide_by_sig: check_bitmask!(m.flags, 0x80),
+                    vtable_layout: match m.flags & 0x100 {
+                        0x000 => VtableLayout::ReuseSlot,
+                        0x100 => VtableLayout::NewSlot,
+                        _ => unreachable!(),
+                    },
+                    strict: check_bitmask!(m.flags, 0x200),
+                    abstract_member: check_bitmask!(m.flags, 0x400),
+                    special_name: check_bitmask!(m.flags, 0x800),
+                    pinvoke: None,
+                    runtime_special_name: check_bitmask!(m.flags, 0x1000),
+                    security: None,
+                    require_sec_object: check_bitmask!(m.flags, 0x8000),
+                    body_format: match m.impl_flags & 0x3 {
+                        0x0 => BodyFormat::IL,
+                        0x1 => BodyFormat::Native,
+                        0x2 => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid code type value OPTIL (0x2) for method {}",
+                                name
+                            ))))
+                        }
+                        0x3 => BodyFormat::Runtime,
+                        _ => unreachable!(),
+                    },
+                    body_management: match m.impl_flags & 0x4 {
+                        0x0 => BodyManagement::Unmanaged,
+                        0x4 => BodyManagement::Managed,
+                        _ => unreachable!(),
+                    },
+                    forward_ref: check_bitmask!(m.impl_flags, 0x10),
+                    preserve_sig: check_bitmask!(m.impl_flags, 0x80),
+                    synchronized: check_bitmask!(m.impl_flags, 0x20),
+                    no_inlining: check_bitmask!(m.impl_flags, 0x8),
+                    no_optimization: check_bitmask!(m.impl_flags, 0x40),
+                });
+
+                methods[m_idx] = parent_methods.last_mut().unwrap();
+
+                owned_params.push((m_idx, range.clone().zip(&tables.param[range])));
+            }
+        }
+
+        let mut params = Vec::with_capacity(params_len);
+        unsafe {
+            params.set_len(params_len);
+        }
+        for (m_idx, iter) in owned_params {
+            for (p_idx, param) in iter {
+                use members::*;
+
+                println!("accessing m_idx {}, p_idx {}", m_idx, p_idx);
+
+                let meta_idx = param.sequence as usize - 1;
+
+                methods[m_idx].parameter_metadata[meta_idx] = Some(ParameterMetadata {
+                    attributes: vec![],
+                    name: heap_idx!(strings, param.name),
+                    is_in: check_bitmask!(param.flags, 0x1),
+                    is_out: check_bitmask!(param.flags, 0x2),
+                    optional: check_bitmask!(param.flags, 0x10),
+                    default: None,
+                    marshal: None,
+                });
+
+                params[p_idx] = (m_idx, meta_idx);
+            }
+        }
+
+        for marshal in tables.field_marshal {
+            use crate::binary::{metadata::index::HasFieldMarshal, signature::kinds::MarshalSpec};
+
+            let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
+
+            match marshal.parent {
+                HasFieldMarshal::Field(i) => {
+                    fields[i].marshal = value;
+                }
+                HasFieldMarshal::Param(i) => {
+                    let (m_idx, p_idx) = params[i];
+                    methods[m_idx].parameter_metadata[p_idx]
+                        .as_mut()
+                        .unwrap()
+                        .marshal = value;
+                }
+                HasFieldMarshal::Null => {
+                    return Err(CLI(scroll::Error::Custom(
+                        "invalid null parent index for field marshal".to_string(),
+                    )))
+                }
+            }
+        }
+
+        let prop_map_len = tables.property_map.len();
+
+        let mut properties: HashMap<usize, _> = HashMap::with_capacity(tables.property.len());
+
+        for (map_idx, map) in tables.property_map.iter().enumerate() {
+            let type_idx = map.parent.0 - 1;
+
+            let range = range_index!((map_idx, map), property_list, prop_map_len, property_map);
+            for (p_idx, prop) in range.clone().zip(&tables.property[range]) {
+                use super::binary::signature::kinds::PropertySig;
+                use members::*;
+
+                let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
+
+                let parent_props = &mut types[type_idx].properties;
+                parent_props.push(Property {
+                    attributes: vec![],
+                    name: heap_idx!(strings, prop.name),
+                    getter: None,
+                    setter: None,
+                    other: vec![],
+                    type_modifier: opt_map_try!(sig.custom_modifier, |c| convert::custom_modifier(
+                        c, &ctx
+                    )),
+                    return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
+                    special_name: check_bitmask!(prop.flags, 0x200),
+                    runtime_special_name: check_bitmask!(prop.flags, 0x1000),
+                    default: None,
+                });
+                properties.insert(p_idx, parent_props.last_mut().unwrap());
+            }
+        }
+
+        let event_map_len = tables.event_map.len();
+
+        let mut events: HashMap<usize, _> = HashMap::with_capacity(tables.event.len());
+
+        for (map_idx, map) in tables.event_map.iter().enumerate() {
+            let type_idx = map.parent.0 - 1;
+
+            let range = range_index!((map_idx, map), event_list, event_map_len, event_map);
+            for (e_idx, event) in range.clone().zip(&tables.event[range]) {
+                use members::*;
+
+                let parent_events = &mut types[type_idx].events;
+                parent_events.push(Event {
+                    attributes: vec![],
+                    name: heap_idx!(strings, event.name),
+                    delegate_type: convert::member_type_idx(event.event_type, &ctx)?,
+                    add_listener: todo!(),
+                    remove_listener: todo!(),
+                    raise_event: None,
+                    other: vec![],
+                    special_name: check_bitmask!(event.event_flags, 0x200),
+                    runtime_special_name: check_bitmask!(event.event_flags, 0x400),
+                });
+                events.insert(e_idx, parent_events.last_mut().unwrap());
+            }
+        }
 
         // TODO: Box/Rc/something so that moving the Vecs when returning them doesn't break the internal references
 

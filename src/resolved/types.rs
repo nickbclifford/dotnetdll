@@ -5,7 +5,6 @@ use super::{
     members, module, signature,
 };
 use crate::binary::signature::encoded::ArrayShape;
-use crate::utils::check_bitmask;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -102,11 +101,11 @@ impl TypeFlags {
                 0x20 => Kind::Interface,
                 _ => unreachable!(),
             },
-            abstract_type: check_bitmask(bitmask, 0x80),
-            sealed: check_bitmask(bitmask, 0x100),
-            special_name: check_bitmask(bitmask, 0x400),
-            imported: check_bitmask(bitmask, 0x1000),
-            serializable: check_bitmask(bitmask, 0x2000),
+            abstract_type: check_bitmask!(bitmask, 0x80),
+            sealed: check_bitmask!(bitmask, 0x100),
+            special_name: check_bitmask!(bitmask, 0x400),
+            imported: check_bitmask!(bitmask, 0x1000),
+            serializable: check_bitmask!(bitmask, 0x2000),
             string_formatting: match bitmask & 0x30000 {
                 0x00000 => StringFormatting::ANSI,
                 0x10000 => StringFormatting::Unicode,
@@ -114,8 +113,8 @@ impl TypeFlags {
                 0x30000 => StringFormatting::Custom(bitmask & 0xC00000),
                 _ => unreachable!(),
             },
-            before_field_init: check_bitmask(bitmask, 0x1000000),
-            runtime_special_name: check_bitmask(bitmask, 0x800),
+            before_field_init: check_bitmask!(bitmask, 0x1000000),
+            runtime_special_name: check_bitmask!(bitmask, 0x800),
         }
     }
 }

@@ -4,14 +4,14 @@ use super::{
     generic::MethodGeneric,
     module::ExternalModuleReference,
     signature,
-    types::{CustomTypeModifier, MemberType, MethodType, TypeSource},
+    types::{CustomTypeModifier, MemberType, MethodType, TypeDefinition, TypeSource},
 };
 use crate::binary::signature::kinds::MarshalSpec;
 
 #[derive(Debug)]
 pub enum Accessibility {
     CompilerControlled,
-    Access(super::Accessibility)
+    Access(super::Accessibility),
 }
 
 #[derive(Debug)]
@@ -23,10 +23,12 @@ pub struct Field<'a> {
     pub accessibility: Accessibility,
     pub static_member: bool,
     pub init_only: bool,
-    pub constant: bool,
+    pub literal: bool,
     pub default: Option<Constant>,
     pub not_serialized: bool,
     pub special_name: bool,
+    pub pinvoke: bool,
+    pub runtime_special_name: bool,
     pub offset: Option<usize>,
     pub marshal: Option<MarshalSpec>,
     pub start_of_initial_value: Option<&'a [u8]>,
@@ -48,7 +50,10 @@ pub struct ExternalFieldReference<'a> {
 
 #[derive(Debug)]
 pub enum FieldSource<'a> {
-    Definition(&'a Field<'a>),
+    Definition {
+        parent: &'a TypeDefinition<'a>,
+        field: &'a Field<'a>,
+    },
     Reference(&'a ExternalFieldReference<'a>),
 }
 
@@ -72,7 +77,7 @@ pub enum VtableLayout {
     NewSlot,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParameterMetadata<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -104,7 +109,7 @@ pub struct Method<'a> {
     pub signature: signature::ManagedMethod<'a>,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,
-    pub parameter_metadata: Vec<ParameterMetadata<'a>>,
+    pub parameter_metadata: Vec<Option<ParameterMetadata<'a>>>,
     pub static_member: bool,
     pub sealed: bool,
     pub virtual_member: bool,
@@ -168,16 +173,19 @@ pub struct ExternalMethodReference<'a> {
     pub signature: signature::ManagedMethod<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum UserMethod<'a> {
-    Definition(&'a Method<'a>),
+    Definition {
+        parent: &'a TypeDefinition<'a>,
+        method: &'a Method<'a>,
+    },
     Reference(&'a ExternalMethodReference<'a>),
 }
 
 impl<'a> UserMethod<'a> {
     pub fn signature(&self) -> &signature::ManagedMethod<'a> {
         match self {
-            UserMethod::Definition(d) => &d.signature,
+            UserMethod::Definition { method: d, .. } => &d.signature,
             UserMethod::Reference(r) => &r.signature,
         }
     }
@@ -196,7 +204,7 @@ pub enum MethodSource<'a> {
     Generic(GenericMethodInstantiation<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Constant {
     Boolean(bool),
     Char(char),
