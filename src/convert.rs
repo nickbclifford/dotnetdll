@@ -12,10 +12,11 @@ use super::{
 };
 use crate::binary::metadata::index::TypeDefOrRef;
 use scroll::Pread;
+use std::rc::Rc;
 
 pub struct Context<'a> {
-    pub defs: &'a Vec<TypeDefinition<'a>>,
-    pub refs: &'a Vec<ExternalTypeReference<'a>>,
+    pub defs: &'a Vec<Rc<TypeDefinition<'a>>>,
+    pub refs: &'a Vec<Rc<ExternalTypeReference<'a>>>,
     pub specs: &'a Vec<TypeSpec>,
     pub blobs: &'a Blob<'a>,
 }
@@ -136,7 +137,10 @@ pub fn member_type_idx<'a>(idx: index::TypeDefOrRef, ctx: &'a Context) -> Result
         TypeDefOrRef::TypeRef(i) => Ok(MemberType::Base(Box::new(BaseType::Type(
             TypeSource::User(UserType::Reference(&ctx.refs[i - 1])),
         )))),
-        TypeDefOrRef::TypeSpec(i) => member_type_sig(ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?, ctx),
+        TypeDefOrRef::TypeSpec(i) => member_type_sig(
+            ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?,
+            ctx,
+        ),
         TypeDefOrRef::Null => Err(DLLError::CLI(scroll::Error::Custom(
             "invalid null type index".to_string(),
         ))),

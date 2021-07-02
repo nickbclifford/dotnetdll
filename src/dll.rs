@@ -16,7 +16,7 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 
-use std::{collections::HashMap, mem::MaybeUninit};
+use std::{collections::HashMap, mem::MaybeUninit, rc::Rc};
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -205,103 +205,110 @@ impl<'a> DLL<'a> {
             });
         }
 
-        let mut assembly_refs = Vec::with_capacity(tables.assembly_ref.len());
-        for a in tables.assembly_ref.iter() {
-            use assembly::*;
+        let assembly_refs = tables
+            .assembly_ref
+            .iter()
+            .map(|a| {
+                use assembly::*;
 
-            assembly_refs.push(ExternalAssemblyReference {
-                attributes: vec![],
-                version: build_version!(a),
-                flags: Flags::new(a.flags),
-                public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
-                name: heap_idx!(strings, a.name),
-                culture: optional_idx!(strings, a.culture),
-                hash_value: None,
-            });
-        }
+                Ok(Rc::new(ExternalAssemblyReference {
+                    attributes: vec![],
+                    version: build_version!(a),
+                    flags: Flags::new(a.flags),
+                    public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
+                    name: heap_idx!(strings, a.name),
+                    culture: optional_idx!(strings, a.culture),
+                    hash_value: optional_idx!(blobs, a.hash_value),
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let type_len = tables.type_def.len();
-        let mut types = Vec::with_capacity(type_len);
-        let mut owned_fields = Vec::with_capacity(type_len);
-        let mut owned_methods = Vec::with_capacity(type_len);
+        let types = tables
+            .type_def
+            .iter()
+            .enumerate()
+            .map(|(idx, t)| {
+                use types::*;
+
+                let layout_flags = t.flags & 0x18;
+                Ok(Rc::new(TypeDefinition {
+                    attributes: vec![],
+                    flags: TypeFlags::new(
+                        t.flags,
+                        if layout_flags == 0x00 {
+                            Layout::Automatic
+                        } else {
+                            let layout = tables.class_layout.iter().find(|c| c.parent.0 - 1 == idx);
+
+                            match layout_flags {
+                                0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
+                                    packing_size: l.packing_size as usize,
+                                    class_size: l.class_size as usize,
+                                })),
+                                0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
+                                    class_size: l.class_size as usize,
+                                })),
+                                _ => unreachable!(),
+                            }
+                        },
+                    ),
+                    name: heap_idx!(strings, t.type_name),
+                    namespace: optional_idx!(strings, t.type_namespace),
+                    fields: vec![],
+                    properties: vec![],
+                    methods: vec![],
+                    events: vec![],
+                    nested_types: vec![],
+                    overrides: vec![],
+                    extends: None,
+                    implements: vec![],
+                    generic_parameters: vec![],
+                    security: None,
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let fields_len = tables.field.len();
         let method_len = tables.method_def.len();
 
-        for (idx, t) in tables.type_def.iter().enumerate() {
-            use types::*;
-
-            let layout_flags = t.flags & 0x18;
-
-            // TODO: everything that's owned
-
-            types.push(TypeDefinition {
-                attributes: vec![],
-                flags: TypeFlags::new(
-                    t.flags,
-                    if layout_flags == 0x00 {
-                        Layout::Automatic
-                    } else {
-                        let layout = tables.class_layout.iter().find(|c| c.parent.0 - 1 == idx);
-
-                        match layout_flags {
-                            0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
-                                packing_size: l.packing_size as usize,
-                                class_size: l.class_size as usize,
-                            })),
-                            0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
-                                class_size: l.class_size as usize,
-                            })),
-                            _ => unreachable!(),
-                        }
-                    },
-                ),
-                name: heap_idx!(strings, t.type_name),
-                namespace: optional_idx!(strings, t.type_namespace),
-                fields: vec![],
-                properties: vec![],
-                methods: vec![],
-                events: vec![],
-                nested_types: vec![],
-                overrides: vec![],
-                extends: None,
-                implements: vec![],
-                generic_parameters: vec![],
-                security: None,
-            });
-
+        let owned_fields = tables.type_def.iter().enumerate().map(|(idx, t)| {
             let f_range = range_index!((idx, t), field_list, fields_len, type_def);
-            owned_fields.push(f_range.clone().zip(&tables.field[f_range]));
+            f_range.clone().zip(&tables.field[f_range])
+        });
 
+        let owned_methods = tables.type_def.iter().enumerate().map(|(idx, t)| {
             let m_range = range_index!((idx, t), method_list, method_len, type_def);
-            owned_methods.push(m_range.clone().zip(&tables.method_def[m_range]));
-        }
+            m_range.clone().zip(&tables.method_def[m_range])
+        });
 
-        let mut files = Vec::with_capacity(tables.file.len());
-        for f in tables.file {
-            use module::*;
+        let files: Vec<_> = tables
+            .file
+            .iter()
+            .map(|f| {
+                Ok(Rc::new(module::File {
+                    attributes: vec![],
+                    has_metadata: !check_bitmask!(f.flags, 0x0001),
+                    name: heap_idx!(strings, f.name),
+                    hash_value: heap_idx!(blobs, f.hash_value),
+                }))
+            })
+            .collect::<Result<_>>()?;
 
-            files.push(File {
-                attributes: vec![],
-                has_metadata: !check_bitmask!(f.flags, 0x0001),
-                name: heap_idx!(strings, f.name),
-                hash_value: heap_idx!(blobs, f.hash_value),
-            });
-        }
+        let exports: Vec<_> = tables
+            .exported_type
+            .iter()
+            .map(|e| {
+                use types::*;
 
-        let mut exports = Vec::with_capacity(tables.exported_type.len());
-
-        for e in tables.exported_type.iter() {
-            use types::*;
-
-            exports.push(ExportedType {
-                attributes: vec![],
-                flags: TypeFlags::new(e.flags, Layout::Automatic),
-                name: heap_idx!(strings, e.type_name),
-                namespace: optional_idx!(strings, e.type_namespace),
-                implementation: unsafe { MaybeUninit::uninit().assume_init() },
-            });
-        }
+                Ok(Rc::new(ExportedType {
+                    attributes: vec![],
+                    flags: TypeFlags::new(e.flags, Layout::Automatic),
+                    name: heap_idx!(strings, e.type_name),
+                    namespace: optional_idx!(strings, e.type_namespace),
+                    implementation: unsafe { MaybeUninit::uninit().assume_init() },
+                }))
+            })
+            .collect::<Result<_>>()?;
 
         for (idx, e) in tables.exported_type.iter().enumerate() {
             use metadata::index::Implementation;
@@ -310,12 +317,14 @@ impl<'a> DLL<'a> {
             let new_impl = match e.implementation {
                 Implementation::File(f) => TypeImplementation::ModuleFile {
                     type_def_idx: e.type_def_id as usize,
-                    file: &files[f - 1],
+                    file: Rc::clone(&files[f - 1]),
                 },
                 Implementation::AssemblyRef(a) => {
-                    TypeImplementation::TypeForwarder(&assembly_refs[a - 1])
+                    TypeImplementation::TypeForwarder(Rc::clone(&assembly_refs[a - 1]))
                 }
-                Implementation::ExportedType(t) => TypeImplementation::Nested(&exports[t - 1]),
+                Implementation::ExportedType(t) => {
+                    TypeImplementation::Nested(Rc::clone(&exports[t - 1]))
+                }
                 Implementation::Null => {
                     return Err(CLI(scroll::Error::Custom(format!(
                         "invalid null implementation index for exported type {}",
@@ -324,7 +333,10 @@ impl<'a> DLL<'a> {
                 }
             };
 
-            exports[idx].implementation = new_impl;
+            let ptr = Rc::as_ptr(&exports[idx]) as *mut ExportedType;
+            unsafe {
+                (*ptr).implementation = new_impl;
+            }
         }
 
         let module_row = tables.module.first().ok_or(scroll::Error::Custom(
@@ -336,26 +348,29 @@ impl<'a> DLL<'a> {
             mvid: heap_idx!(guids, module_row.mvid),
         };
 
-        let mut module_refs = Vec::with_capacity(tables.module_ref.len());
-        for r in tables.module_ref.iter() {
-            module_refs.push(module::ExternalModuleReference {
-                attributes: vec![],
-                name: heap_idx!(strings, r.name),
-            });
-        }
+        let module_refs = tables
+            .module_ref
+            .iter()
+            .map(|r| {
+                Ok(module::ExternalModuleReference {
+                    attributes: vec![],
+                    name: heap_idx!(strings, r.name),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let mut type_refs = Vec::with_capacity(tables.type_ref.len());
-
-        for r in tables.type_ref.iter() {
-            use types::*;
-
-            type_refs.push(ExternalTypeReference {
-                attributes: vec![],
-                name: heap_idx!(strings, r.type_name),
-                namespace: optional_idx!(strings, r.type_namespace),
-                scope: unsafe { MaybeUninit::uninit().assume_init() },
-            });
-        }
+        let type_refs = tables
+            .type_ref
+            .iter()
+            .map(|r| {
+                Ok(Rc::new(types::ExternalTypeReference {
+                    attributes: vec![],
+                    name: heap_idx!(strings, r.type_name),
+                    namespace: optional_idx!(strings, r.type_namespace),
+                    scope: unsafe { MaybeUninit::uninit().assume_init() },
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         for (idx, r) in tables.type_ref.iter().enumerate() {
             use metadata::index::ResolutionScope as BinRS;
@@ -380,7 +395,14 @@ impl<'a> DLL<'a> {
                 ),
             };
 
-            type_refs[idx].scope = new_scope;
+            let ptr = Rc::as_ptr(&type_refs[idx]) as *mut ExternalTypeReference;
+            unsafe {
+                (*ptr).scope = new_scope;
+            }
+        }
+
+        for r in type_refs.iter() {
+            println!("{:#?}", r)
         }
 
         let ctx = convert::Context {
@@ -421,7 +443,7 @@ impl<'a> DLL<'a> {
             for (f_idx, f) in type_fields {
                 let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
 
-                let parent_fields = &mut types[type_idx].fields;
+                let parent_fields: &mut Vec<Field> = todo!();
                 parent_fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
@@ -444,7 +466,7 @@ impl<'a> DLL<'a> {
             }
         }
 
-        for layout in tables.field_layout {
+        for layout in tables.field_layout.iter() {
             let idx = layout.field.0 - 1;
             match fields.get_mut(idx) {
                 Some(field) => {
@@ -459,7 +481,7 @@ impl<'a> DLL<'a> {
             }
         }
 
-        for rva in tables.field_rva {
+        for rva in tables.field_rva.iter() {
             let idx = rva.field.0 - 1;
             match fields.get_mut(idx) {
                 Some(field) => {
@@ -489,21 +511,13 @@ impl<'a> DLL<'a> {
                 let name = heap_idx!(strings, m.name);
                 let range = range_index!((m_idx, m), param_list, params_len, method_def);
 
-                let parent_methods = &mut types[type_idx].methods;
+                let parent_methods: &mut Vec<Method> = todo!();
 
                 let sig = convert::managed_method(
                     heap_idx!(blobs, m.signature).pread_with(0, ())?,
                     &ctx,
                 )?;
                 let param_len = sig.parameters.len();
-
-                println!(
-                    "[m_idx {}] {}: {} params, owns {} rows",
-                    m_idx,
-                    name,
-                    param_len,
-                    range.len()
-                );
 
                 parent_methods.push(Method {
                     attributes: vec![],
@@ -575,8 +589,6 @@ impl<'a> DLL<'a> {
             for (p_idx, param) in iter {
                 use members::*;
 
-                println!("accessing m_idx {}, p_idx {}", m_idx, p_idx);
-
                 let meta_idx = param.sequence as usize - 1;
 
                 methods[m_idx].parameter_metadata[meta_idx] = Some(ParameterMetadata {
@@ -631,7 +643,7 @@ impl<'a> DLL<'a> {
 
                 let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
 
-                let parent_props = &mut types[type_idx].properties;
+                let parent_props: &mut Vec<Property> = todo!();
                 parent_props.push(Property {
                     attributes: vec![],
                     name: heap_idx!(strings, prop.name),
@@ -661,7 +673,7 @@ impl<'a> DLL<'a> {
             for (e_idx, event) in range.clone().zip(&tables.event[range]) {
                 use members::*;
 
-                let parent_events = &mut types[type_idx].events;
+                let parent_events: &mut Vec<Event> = todo!();
                 parent_events.push(Event {
                     attributes: vec![],
                     name: heap_idx!(strings, event.name),

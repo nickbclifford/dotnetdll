@@ -6,6 +6,8 @@ use super::{
 };
 use crate::binary::signature::encoded::ArrayShape;
 
+use std::rc::Rc;
+
 #[derive(Debug)]
 pub enum Kind {
     Class,
@@ -156,12 +158,12 @@ pub struct ExternalTypeReference<'a> {
 
 #[derive(Debug)]
 pub enum TypeImplementation<'a> {
-    Nested(&'a ExportedType<'a>),
+    Nested(Rc<ExportedType<'a>>),
     ModuleFile {
         type_def_idx: usize,
-        file: &'a module::File<'a>,
+        file: Rc<module::File<'a>>,
     },
-    TypeForwarder(&'a assembly::ExternalAssemblyReference<'a>),
+    TypeForwarder(Rc<assembly::ExternalAssemblyReference<'a>>),
 }
 
 #[derive(Debug)]
