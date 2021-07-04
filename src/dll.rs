@@ -401,10 +401,6 @@ impl<'a> DLL<'a> {
             }
         }
 
-        for r in type_refs.iter() {
-            println!("{:#?}", r)
-        }
-
         let ctx = convert::Context {
             defs: &types,
             refs: &type_refs,
@@ -432,10 +428,17 @@ impl<'a> DLL<'a> {
             })
         }
 
-        let mut fields = Vec::with_capacity(fields_len);
-        unsafe {
-            fields.set_len(fields_len);
+        macro_rules! new_with_len {
+            ($name:ident, $len:ident) => {
+                let mut $name = Vec::with_capacity($len);
+                unsafe {
+                    $name.set_len($len);
+                }
+            };
         }
+
+        new_with_len!(fields, fields_len);
+
         for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
             use super::binary::signature::kinds::FieldSig;
             use members::*;
@@ -443,7 +446,9 @@ impl<'a> DLL<'a> {
             for (f_idx, f) in type_fields {
                 let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
 
-                let parent_fields: &mut Vec<Field> = todo!();
+                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
+                let parent_fields: &mut Vec<Field> = unsafe { &mut ((*ptr).fields) };
+
                 parent_fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
@@ -498,10 +503,7 @@ impl<'a> DLL<'a> {
 
         let params_len = tables.param.len();
 
-        let mut methods = Vec::with_capacity(method_len);
-        unsafe {
-            methods.set_len(method_len);
-        }
+        new_with_len!(methods, method_len);
 
         let mut owned_params = Vec::with_capacity(params_len);
         for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
@@ -511,7 +513,8 @@ impl<'a> DLL<'a> {
                 let name = heap_idx!(strings, m.name);
                 let range = range_index!((m_idx, m), param_list, params_len, method_def);
 
-                let parent_methods: &mut Vec<Method> = todo!();
+                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
+                let parent_methods: &mut Vec<Method> = unsafe { &mut ((*ptr).methods) };
 
                 let sig = convert::managed_method(
                     heap_idx!(blobs, m.signature).pread_with(0, ())?,
@@ -534,7 +537,7 @@ impl<'a> DLL<'a> {
                     signature: sig,
                     accessibility: member_accessibility(m.flags)?,
                     generic_parameters: vec![],
-                    parameter_metadata: vec![None; param_len],
+                    parameter_metadata: vec![None; param_len + 1],
                     static_member: check_bitmask!(m.flags, 0x10),
                     sealed: check_bitmask!(m.flags, 0x20),
                     virtual_member: check_bitmask!(m.flags, 0x40),
@@ -575,23 +578,31 @@ impl<'a> DLL<'a> {
                     no_optimization: check_bitmask!(m.impl_flags, 0x40),
                 });
 
-                methods[m_idx] = parent_methods.last_mut().unwrap();
+                methods[m_idx] = (type_idx, parent_methods.len() - 1);
 
                 owned_params.push((m_idx, range.clone().zip(&tables.param[range])));
             }
         }
 
-        let mut params = Vec::with_capacity(params_len);
-        unsafe {
-            params.set_len(params_len);
+        macro_rules! get_method {
+            ($m_idx:expr) => {{
+                let (type_idx, internal_idx) = methods[$m_idx];
+                unsafe {
+                    &mut *((&types[type_idx]).methods.as_ptr().add(internal_idx)
+                        as *mut members::Method)
+                }
+            }};
         }
+
+        new_with_len!(params, params_len);
+
         for (m_idx, iter) in owned_params {
             for (p_idx, param) in iter {
                 use members::*;
 
-                let meta_idx = param.sequence as usize - 1;
+                let meta_idx = param.sequence as usize;
 
-                methods[m_idx].parameter_metadata[meta_idx] = Some(ParameterMetadata {
+                let param_val = Some(ParameterMetadata {
                     attributes: vec![],
                     name: heap_idx!(strings, param.name),
                     is_in: check_bitmask!(param.flags, 0x1),
@@ -600,6 +611,8 @@ impl<'a> DLL<'a> {
                     default: None,
                     marshal: None,
                 });
+
+                get_method!(m_idx).parameter_metadata[meta_idx] = param_val;
 
                 params[p_idx] = (m_idx, meta_idx);
             }
@@ -616,7 +629,7 @@ impl<'a> DLL<'a> {
                 }
                 HasFieldMarshal::Param(i) => {
                     let (m_idx, p_idx) = params[i];
-                    methods[m_idx].parameter_metadata[p_idx]
+                    get_method!(m_idx).parameter_metadata[p_idx]
                         .as_mut()
                         .unwrap()
                         .marshal = value;
@@ -629,21 +642,22 @@ impl<'a> DLL<'a> {
             }
         }
 
-        let prop_map_len = tables.property_map.len();
+        let prop_len = tables.property.len();
 
-        let mut properties: HashMap<usize, _> = HashMap::with_capacity(tables.property.len());
+        new_with_len!(properties, prop_len);
 
         for (map_idx, map) in tables.property_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let range = range_index!((map_idx, map), property_list, prop_map_len, property_map);
+            let range = range_index!((map_idx, map), property_list, prop_len, property_map);
             for (p_idx, prop) in range.clone().zip(&tables.property[range]) {
                 use super::binary::signature::kinds::PropertySig;
                 use members::*;
 
                 let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
 
-                let parent_props: &mut Vec<Property> = todo!();
+                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
+                let parent_props: &mut Vec<Property> = unsafe { &mut (*ptr).properties };
                 parent_props.push(Property {
                     attributes: vec![],
                     name: heap_idx!(strings, prop.name),
@@ -658,22 +672,24 @@ impl<'a> DLL<'a> {
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                     default: None,
                 });
-                properties.insert(p_idx, parent_props.last_mut().unwrap());
+                properties[p_idx] = (type_idx, parent_props.len() - 1);
             }
         }
 
-        let event_map_len = tables.event_map.len();
 
-        let mut events: HashMap<usize, _> = HashMap::with_capacity(tables.event.len());
+        let event_len = tables.event.len();
+
+        new_with_len!(events, event_len);
 
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let range = range_index!((map_idx, map), event_list, event_map_len, event_map);
+            let range = range_index!((map_idx, map), event_list, event_len, event_map);
             for (e_idx, event) in range.clone().zip(&tables.event[range]) {
                 use members::*;
 
-                let parent_events: &mut Vec<Event> = todo!();
+                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
+                let parent_events: &mut Vec<Event> = unsafe { &mut (*ptr).events };
                 parent_events.push(Event {
                     attributes: vec![],
                     name: heap_idx!(strings, event.name),
