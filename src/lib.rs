@@ -33,8 +33,6 @@ mod tests {
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
         let dll = dll::DLL::parse(&file)?;
-        let blobs: heap::Blob = dll.get_heap("#Blob")?;
-        let meta = dll.get_logical_metadata()?;
 
         dll.resolve()?;
 

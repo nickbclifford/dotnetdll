@@ -12,7 +12,6 @@ use super::{
 };
 use crate::binary::metadata::index::TypeDefOrRef;
 use scroll::Pread;
-use std::rc::Rc;
 
 pub struct Context<'a> {
     pub specs: &'a Vec<TypeSpec>,

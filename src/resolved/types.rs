@@ -141,11 +141,11 @@ pub struct TypeDefinition<'a> {
 
 #[derive(Debug)]
 pub enum ResolutionScope<'a> {
-    Nested(&'a ExternalTypeReference<'a>),
-    ExternalModule(&'a module::ExternalModuleReference<'a>),
-    CurrentModule(&'a module::Module<'a>),
-    Assembly(&'a assembly::ExternalAssemblyReference<'a>),
-    Exported(&'a ExportedType<'a>),
+    Nested(usize),
+    ExternalModule(Rc<module::ExternalModuleReference<'a>>),
+    CurrentModule,
+    Assembly(Rc<assembly::ExternalAssemblyReference<'a>>),
+    Exported(Rc<ExportedType<'a>>),
 }
 
 #[derive(Debug)]

@@ -16,7 +16,7 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 
-use std::{collections::HashMap, mem::MaybeUninit, rc::Rc};
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -59,8 +59,8 @@ use DLLError::*;
 pub type Result<T> = std::result::Result<T, DLLError>;
 
 pub struct Resolution<'a> {
-    pub type_definitions: Vec<Rc<resolved::types::TypeDefinition<'a>>>,
-    pub type_references: Vec<Rc<resolved::types::ExternalTypeReference<'a>>>,
+    pub type_definitions: Vec<resolved::types::TypeDefinition<'a>>,
+    pub type_references: Vec<resolved::types::ExternalTypeReference<'a>>,
     // TODO
 }
 
@@ -228,7 +228,7 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let types = tables
+        let mut types = tables
             .type_def
             .iter()
             .enumerate()
@@ -236,7 +236,7 @@ impl<'a> DLL<'a> {
                 use types::*;
 
                 let layout_flags = t.flags & 0x18;
-                Ok(Rc::new(TypeDefinition {
+                Ok(TypeDefinition {
                     attributes: vec![],
                     flags: TypeFlags::new(
                         t.flags,
@@ -269,7 +269,7 @@ impl<'a> DLL<'a> {
                     implements: vec![],
                     generic_parameters: vec![],
                     security: None,
-                }))
+                })
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -344,10 +344,10 @@ impl<'a> DLL<'a> {
             .module_ref
             .iter()
             .map(|r| {
-                Ok(module::ExternalModuleReference {
+                Ok(Rc::new(module::ExternalModuleReference {
                     attributes: vec![],
                     name: heap_idx!(strings, r.name),
-                })
+                }))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -355,43 +355,34 @@ impl<'a> DLL<'a> {
             .type_ref
             .iter()
             .map(|r| {
-                Ok(Rc::new(types::ExternalTypeReference {
+                use metadata::index::ResolutionScope as BinRS;
+                use types::*;
+
+                let name = heap_idx!(strings, r.type_name);
+                let namespace = optional_idx!(strings, r.type_namespace);
+
+                Ok(types::ExternalTypeReference {
                     attributes: vec![],
                     name: heap_idx!(strings, r.type_name),
                     namespace: optional_idx!(strings, r.type_namespace),
-                    scope: unsafe { MaybeUninit::uninit().assume_init() },
-                }))
+                    scope: match r.resolution_scope {
+                        BinRS::Module(_) => ResolutionScope::CurrentModule,
+                        BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(Rc::clone(&module_refs[m - 1])),
+                        BinRS::AssemblyRef(a) => ResolutionScope::Assembly(Rc::clone(&assembly_refs[a - 1])),
+                        BinRS::TypeRef(t) => ResolutionScope::Nested(t - 1),
+                        BinRS::Null => ResolutionScope::Exported(
+                            Rc::clone(exports
+                                .iter()
+                                .find(|e| e.name == name && e.namespace == namespace)
+                                .ok_or(scroll::Error::Custom(format!(
+                                    "missing exported type for type ref {}",
+                                    name
+                                )))?),
+                        ),
+                    },
+                })
             })
             .collect::<Result<Vec<_>>>()?;
-
-        for (idx, r) in tables.type_ref.iter().enumerate() {
-            use metadata::index::ResolutionScope as BinRS;
-            use types::*;
-
-            let name = heap_idx!(strings, r.type_name);
-            let namespace = optional_idx!(strings, r.type_namespace);
-
-            let new_scope = match r.resolution_scope {
-                BinRS::Module(_) => ResolutionScope::CurrentModule(&module),
-                BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(&module_refs[m - 1]),
-                BinRS::AssemblyRef(a) => ResolutionScope::Assembly(&assembly_refs[a - 1]),
-                BinRS::TypeRef(t) => ResolutionScope::Nested(&type_refs[t - 1]),
-                BinRS::Null => ResolutionScope::Exported(
-                    exports
-                        .iter()
-                        .find(|e| e.name == name && e.namespace == namespace)
-                        .ok_or(scroll::Error::Custom(format!(
-                            "missing exported type for type ref {}",
-                            name
-                        )))?,
-                ),
-            };
-
-            let ptr = Rc::as_ptr(&type_refs[idx]) as *mut ExternalTypeReference;
-            unsafe {
-                (*ptr).scope = new_scope;
-            }
-        }
 
         let ctx = convert::Context {
             specs: &tables.type_spec,
@@ -433,11 +424,10 @@ impl<'a> DLL<'a> {
             use super::binary::signature::kinds::FieldSig;
             use members::*;
 
+            let parent_fields = &mut types[type_idx].fields;
+
             for (f_idx, f) in type_fields {
                 let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
-
-                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
-                let parent_fields: &mut Vec<Field> = unsafe { &mut ((*ptr).fields) };
 
                 parent_fields.push(Field {
                     attributes: vec![],
@@ -457,15 +447,22 @@ impl<'a> DLL<'a> {
                     marshal: None,
                     start_of_initial_value: None,
                 });
-                fields[f_idx] = parent_fields.last_mut().unwrap();
+                fields[f_idx] = (type_idx, parent_fields.len() - 1);
             }
+        }
+
+        macro_rules! get_field {
+            ($f_idx:expr) => {{
+                let (type_idx, internal_idx) = $f_idx;
+                &mut types[type_idx].fields[internal_idx]
+            }};
         }
 
         for layout in tables.field_layout.iter() {
             let idx = layout.field.0 - 1;
-            match fields.get_mut(idx) {
-                Some(field) => {
-                    field.offset = Some(layout.offset as usize);
+            match fields.get(idx) {
+                Some(&field) => {
+                    get_field!(field).offset = Some(layout.offset as usize);
                 }
                 None => {
                     return Err(CLI(scroll::Error::Custom(format!(
@@ -478,9 +475,10 @@ impl<'a> DLL<'a> {
 
         for rva in tables.field_rva.iter() {
             let idx = rva.field.0 - 1;
-            match fields.get_mut(idx) {
-                Some(field) => {
-                    field.start_of_initial_value = Some(&self.buffer[rva.rva as usize..])
+            match fields.get(idx) {
+                Some(&field) => {
+                    get_field!(field).start_of_initial_value =
+                        Some(&self.buffer[rva.rva as usize..])
                 }
                 None => {
                     return Err(CLI(scroll::Error::Custom(format!(
@@ -497,14 +495,13 @@ impl<'a> DLL<'a> {
 
         let mut owned_params = Vec::with_capacity(params_len);
         for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
+            let parent_methods = &mut types[type_idx].methods;
+
             for (m_idx, m) in type_methods {
                 use members::*;
 
                 let name = heap_idx!(strings, m.name);
                 let range = range_index!((m_idx, m), param_list, params_len, method_def);
-
-                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
-                let parent_methods: &mut Vec<Method> = unsafe { &mut ((*ptr).methods) };
 
                 let sig = convert::managed_method(
                     heap_idx!(blobs, m.signature).pread_with(0, ())?,
@@ -577,10 +574,7 @@ impl<'a> DLL<'a> {
         macro_rules! get_method {
             ($m_idx:expr) => {{
                 let (type_idx, internal_idx) = methods[$m_idx];
-                unsafe {
-                    &mut *((&types[type_idx]).methods.as_ptr().add(internal_idx)
-                        as *mut members::Method)
-                }
+                &mut types[type_idx].methods[internal_idx]
             }};
         }
 
@@ -614,16 +608,29 @@ impl<'a> DLL<'a> {
             let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
 
             match marshal.parent {
-                HasFieldMarshal::Field(i) => {
-                    fields[i].marshal = value;
-                }
-                HasFieldMarshal::Param(i) => {
-                    let (m_idx, p_idx) = params[i];
-                    get_method!(m_idx).parameter_metadata[p_idx]
-                        .as_mut()
-                        .unwrap()
-                        .marshal = value;
-                }
+                HasFieldMarshal::Field(i) => match fields.get(i) {
+                    Some(&field) => get_field!(field).marshal = value,
+                    None => {
+                        return Err(CLI(scroll::Error::Custom(format!(
+                            "bad field index {} for field marshal",
+                            i
+                        ))))
+                    }
+                },
+                HasFieldMarshal::Param(i) => match params.get(i) {
+                    Some(&(m_idx, p_idx)) => {
+                        get_method!(m_idx).parameter_metadata[p_idx]
+                            .as_mut()
+                            .unwrap()
+                            .marshal = value;
+                    }
+                    None => {
+                        return Err(CLI(scroll::Error::Custom(format!(
+                            "bad parameter index {} for field marshal",
+                            i
+                        ))))
+                    }
+                },
                 HasFieldMarshal::Null => {
                     return Err(CLI(scroll::Error::Custom(
                         "invalid null parent index for field marshal".to_string(),
@@ -639,6 +646,8 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.property_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
+            let parent_props = &mut types[type_idx].properties;
+
             let range = range_index!((map_idx, map), property_list, prop_len, property_map);
             for (p_idx, prop) in range.clone().zip(&tables.property[range]) {
                 use super::binary::signature::kinds::PropertySig;
@@ -646,8 +655,6 @@ impl<'a> DLL<'a> {
 
                 let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
 
-                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
-                let parent_props: &mut Vec<Property> = unsafe { &mut (*ptr).properties };
                 parent_props.push(Property {
                     attributes: vec![],
                     name: heap_idx!(strings, prop.name),
@@ -673,12 +680,12 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
+            let parent_events = &mut types[type_idx].events;
+
             let range = range_index!((map_idx, map), event_list, event_len, event_map);
             for (e_idx, event) in range.clone().zip(&tables.event[range]) {
                 use members::*;
 
-                let ptr = Rc::as_ptr(&types[type_idx]) as *mut types::TypeDefinition;
-                let parent_events: &mut Vec<Event> = unsafe { &mut (*ptr).events };
                 parent_events.push(Event {
                     attributes: vec![],
                     name: heap_idx!(strings, event.name),
@@ -696,7 +703,7 @@ impl<'a> DLL<'a> {
 
         Ok(Resolution {
             type_definitions: types,
-            type_references: type_refs
+            type_references: type_refs,
         })
     }
 }
