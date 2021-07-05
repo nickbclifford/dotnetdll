@@ -4,7 +4,7 @@ use super::{
     generic::TypeGeneric,
     members, module, signature,
 };
-use crate::binary::signature::encoded::ArrayShape;
+use crate::{binary::signature::encoded::ArrayShape, dll::Resolution};
 
 use std::rc::Rc;
 
@@ -132,8 +132,8 @@ pub struct TypeDefinition<'a> {
     pub events: Vec<members::Event<'a>>,
     pub nested_types: Vec<TypeDefinition<'a>>,
     pub overrides: Vec<MethodOverride<'a>>,
-    pub extends: Option<TypeSource<'a, MemberType<'a>>>,
-    pub implements: Vec<(Attribute<'a>, TypeSource<'a, MemberType<'a>>)>,
+    pub extends: Option<TypeSource<MemberType>>,
+    pub implements: Vec<(Attribute<'a>, TypeSource<MemberType>)>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
     pub flags: TypeFlags,
     pub security: Option<SecurityDeclaration<'a>>,
@@ -158,7 +158,7 @@ pub struct ExternalTypeReference<'a> {
 
 #[derive(Debug)]
 pub enum TypeImplementation<'a> {
-    Nested(Rc<ExportedType<'a>>),
+    Nested(usize),
     ModuleFile {
         type_def_idx: usize,
         file: Rc<module::File<'a>>,
@@ -180,43 +180,43 @@ type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
 #[derive(Debug, Clone)]
-pub enum UserType<'a> {
-    Definition(&'a TypeDefinition<'a>),
-    Reference(&'a ExternalTypeReference<'a>),
+pub enum UserType {
+    Definition(usize),
+    Reference(usize),
 }
 
-impl UserType<'_> {
-    pub fn type_name(&self) -> String {
+impl UserType {
+    pub fn type_name(&self, r: &Resolution) -> String {
         match self {
-            UserType::Definition(t) => t.type_name(),
-            UserType::Reference(t) => t.type_name(),
+            UserType::Definition(idx) => r.type_definitions[*idx].type_name(),
+            UserType::Reference(idx) => r.type_references[*idx].type_name(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum CustomTypeModifier<'a> {
-    Optional(UserType<'a>),
-    Required(UserType<'a>),
+pub enum CustomTypeModifier {
+    Optional(UserType),
+    Required(UserType),
 }
 
 #[derive(Debug, Clone)]
-pub struct GenericInstantiation<'a, CtxBaseType> {
-    pub base: UserType<'a>,
+pub struct GenericInstantiation<CtxBaseType> {
+    pub base: UserType,
     pub parameters: Vec<CtxBaseType>,
 }
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
 #[derive(Debug, Clone)]
-pub enum TypeSource<'a, EnclosingType> {
-    User(UserType<'a>),
-    Generic(GenericInstantiation<'a, EnclosingType>),
+pub enum TypeSource<EnclosingType> {
+    User(UserType),
+    Generic(GenericInstantiation<EnclosingType>),
 }
 
 #[derive(Debug, Clone)]
-pub enum BaseType<'a, EnclosingType> {
-    Type(TypeSource<'a, EnclosingType>),
+pub enum BaseType<EnclosingType> {
+    Type(TypeSource<EnclosingType>),
     Boolean,
     Char,
     Int8,
@@ -233,37 +233,37 @@ pub enum BaseType<'a, EnclosingType> {
     UIntPtr,
     Object,
     String,
-    Vector(Option<CustomTypeModifier<'a>>, EnclosingType),
+    Vector(Option<CustomTypeModifier>, EnclosingType),
     Array(EnclosingType, ArrayShape),
-    ValuePointer(Option<CustomTypeModifier<'a>>, Option<EnclosingType>),
-    FunctionPointer(signature::ManagedMethod<'a>),
+    ValuePointer(Option<CustomTypeModifier>, Option<EnclosingType>),
+    FunctionPointer(signature::ManagedMethod),
 }
 
 #[derive(Debug, Clone)]
-pub enum MemberType<'a> {
-    Base(Box<BaseType<'a, MemberType<'a>>>),
+pub enum MemberType {
+    Base(Box<BaseType<MemberType>>),
     TypeGeneric(usize),
 }
 
 #[derive(Debug, Clone)]
-pub enum MethodType<'a> {
-    Base(Box<BaseType<'a, MethodType<'a>>>),
+pub enum MethodType {
+    Base(Box<BaseType<MethodType>>),
     TypeGeneric(usize),
     MethodGeneric(usize),
 }
 
 #[derive(Debug)]
-pub enum LocalVariable<'a> {
+pub enum LocalVariable {
     TypedReference,
     Variable {
-        custom_modifier: Option<CustomTypeModifier<'a>>,
+        custom_modifier: Option<CustomTypeModifier>,
         pinned: bool,
         by_ref: bool,
-        var_type: MethodType<'a>,
+        var_type: MethodType,
     },
 }
 
 pub trait Resolver {
     type Error: std::error::Error;
-    fn find_type<'a>(&self, name: &str) -> Result<&'a TypeDefinition<'a>, Self::Error>;
+    fn find_type<'a>(&self, name: &str) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error>;
 }

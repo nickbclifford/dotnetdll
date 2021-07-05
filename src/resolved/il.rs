@@ -75,7 +75,7 @@ pub enum Instruction<'a> {
     },
     CallIndirect {
         tail_call: bool,
-        signature: signature::MaybeUnmanagedMethod<'a>,
+        signature: signature::MaybeUnmanagedMethod,
     },
     CompareEqual,
     CompareGreater(NumberSign),
@@ -138,24 +138,24 @@ pub enum Instruction<'a> {
     Switch(Vec<isize>),
     Xor,
 
-    Box(MethodType<'a>),
+    Box(MethodType),
     CallVirtual {
-        constraint: Option<MethodType<'a>>,
+        constraint: Option<MethodType>,
         skip_null_check: bool,
         tail_call: bool,
         method: MethodSource<'a>,
     },
     CastClass {
         skip_type_check: bool,
-        cast_type: MethodType<'a>,
+        cast_type: MethodType,
     },
-    CopyObject(MethodType<'a>),
-    InitializeForObject(MethodType<'a>),
-    IsInstance(MethodType<'a>),
+    CopyObject(MethodType),
+    InitializeForObject(MethodType),
+    IsInstance(MethodType),
     LoadElement {
         skip_range_check: bool,
         skip_null_check: bool,
-        element_type: MethodType<'a>,
+        element_type: MethodType,
     },
     LoadElementPrimitive {
         skip_range_check: bool,
@@ -167,7 +167,7 @@ pub enum Instruction<'a> {
         skip_range_check: bool,
         skip_null_check: bool,
         readonly: bool,
-        element_type: MethodType<'a>,
+        element_type: MethodType,
     },
     LoadField {
         skip_null_check: bool,
@@ -180,7 +180,7 @@ pub enum Instruction<'a> {
     LoadObject {
         unaligned: bool,
         volatile: bool,
-        object_type: MethodType<'a>,
+        object_type: MethodType,
     },
     LoadStaticField {
         volatile: bool,
@@ -190,23 +190,23 @@ pub enum Instruction<'a> {
     LoadString(&'a str),
     LoadTokenField(FieldSource<'a>),
     LoadTokenMethod(MethodSource<'a>),
-    LoadTokenType(MethodType<'a>),
+    LoadTokenType(MethodType),
     LoadVirtualMethodPointer {
         skip_null_check: bool,
         method: MethodSource<'a>,
     },
-    MakeTypedReference(TypeSource<'a, MethodType<'a>>),
-    NewArray(MethodType<'a>),
+    MakeTypedReference(TypeSource<MethodType>),
+    NewArray(MethodType),
     NewObject(UserMethod<'a>), // constructors can't have generics
     ReadTypedReferenceType,
-    ReadTypedReferenceValue(MethodType<'a>),
+    ReadTypedReferenceValue(MethodType),
     Rethrow,
-    Sizeof(MethodType<'a>),
+    Sizeof(MethodType),
     StoreElement {
         skip_type_check: bool,
         skip_range_check: bool,
         skip_null_check: bool,
-        element_type: MethodType<'a>,
+        element_type: MethodType,
     },
     StoreElementPrimitive {
         skip_type_check: bool,
@@ -223,7 +223,7 @@ pub enum Instruction<'a> {
     StoreObject {
         unaligned: bool,
         volatile: bool,
-        object_type: MethodType<'a>,
+        object_type: MethodType,
     },
     StoreStaticField {
         volatile: bool,
@@ -232,7 +232,7 @@ pub enum Instruction<'a> {
     Throw,
     UnboxIntoAddress {
         skip_type_check: bool,
-        unbox_type: MethodType<'a>,
+        unbox_type: MethodType,
     },
-    UnboxIntoValue(MethodType<'a>),
+    UnboxIntoValue(MethodType),
 }

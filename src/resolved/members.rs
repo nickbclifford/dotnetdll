@@ -18,8 +18,8 @@ pub enum Accessibility {
 pub struct Field<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
-    pub type_modifier: Option<CustomTypeModifier<'a>>,
-    pub return_type: MemberType<'a>,
+    pub type_modifier: Option<CustomTypeModifier>,
+    pub return_type: MemberType,
     pub accessibility: Accessibility,
     pub static_member: bool,
     pub init_only: bool,
@@ -36,7 +36,7 @@ pub struct Field<'a> {
 
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
-    Type(TypeSource<'a, MemberType<'a>>),
+    Type(TypeSource<MemberType>),
     Module(&'a ExternalModuleReference<'a>),
 }
 
@@ -45,7 +45,7 @@ pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: FieldReferenceParent<'a>,
     pub name: &'a str,
-    pub return_type: MemberType<'a>,
+    pub return_type: MemberType,
 }
 
 #[derive(Debug)]
@@ -64,8 +64,8 @@ pub struct Property<'a> {
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
     pub other: Vec<Method<'a>>,
-    pub type_modifier: Option<CustomTypeModifier<'a>>,
-    pub return_type: MemberType<'a>,
+    pub type_modifier: Option<CustomTypeModifier>,
+    pub return_type: MemberType,
     pub special_name: bool,
     pub runtime_special_name: bool,
     pub default: Option<Constant>,
@@ -106,7 +106,7 @@ pub struct Method<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub body: Option<body::Method<'a>>,
-    pub signature: signature::ManagedMethod<'a>,
+    pub signature: signature::ManagedMethod,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,
     pub parameter_metadata: Vec<Option<ParameterMetadata<'a>>>,
@@ -160,7 +160,7 @@ pub struct PInvoke<'a> {
 
 #[derive(Debug)]
 pub enum MethodReferenceParent<'a> {
-    Type(TypeSource<'a, MethodType<'a>>),
+    Type(TypeSource<MethodType>),
     Module(&'a ExternalModuleReference<'a>),
     VarargMethod(&'a Method<'a>),
 }
@@ -170,7 +170,7 @@ pub struct ExternalMethodReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: MethodReferenceParent<'a>,
     pub name: &'a str,
-    pub signature: signature::ManagedMethod<'a>,
+    pub signature: signature::ManagedMethod,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -183,7 +183,7 @@ pub enum UserMethod<'a> {
 }
 
 impl<'a> UserMethod<'a> {
-    pub fn signature(&self) -> &signature::ManagedMethod<'a> {
+    pub fn signature(&self) -> &signature::ManagedMethod {
         match self {
             UserMethod::Definition { method: d, .. } => &d.signature,
             UserMethod::Reference(r) => &r.signature,
@@ -195,7 +195,7 @@ impl<'a> UserMethod<'a> {
 pub struct GenericMethodInstantiation<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub base: UserMethod<'a>,
-    pub parameters: Vec<MethodType<'a>>,
+    pub parameters: Vec<MethodType>,
 }
 
 #[derive(Debug)]
@@ -226,7 +226,7 @@ pub enum Constant {
 pub struct Event<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
-    pub delegate_type: MemberType<'a>, // standard says this can be null, but that doesn't make any sense
+    pub delegate_type: MemberType, // standard says this can be null, but that doesn't make any sense
     pub add_listener: Method<'a>,
     pub remove_listener: Method<'a>,
     pub raise_event: Option<Method<'a>>,

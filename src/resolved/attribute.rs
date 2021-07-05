@@ -3,14 +3,15 @@ use super::{
     signature::{Parameter, ParameterType},
     types::*,
 };
-use crate::binary::signature::{attribute::*, compressed::Unsigned};
+use crate::{binary::signature::{attribute::*, compressed::Unsigned}, dll::Resolution};
 use scroll::{Pread, Result};
 
 fn parse_from_type<'def, 'inst>(
     f_type: FieldOrPropType<'inst>,
     src: &'inst [u8],
     offset: &mut usize,
-    resolve: &impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
+    resolution: &'def Resolution<'def>,
+    resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FixedArg<'inst>> {
     use FieldOrPropType::*;
     Ok(match f_type {
@@ -39,6 +40,7 @@ fn parse_from_type<'def, 'inst>(
             src.gread(offset)?,
             src,
             offset,
+            resolution,
             resolve,
         )?)),
         Vector(t) => {
@@ -48,14 +50,14 @@ fn parse_from_type<'def, 'inst>(
             } else {
                 let mut elems = Vec::with_capacity(num_elem as usize);
                 for _ in 0..num_elem {
-                    elems.push(parse_from_type(*t.clone(), src, offset, resolve)?);
+                    elems.push(parse_from_type(*t.clone(), src, offset, resolution, resolve)?);
                 }
                 Some(elems)
             })
         }
         Enum(name) => {
             let t = process_def(resolve(name)?)?;
-            match parse_from_type(t, src, offset, resolve)? {
+            match parse_from_type(t, src, offset, resolution, resolve)? {
                 FixedArg::Integral(i) => FixedArg::Enum(name, i),
                 bad => {
                     return Err(scroll::Error::Custom(format!(
@@ -68,13 +70,13 @@ fn parse_from_type<'def, 'inst>(
     })
 }
 
-fn process_def<'def, 'inst>(def: &'def TypeDefinition<'def>) -> Result<FieldOrPropType<'inst>> {
+fn process_def<'def, 'inst>((def, res): (&'def TypeDefinition<'def>, &'def Resolution<'def>)) -> Result<FieldOrPropType<'inst>> {
     let supertype = match &def.extends {
         Some(t) => t,
         None => return Ok(FieldOrPropType::Object),
     };
     match supertype {
-        TypeSource::User(u) if u.type_name() == "System.Enum" => def
+        TypeSource::User(u) if u.type_name(res) == "System.Enum" => def
             .fields
             .iter()
             .find(|f| f.name == "value__")
@@ -106,8 +108,9 @@ fn process_def<'def, 'inst>(def: &'def TypeDefinition<'def>) -> Result<FieldOrPr
 }
 
 fn method_to_type<'def, 'inst>(
-    m: &'def MethodType<'def>,
-    resolve: &impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
+    m: &'def MethodType,
+    resolution: &'def Resolution<'def>,
+    resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FieldOrPropType<'inst>> {
     return match m {
         MethodType::Base(b) => {
@@ -115,13 +118,11 @@ fn method_to_type<'def, 'inst>(
             let t = match &**b {
                 Type(ts) => match ts {
                     TypeSource::User(t) => {
-                        if t.type_name() == "System.Type" {
+                        let name = t.type_name(resolution);
+                        if name == "System.Type" {
                             FieldOrPropType::Type
                         } else {
-                            match t {
-                                UserType::Definition(ref d) => process_def(d),
-                                UserType::Reference(r) => process_def(resolve(&r.type_name())?),
-                            }?
+                            process_def(resolve(&name)?)?
                         }
                     }
                     TypeSource::Generic(g) => {
@@ -145,7 +146,7 @@ fn method_to_type<'def, 'inst>(
                 Float64 => FieldOrPropType::Float64,
                 String => FieldOrPropType::String,
                 Object => FieldOrPropType::Object,
-                Vector(_, ref v) => FieldOrPropType::Vector(Box::new(method_to_type(v, resolve)?)),
+                Vector(_, ref v) => FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?)),
                 bad => {
                     return Err(scroll::Error::Custom(format!(
                         "bad type {:?} in custom attribute constructor",
@@ -168,7 +169,8 @@ fn method_to_type<'def, 'inst>(
 fn parse_named<'def, 'inst>(
     src: &'inst [u8],
     offset: &mut usize,
-    resolve: &impl Fn(&str) -> Result<&'def TypeDefinition<'def>>,
+    resolution: &'def Resolution<'def>,
+    resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<Vec<NamedArg<'inst>>> {
     let num_named: u16 = src.gread_with(offset, scroll::LE)?;
     let mut named = Vec::with_capacity(num_named as usize);
@@ -183,7 +185,7 @@ fn parse_named<'def, 'inst>(
                 "null string name found when parsing".to_string(),
             ))?;
 
-        let value = parse_from_type(f_type, src, offset, resolve)?;
+        let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
 
         named.push(match kind {
             0x53 => NamedArg::Field(name, value),
@@ -207,7 +209,7 @@ pub struct Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub fn instantiation_data(&self, resolver: &impl Resolver) -> Result<CustomAttributeData<'a>> {
+    pub fn instantiation_data(&self, resolver: &impl Resolver, resolution: &Resolution) -> Result<CustomAttributeData<'a>> {
         let bytes = self.value.ok_or(scroll::Error::Custom(
             "null data for custom attribute".to_string(),
         ))?;
@@ -236,9 +238,10 @@ impl<'a> Attribute<'a> {
             match param {
                 ParameterType::Value(p_type) => {
                     fixed.push(parse_from_type(
-                        method_to_type(p_type, &resolve)?,
+                        method_to_type(p_type, resolution, &resolve)?,
                         bytes,
                         offset,
+                        resolution,
                         &resolve,
                     )?);
                 }
@@ -256,7 +259,7 @@ impl<'a> Attribute<'a> {
             }
         }
 
-        let named = parse_named(bytes, offset, &resolve)?;
+        let named = parse_named(bytes, offset,resolution, &resolve)?;
 
         Ok(CustomAttributeData {
             constructor_args: fixed,
@@ -284,6 +287,7 @@ pub struct SecurityAttributeData<'a> {
 impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
         &self,
+        resolution: &Resolution,
         resolver: &impl Resolver,
     ) -> Result<Vec<SecurityAttributeData<'a>>> {
         let offset = &mut 0;
@@ -309,7 +313,7 @@ impl<'a> SecurityDeclaration<'a> {
                         "null attribute type name found when parsing security".to_string(),
                     ))?;
 
-            let fields = parse_named(self.value, offset, &|s| {
+            let fields = parse_named(self.value, offset, resolution, &|s| {
                 resolver
                     .find_type(s)
                     .map_err(|e| scroll::Error::Custom(e.to_string()))

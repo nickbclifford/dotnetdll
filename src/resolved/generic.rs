@@ -23,5 +23,5 @@ pub struct Generic<'a, ConstraintType> {
     pub type_constraint: (Vec<Attribute<'a>>, ConstraintType),
 }
 
-pub type TypeGeneric<'a> = Generic<'a, types::MemberType<'a>>;
-pub type MethodGeneric<'a> = Generic<'a, types::MethodType<'a>>;
+pub type TypeGeneric<'a> = Generic<'a, types::MemberType>;
+pub type MethodGeneric<'a> = Generic<'a, types::MethodType>;

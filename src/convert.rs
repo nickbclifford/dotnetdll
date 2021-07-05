@@ -15,27 +15,18 @@ use scroll::Pread;
 use std::rc::Rc;
 
 pub struct Context<'a> {
-    pub defs: &'a Vec<Rc<TypeDefinition<'a>>>,
-    pub refs: &'a Vec<Rc<ExternalTypeReference<'a>>>,
     pub specs: &'a Vec<TypeSpec>,
     pub blobs: &'a Blob<'a>,
 }
 
-pub fn user_type<'a>(
+pub fn user_type(
     TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec,
-    ctx: &'a Context,
-) -> Result<UserType<'a>> {
+) -> Result<UserType> {
     use index::TokenTarget::*;
     let idx = token.index - 1;
     match token.target {
-        Table(Kind::TypeDef) => match ctx.defs.get(idx) {
-            Some(r) => Ok(UserType::Definition(r)),
-            None => Err(format!("bad type definition index {}", idx)),
-        },
-        Table(Kind::TypeRef) => match ctx.refs.get(idx) {
-            Some(r) => Ok(UserType::Reference(r)),
-            None => Err(format!("bad type reference index {}", idx)),
-        },
+        Table(Kind::TypeDef) => Ok(UserType::Definition(idx)),
+        Table(Kind::TypeRef) => Ok(UserType::Reference(idx)),
         bad => Err(format!(
             "bad metadata token target {:?} for a user type",
             bad
@@ -44,10 +35,10 @@ pub fn user_type<'a>(
     .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
 }
 
-pub fn custom_modifier<'a>(src: CustomMod, ctx: &'a Context) -> Result<CustomTypeModifier<'a>> {
+pub fn custom_modifier(src: CustomMod) -> Result<CustomTypeModifier> {
     Ok(match src {
-        CustomMod::Required(t) => CustomTypeModifier::Required(user_type(t, ctx)?),
-        CustomMod::Optional(t) => CustomTypeModifier::Optional(user_type(t, ctx)?),
+        CustomMod::Required(t) => CustomTypeModifier::Required(user_type(t)?),
+        CustomMod::Optional(t) => CustomTypeModifier::Optional(user_type(t)?),
     })
 }
 
@@ -55,7 +46,7 @@ fn base_type_sig<'a, T>(
     sig: Type,
     enclosing: impl Fn(Type, &'a Context) -> Result<T>,
     ctx: &'a Context,
-) -> Result<BaseType<'a, T>> {
+) -> Result<BaseType<T>> {
     use Type::*;
 
     Ok(match sig {
@@ -77,14 +68,14 @@ fn base_type_sig<'a, T>(
         String => BaseType::String,
         Array(t, shape) => BaseType::Array(enclosing(*t, ctx)?, shape),
         SzArray(cmod, t) => BaseType::Vector(
-            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
+            opt_map_try!(cmod, |c| custom_modifier(c)),
             enclosing(*t, ctx)?,
         ),
         Ptr(cmod, pt) => BaseType::ValuePointer(
-            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
+            opt_map_try!(cmod, |c| custom_modifier(c)),
             opt_map_try!(*pt, |t| enclosing(t, ctx)),
         ),
-        Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok, ctx)?)),
+        Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok)?)),
         FnPtrDef(d) => BaseType::FunctionPointer(managed_method(*d, ctx)?),
         FnPtrRef(r) => {
             let mut new_sig = managed_method(r.method_def, ctx)?;
@@ -98,7 +89,7 @@ fn base_type_sig<'a, T>(
         }
         GenericInstClass(tok, types) | GenericInstValueType(tok, types) => {
             BaseType::Type(TypeSource::Generic(GenericInstantiation {
-                base: user_type(tok, ctx)?,
+                base: user_type(tok)?,
                 parameters: types
                     .into_iter()
                     .map(|t| enclosing(t, ctx))
@@ -114,14 +105,14 @@ fn base_type_sig<'a, T>(
     })
 }
 
-pub fn member_type_sig<'a>(sig: Type, ctx: &'a Context) -> Result<MemberType<'a>> {
+pub fn member_type_sig(sig: Type, ctx: &Context) -> Result<MemberType> {
     Ok(match sig {
         Type::Var(idx) => MemberType::TypeGeneric(idx as usize),
         rest => MemberType::Base(Box::new(base_type_sig(rest, member_type_sig, ctx)?)),
     })
 }
 
-pub fn method_type_sig<'a>(sig: Type, ctx: &'a Context) -> Result<MethodType<'a>> {
+pub fn method_type_sig(sig: Type, ctx: &Context) -> Result<MethodType> {
     Ok(match sig {
         Type::Var(idx) => MethodType::TypeGeneric(idx as usize),
         Type::MVar(idx) => MethodType::MethodGeneric(idx as usize),
@@ -129,13 +120,13 @@ pub fn method_type_sig<'a>(sig: Type, ctx: &'a Context) -> Result<MethodType<'a>
     })
 }
 
-pub fn member_type_idx<'a>(idx: index::TypeDefOrRef, ctx: &'a Context) -> Result<MemberType<'a>> {
+pub fn member_type_idx(idx: index::TypeDefOrRef, ctx: &Context) -> Result<MemberType> {
     match idx {
         TypeDefOrRef::TypeDef(i) => Ok(MemberType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Definition(&ctx.defs[i - 1])),
+            TypeSource::User(UserType::Definition(i - 1)),
         )))),
         TypeDefOrRef::TypeRef(i) => Ok(MemberType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Reference(&ctx.refs[i - 1])),
+            TypeSource::User(UserType::Reference(i - 1)),
         )))),
         TypeDefOrRef::TypeSpec(i) => member_type_sig(
             ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?,
@@ -147,11 +138,11 @@ pub fn member_type_idx<'a>(idx: index::TypeDefOrRef, ctx: &'a Context) -> Result
     }
 }
 
-pub fn parameter<'a>(p: Param, ctx: &'a Context) -> Result<signature::Parameter<'a>> {
+pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     use signature::ParameterType::*;
 
     Ok(signature::Parameter(
-        opt_map_try!(p.0, |c| custom_modifier(c, ctx)),
+        opt_map_try!(p.0, |c| custom_modifier(c)),
         match p.1 {
             ParamType::Type(t) => Value(method_type_sig(t, ctx)?),
             ParamType::ByRef(t) => Ref(method_type_sig(t, ctx)?),
@@ -160,10 +151,10 @@ pub fn parameter<'a>(p: Param, ctx: &'a Context) -> Result<signature::Parameter<
     ))
 }
 
-pub fn managed_method<'a>(
+pub fn managed_method(
     sig: MethodDefSig,
-    ctx: &'a Context,
-) -> Result<signature::ManagedMethod<'a>> {
+    ctx: &Context,
+) -> Result<signature::ManagedMethod> {
     use signature::*;
     Ok(ManagedMethod {
         instance: sig.has_this,
@@ -175,7 +166,7 @@ pub fn managed_method<'a>(
             .map(|p| parameter(p, ctx))
             .collect::<Result<_>>()?,
         return_type: ReturnType(
-            opt_map_try!(sig.ret_type.0, |c| custom_modifier(c, ctx)),
+            opt_map_try!(sig.ret_type.0, |c| custom_modifier(c)),
             match sig.ret_type.1 {
                 RetTypeType::Type(t) => Some(ParameterType::Value(method_type_sig(t, ctx)?)),
                 RetTypeType::ByRef(t) => Some(ParameterType::Ref(method_type_sig(t, ctx)?)),

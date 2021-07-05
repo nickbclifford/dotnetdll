@@ -58,6 +58,12 @@ use DLLError::*;
 
 pub type Result<T> = std::result::Result<T, DLLError>;
 
+pub struct Resolution<'a> {
+    pub type_definitions: Vec<Rc<resolved::types::TypeDefinition<'a>>>,
+    pub type_references: Vec<Rc<resolved::types::ExternalTypeReference<'a>>>,
+    // TODO
+}
+
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
         let dos = ImageDosHeader::parse(bytes)?;
@@ -133,8 +139,7 @@ impl<'a> DLL<'a> {
         self.raw_rva(def.rva)?.pread(0).map_err(CLI)
     }
 
-    // TODO: return type?
-    pub fn resolve(&self) -> Result<()> {
+    pub fn resolve(&self) -> Result<Resolution<'a>> {
         let strings: Strings = self.get_heap("#Strings")?;
         let blobs: Blob = self.get_heap("#Blob")?;
         let guids: GUID = self.get_heap("#GUID")?;
@@ -298,6 +303,7 @@ impl<'a> DLL<'a> {
             .exported_type
             .iter()
             .map(|e| {
+                use metadata::index::Implementation;
                 use types::*;
 
                 Ok(Rc::new(ExportedType {
@@ -305,39 +311,25 @@ impl<'a> DLL<'a> {
                     flags: TypeFlags::new(e.flags, Layout::Automatic),
                     name: heap_idx!(strings, e.type_name),
                     namespace: optional_idx!(strings, e.type_namespace),
-                    implementation: unsafe { MaybeUninit::uninit().assume_init() },
+                    implementation: match e.implementation {
+                        Implementation::File(f) => TypeImplementation::ModuleFile {
+                            type_def_idx: e.type_def_id as usize,
+                            file: Rc::clone(&files[f - 1]),
+                        },
+                        Implementation::AssemblyRef(a) => {
+                            TypeImplementation::TypeForwarder(Rc::clone(&assembly_refs[a - 1]))
+                        }
+                        Implementation::ExportedType(t) => TypeImplementation::Nested(t - 1),
+                        Implementation::Null => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid null implementation index for exported type {}",
+                                heap_idx!(strings, e.type_name)
+                            ))))
+                        }
+                    },
                 }))
             })
             .collect::<Result<_>>()?;
-
-        for (idx, e) in tables.exported_type.iter().enumerate() {
-            use metadata::index::Implementation;
-            use types::*;
-
-            let new_impl = match e.implementation {
-                Implementation::File(f) => TypeImplementation::ModuleFile {
-                    type_def_idx: e.type_def_id as usize,
-                    file: Rc::clone(&files[f - 1]),
-                },
-                Implementation::AssemblyRef(a) => {
-                    TypeImplementation::TypeForwarder(Rc::clone(&assembly_refs[a - 1]))
-                }
-                Implementation::ExportedType(t) => {
-                    TypeImplementation::Nested(Rc::clone(&exports[t - 1]))
-                }
-                Implementation::Null => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid null implementation index for exported type {}",
-                        heap_idx!(strings, e.type_name)
-                    ))))
-                }
-            };
-
-            let ptr = Rc::as_ptr(&exports[idx]) as *mut ExportedType;
-            unsafe {
-                (*ptr).implementation = new_impl;
-            }
-        }
 
         let module_row = tables.module.first().ok_or(scroll::Error::Custom(
             "missing required module metadata table".to_string(),
@@ -402,8 +394,6 @@ impl<'a> DLL<'a> {
         }
 
         let ctx = convert::Context {
-            defs: &types,
-            refs: &type_refs,
             specs: &tables.type_spec,
             blobs: &blobs,
         };
@@ -452,7 +442,7 @@ impl<'a> DLL<'a> {
                 parent_fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
-                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c, &ctx)),
+                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c)),
                     return_type: convert::member_type_sig(t, &ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
@@ -665,7 +655,7 @@ impl<'a> DLL<'a> {
                     setter: None,
                     other: vec![],
                     type_modifier: opt_map_try!(sig.custom_modifier, |c| convert::custom_modifier(
-                        c, &ctx
+                        c
                     )),
                     return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
@@ -675,7 +665,6 @@ impl<'a> DLL<'a> {
                 properties[p_idx] = (type_idx, parent_props.len() - 1);
             }
         }
-
 
         let event_len = tables.event.len();
 
@@ -705,8 +694,9 @@ impl<'a> DLL<'a> {
             }
         }
 
-        // TODO: Box/Rc/something so that moving the Vecs when returning them doesn't break the internal references
-
-        Ok(())
+        Ok(Resolution {
+            type_definitions: types,
+            type_references: type_refs
+        })
     }
 }
