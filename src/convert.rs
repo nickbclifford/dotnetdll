@@ -137,6 +137,24 @@ pub fn member_type_idx(idx: index::TypeDefOrRef, ctx: &Context) -> Result<Member
     }
 }
 
+pub fn method_type_idx(idx: index::TypeDefOrRef, ctx: &Context) -> Result<MethodType> {
+    match idx {
+        TypeDefOrRef::TypeDef(i) => Ok(MethodType::Base(Box::new(BaseType::Type(
+            TypeSource::User(UserType::Definition(i - 1)),
+        )))),
+        TypeDefOrRef::TypeRef(i) => Ok(MethodType::Base(Box::new(BaseType::Type(
+            TypeSource::User(UserType::Reference(i - 1)),
+        )))),
+        TypeDefOrRef::TypeSpec(i) => method_type_sig(
+            ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?,
+            ctx,
+        ),
+        TypeDefOrRef::Null => Err(DLLError::CLI(scroll::Error::Custom(
+            "invalid null type index".to_string(),
+        ))),
+    }
+}
+
 pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     use signature::ParameterType::*;
 

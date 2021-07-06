@@ -47,6 +47,13 @@ mod tests {
 
             println!("{} {{", t.type_name());
 
+            for p in t.generic_parameters {
+                println!("\tgeneric {}", p.name);
+                for c in p.type_constraints.1 {
+                    println!("\t\tconstraint {:?}", c);
+                }
+            }
+
             for f in t.fields {
                 print!("\t");
                 if f.static_member {
@@ -86,6 +93,12 @@ mod tests {
                     print!("static ");
                 }
                 println!("method {}", m.name);
+                for p in m.generic_parameters {
+                    println!("\t\tgeneric {}", p.name);
+                    for c in p.type_constraints.1 {
+                        println!("\t\t\tconstraint {:?}", c);
+                    }
+                }
             }
 
             println!("}}\n");

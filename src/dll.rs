@@ -584,6 +584,96 @@ impl<'a> DLL<'a> {
             }};
         }
 
+        for (idx, p) in tables.generic_param.iter().enumerate() {
+            use generic::*;
+            use metadata::index::TypeOrMethodDef;
+
+            let name = heap_idx!(strings, p.name);
+
+            macro_rules! make_generic {
+                ($convert_meth:ident) => {
+                    Generic {
+                        attributes: vec![],
+                        sequence: p.number as usize,
+                        name,
+                        variance: match p.flags & 0x3 {
+                            0x0 => Variance::Invariant,
+                            0x1 => Variance::Covariant,
+                            0x2 => Variance::Invariant,
+                            _ => {
+                                return Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid variance value 0x3 for generic parameter {}",
+                                    name
+                                ))))
+                            }
+                        },
+                        special_constraint: SpecialConstraint {
+                            reference_type: check_bitmask!(p.flags, 0x04),
+                            value_type: check_bitmask!(p.flags, 0x08),
+                            has_default_constructor: check_bitmask!(p.flags, 0x10),
+                        },
+                        type_constraints: (
+                            vec![],
+                            tables
+                                .generic_param_constraint
+                                .iter()
+                                .filter_map(|c| {
+                                    if c.owner.0 - 1 == idx {
+                                        Some(convert::$convert_meth(c.constraint, &ctx))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Result<_>>()?,
+                        ),
+                    }
+                };
+            }
+
+            match p.owner {
+                TypeOrMethodDef::TypeDef(i) => {
+                    let idx = i - 1;
+                    match types.get_mut(idx) {
+                        Some(t) => t.generic_parameters.push(make_generic!(member_type_idx)),
+                        None => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid type index {} for generic parameter {}",
+                                idx, name
+                            ))))
+                        }
+                    }
+                }
+                TypeOrMethodDef::MethodDef(i) => {
+                    let idx = i - 1;
+                    match methods.get(idx) {
+                        Some(&(t, m)) => types[t].methods[m]
+                            .generic_parameters
+                            .push(make_generic!(method_type_idx)),
+                        None => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid method index {} for generic parameter {}",
+                                idx, name
+                            ))))
+                        }
+                    }
+                }
+                TypeOrMethodDef::Null => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid null owner index for generic parameter {}",
+                        name
+                    ))))
+                }
+            }
+        }
+
+        for t in types.iter_mut() {
+            t.generic_parameters.sort_by_key(|p| p.sequence);
+
+            for m in t.methods.iter_mut() {
+                m.generic_parameters.sort_by_key(|p| p.sequence);
+            }
+        }
+
         new_with_len!(params, params_len);
 
         for (m_idx, iter) in owned_params {
@@ -690,7 +780,7 @@ impl<'a> DLL<'a> {
                     }
                 }
                 $parent.methods.remove($internal_idx)
-            }}
+            }};
         }
 
         let event_len = tables.event.len();
