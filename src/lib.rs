@@ -3,7 +3,7 @@ mod utils {
     macro_rules! check_bitmask {
         ($mask:expr, $val:literal) => {
             $mask & $val == $val
-        }
+        };
     }
 
     macro_rules! opt_map_try {
@@ -25,22 +25,79 @@ pub mod resolved;
 mod tests {
     use scroll::Pread;
 
-    use super::{binary::*, dll};
-    use metadata::table::Kind;
-    use signature::{compressed::*, encoded::TypeDefOrRefOrSpec};
+    use super::{binary::*, dll::DLL};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
-        let dll = dll::DLL::parse(&file)?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
+        let dll = DLL::parse(&file)?;
 
-        dll.resolve()?;
+        let r = dll.resolve()?;
+
+        for t in r.type_definitions {
+            use super::resolved::types::Kind;
+
+            print!(
+                "{} ",
+                match t.flags.kind {
+                    Kind::Class => "class",
+                    Kind::Interface => "interface",
+                }
+            );
+
+            println!("{} {{", t.type_name());
+
+            for f in t.fields {
+                print!("\t");
+                if f.static_member {
+                    print!("static ");
+                }
+                println!("field {}", f.name);
+            }
+            for p in t.properties {
+                print!("\t");
+
+                if [p.getter, p.setter]
+                    .iter()
+                    .filter_map(|m| m.as_ref())
+                    .chain(p.other.iter())
+                    .any(|m| m.static_member)
+                {
+                    print!("static ");
+                }
+
+                println!("property {}", p.name);
+            }
+            for e in t.events {
+                print!("\t");
+                if matches!(e.raise_event, Some(m) if m.static_member)
+                    || [e.add_listener, e.remove_listener]
+                        .iter()
+                        .chain(e.other.iter())
+                        .any(|m| m.static_member)
+                {
+                    print!("static ");
+                }
+                println!("event {}", e.name);
+            }
+            for m in t.methods {
+                print!("\t");
+                if m.static_member {
+                    print!("static ");
+                }
+                println!("method {}", m.name);
+            }
+
+            println!("}}\n");
+        }
 
         Ok(())
     }
 
     #[test]
     fn decompress() {
+        use signature::compressed::*;
+
         let Unsigned(u1) = [0x03].pread(0).unwrap();
         assert_eq!(u1, 0x03);
         let Unsigned(u2) = [0xBF, 0xFF].pread(0).unwrap();
@@ -63,6 +120,8 @@ mod tests {
 
     #[test]
     fn def_ref_spec() {
+        use metadata::table::Kind;
+        use signature::encoded::TypeDefOrRefOrSpec;
         let TypeDefOrRefOrSpec(t) = [0x49].pread(0).unwrap();
         assert_eq!(t.target, metadata::index::TokenTarget::Table(Kind::TypeRef));
         assert_eq!(t.index, 0x12);
@@ -71,7 +130,7 @@ mod tests {
     #[test]
     fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
-        let dll = dll::DLL::parse(&file)?;
+        let dll = DLL::parse(&file)?;
         let meta = dll.get_logical_metadata()?;
 
         for row in meta.tables.method_def.iter() {

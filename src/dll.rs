@@ -59,6 +59,8 @@ use DLLError::*;
 pub type Result<T> = std::result::Result<T, DLLError>;
 
 pub struct Resolution<'a> {
+    pub assembly: Option<resolved::assembly::Assembly<'a>>,
+    pub module: resolved::module::Module<'a>,
     pub type_definitions: Vec<resolved::types::TypeDefinition<'a>>,
     pub type_references: Vec<resolved::types::ExternalTypeReference<'a>>,
     // TODO
@@ -144,7 +146,7 @@ impl<'a> DLL<'a> {
         let blobs: Blob = self.get_heap("#Blob")?;
         let guids: GUID = self.get_heap("#GUID")?;
         let userstrings: UserString = self.get_heap("#US")?;
-        let tables = self.get_logical_metadata()?.tables;
+        let mut tables = self.get_logical_metadata()?.tables;
 
         macro_rules! heap_idx {
             ($heap:ident, $idx:expr) => {
@@ -367,18 +369,22 @@ impl<'a> DLL<'a> {
                     namespace: optional_idx!(strings, r.type_namespace),
                     scope: match r.resolution_scope {
                         BinRS::Module(_) => ResolutionScope::CurrentModule,
-                        BinRS::ModuleRef(m) => ResolutionScope::ExternalModule(Rc::clone(&module_refs[m - 1])),
-                        BinRS::AssemblyRef(a) => ResolutionScope::Assembly(Rc::clone(&assembly_refs[a - 1])),
+                        BinRS::ModuleRef(m) => {
+                            ResolutionScope::ExternalModule(Rc::clone(&module_refs[m - 1]))
+                        }
+                        BinRS::AssemblyRef(a) => {
+                            ResolutionScope::Assembly(Rc::clone(&assembly_refs[a - 1]))
+                        }
                         BinRS::TypeRef(t) => ResolutionScope::Nested(t - 1),
-                        BinRS::Null => ResolutionScope::Exported(
-                            Rc::clone(exports
+                        BinRS::Null => ResolutionScope::Exported(Rc::clone(
+                            exports
                                 .iter()
                                 .find(|e| e.name == name && e.namespace == namespace)
                                 .ok_or(scroll::Error::Custom(format!(
                                     "missing exported type for type ref {}",
                                     name
-                                )))?),
-                        ),
+                                )))?,
+                        )),
                     },
                 })
             })
@@ -673,6 +679,20 @@ impl<'a> DLL<'a> {
             }
         }
 
+        // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
+        // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
+        // TODO: indices for owned methods if anything needs to come after this stage
+        macro_rules! extract_method {
+            ($parent:ident, $type_idx:ident, $internal_idx:ident) => {{
+                for (t_idx, i_idx) in methods.iter_mut() {
+                    if *t_idx == $type_idx && *i_idx > $internal_idx {
+                        *i_idx -= 1;
+                    }
+                }
+                $parent.methods.remove($internal_idx)
+            }}
+        }
+
         let event_len = tables.event.len();
 
         new_with_len!(events, event_len);
@@ -680,28 +700,101 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let parent_events = &mut types[type_idx].events;
+            let parent = &mut types[type_idx];
+            let parent_events = &mut parent.events;
 
             let range = range_index!((map_idx, map), event_list, event_len, event_map);
             for (e_idx, event) in range.clone().zip(&tables.event[range]) {
                 use members::*;
 
+                let name = heap_idx!(strings, event.name);
+
+                macro_rules! get_listener {
+                    ($l_name:literal, $flag:literal) => {{
+                        let m = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
+                            use metadata::index::HasSemantics;
+                            check_bitmask!(s.semantics, $flag)
+                                && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
+                        }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
+                        let (_, internal_idx) = methods[m.method.0 - 1];
+                        extract_method!(parent, type_idx, internal_idx)
+                    }}
+                }
+
                 parent_events.push(Event {
                     attributes: vec![],
-                    name: heap_idx!(strings, event.name),
+                    name,
                     delegate_type: convert::member_type_idx(event.event_type, &ctx)?,
-                    add_listener: todo!(),
-                    remove_listener: todo!(),
+                    add_listener: get_listener!("add", 0x8),
+                    remove_listener: get_listener!("remove", 0x10),
                     raise_event: None,
                     other: vec![],
                     special_name: check_bitmask!(event.event_flags, 0x200),
                     runtime_special_name: check_bitmask!(event.event_flags, 0x400),
                 });
-                events.insert(e_idx, parent_events.last_mut().unwrap());
+                events[e_idx] = (type_idx, parent_events.len() - 1);
+            }
+        }
+
+        for s in tables.method_semantics.iter() {
+            use metadata::index::HasSemantics;
+
+            let m_idx = s.method.0 - 1;
+            let &(type_idx, internal_method_idx) =
+                methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
+                    "invalid method index {} for method semantics",
+                    m_idx
+                )))?;
+
+            let parent = &mut types[type_idx];
+            if internal_method_idx >= parent.methods.len() {
+                return Err(CLI(scroll::Error::Custom(format!(
+                    "invalid method index {} for type {}",
+                    internal_method_idx,
+                    parent.type_name()
+                ))));
+            }
+
+            let new_meth = extract_method!(parent, type_idx, internal_method_idx);
+
+            match s.association {
+                HasSemantics::Event(i) => {
+                    let &(_, internal_idx) = events.get(i - 1).ok_or(scroll::Error::Custom(
+                        format!("invalid event index {} for method semantics", i),
+                    ))?;
+                    let event = &mut parent.events[internal_idx];
+
+                    if check_bitmask!(s.semantics, 0x20) {
+                        event.raise_event = Some(new_meth);
+                    } else if check_bitmask!(s.semantics, 0x4) {
+                        event.other.push(new_meth);
+                    }
+                }
+                HasSemantics::Property(i) => {
+                    let &(_, internal_idx) = properties.get(i - 1).ok_or(scroll::Error::Custom(
+                        format!("invalid property index {} for method semantics", i),
+                    ))?;
+                    let property = &mut parent.properties[internal_idx];
+
+                    if check_bitmask!(s.semantics, 0x1) {
+                        property.setter = Some(new_meth);
+                    } else if check_bitmask!(s.semantics, 0x2) {
+                        property.getter = Some(new_meth);
+                    } else if check_bitmask!(s.semantics, 0x4) {
+                        property.other.push(new_meth);
+                    }
+                }
+                HasSemantics::Null => {
+                    return Err(CLI(scroll::Error::Custom(
+                        "invalid null index for method semantics".to_string(),
+                    )));
+                }
             }
         }
 
         Ok(Resolution {
+            assembly,
+            module,
             type_definitions: types,
             type_references: type_refs,
         })
