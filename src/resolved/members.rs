@@ -8,6 +8,18 @@ use super::{
 };
 use crate::binary::signature::kinds::MarshalSpec;
 
+use std::fmt::{Display, Formatter};
+
+macro_rules! name_display {
+    ($i:ty) => {
+        impl Display for $i {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.name)
+            }
+        }
+    };
+}
+
 #[derive(Debug)]
 pub enum Accessibility {
     CompilerControlled,
@@ -33,6 +45,7 @@ pub struct Field<'a> {
     pub marshal: Option<MarshalSpec>,
     pub start_of_initial_value: Option<&'a [u8]>,
 }
+name_display!(Field<'_>);
 
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
@@ -47,6 +60,7 @@ pub struct ExternalFieldReference<'a> {
     pub name: &'a str,
     pub return_type: MemberType,
 }
+name_display!(ExternalFieldReference<'_>);
 
 #[derive(Debug)]
 pub enum FieldSource<'a> {
@@ -55,6 +69,16 @@ pub enum FieldSource<'a> {
         field: &'a Field<'a>,
     },
     Reference(&'a ExternalFieldReference<'a>),
+}
+impl Display for FieldSource<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use FieldSource::*;
+
+        match *self {
+            Definition { field, .. } => write!(f, "{}", field),
+            Reference(r) => write!(f, "{}", r),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -70,6 +94,7 @@ pub struct Property<'a> {
     pub runtime_special_name: bool,
     pub default: Option<Constant>,
 }
+name_display!(Property<'_>);
 
 #[derive(Debug)]
 pub enum VtableLayout {
@@ -87,6 +112,7 @@ pub struct ParameterMetadata<'a> {
     pub default: Option<Constant>,
     pub marshal: Option<MarshalSpec>,
 }
+name_display!(ParameterMetadata<'_>);
 
 #[derive(Debug)]
 pub enum BodyFormat {
@@ -130,6 +156,7 @@ pub struct Method<'a> {
     pub no_inlining: bool,
     pub no_optimization: bool,
 }
+name_display!(Method<'_>);
 
 #[derive(Debug)]
 pub enum CharacterSet {
@@ -172,6 +199,7 @@ pub struct ExternalMethodReference<'a> {
     pub name: &'a str,
     pub signature: signature::ManagedMethod,
 }
+name_display!(ExternalMethodReference<'_>);
 
 #[derive(Debug, Copy, Clone)]
 pub enum UserMethod<'a> {
@@ -181,8 +209,17 @@ pub enum UserMethod<'a> {
     },
     Reference(&'a ExternalMethodReference<'a>),
 }
+impl Display for UserMethod<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use UserMethod::*;
 
-impl<'a> UserMethod<'a> {
+        match *self {
+            Definition { method, .. } => write!(f, "{}", method),
+            Reference(r) => write!(f, "{}", r),
+        }
+    }
+}
+impl UserMethod<'_> {
     pub fn signature(&self) -> &signature::ManagedMethod {
         match self {
             UserMethod::Definition { method: d, .. } => &d.signature,
@@ -234,3 +271,4 @@ pub struct Event<'a> {
     pub special_name: bool,
     pub runtime_special_name: bool,
 }
+name_display!(Event<'_>);

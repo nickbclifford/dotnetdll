@@ -402,10 +402,10 @@ impl<'a> DLL<'a> {
             Ok(match flags & 0x7 {
                 0x0 => CompilerControlled,
                 0x1 => Access(Private),
-                0x2 => Access(PrivateProtected),
-                0x3 => Access(Internal),
-                0x4 => Access(Protected),
-                0x5 => Access(ProtectedInternal),
+                0x2 => Access(FamilyANDAssembly),
+                0x3 => Access(Assembly),
+                0x4 => Access(Family),
+                0x5 => Access(FamilyORAssembly),
                 0x6 => Access(Public),
                 _ => {
                     return Err(CLI(scroll::Error::Custom(

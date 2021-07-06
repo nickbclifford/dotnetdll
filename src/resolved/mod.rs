@@ -12,9 +12,30 @@ pub mod types;
 #[derive(Debug)]
 pub enum Accessibility {
     Private,
-    PrivateProtected,  // FamANDAssem
-    Internal,          // Assem
-    Protected,         // Family
-    ProtectedInternal, // FamORAssem
+    FamilyANDAssembly,
+    Assembly,
+    Family,
+    FamilyORAssembly,
     Public,
+}
+
+use std::fmt::{Display, Formatter};
+
+impl Display for Accessibility {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Accessibility::*;
+
+        write!(
+            f,
+            "{}",
+            match *self {
+                Private => "private",
+                FamilyANDAssembly => "private protected",
+                Assembly => "internal",
+                Family => "protected",
+                FamilyORAssembly => "protected internal",
+                Public => "public",
+            }
+        )
+    }
 }

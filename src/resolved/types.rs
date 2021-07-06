@@ -6,7 +6,10 @@ use super::{
 };
 use crate::{binary::signature::encoded::ArrayShape, dll::Resolution};
 
-use std::rc::Rc;
+use std::{
+    fmt::{Display, Formatter},
+    rc::Rc,
+};
 
 #[derive(Debug)]
 pub enum Kind {
@@ -53,19 +56,6 @@ pub struct MethodOverride<'a> {
     declaration: &'a members::Method<'a>,
 }
 
-macro_rules! type_name_impl {
-    ($i:ty) => {
-        impl $i {
-            pub fn type_name(&self) -> String {
-                match self.namespace {
-                    Some(ns) => format!("{}.{}", ns, self.name),
-                    None => self.name.to_string(),
-                }
-            }
-        }
-    };
-}
-
 #[derive(Debug)]
 pub struct TypeFlags {
     pub accessibility: Accessibility,
@@ -91,10 +81,10 @@ impl TypeFlags {
                 0x1 => Public,
                 0x2 => Nested(super::Accessibility::Public),
                 0x3 => Nested(super::Accessibility::Private),
-                0x4 => Nested(super::Accessibility::Protected),
-                0x5 => Nested(super::Accessibility::Internal),
-                0x6 => Nested(super::Accessibility::PrivateProtected),
-                0x7 => Nested(super::Accessibility::ProtectedInternal),
+                0x4 => Nested(super::Accessibility::Family),
+                0x5 => Nested(super::Accessibility::Assembly),
+                0x6 => Nested(super::Accessibility::FamilyANDAssembly),
+                0x7 => Nested(super::Accessibility::FamilyORAssembly),
                 _ => unreachable!(),
             },
             layout,
@@ -173,6 +163,25 @@ pub struct ExportedType<'a> {
     pub name: &'a str,
     pub namespace: Option<&'a str>,
     pub implementation: TypeImplementation<'a>,
+}
+
+macro_rules! type_name_impl {
+    ($i:ty) => {
+        impl $i {
+            pub fn type_name(&self) -> String {
+                match self.namespace {
+                    Some(ns) => format!("{}.{}", ns, self.name),
+                    None => self.name.to_string(),
+                }
+            }
+        }
+
+        impl Display for $i {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.type_name())
+            }
+        }
+    };
 }
 
 type_name_impl!(TypeDefinition<'_>);
@@ -265,5 +274,8 @@ pub enum LocalVariable {
 
 pub trait Resolver {
     type Error: std::error::Error;
-    fn find_type<'a>(&self, name: &str) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error>;
+    fn find_type<'a>(
+        &self,
+        name: &str,
+    ) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error>;
 }
