@@ -119,23 +119,25 @@ impl ResolvedDebug for Property<'_> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
 
-        let least_restrictive = std::array::IntoIter::new([
-            self.getter.as_ref().map(|m| m.accessibility),
-            self.setter.as_ref().map(|m| m.accessibility),
-        ])
-        .flatten()
-        .max();
+        let accessors: Vec<_> =
+            std::array::IntoIter::new([self.getter.as_ref(), self.setter.as_ref()])
+                .flatten()
+                .collect();
+
+        let least_restrictive = accessors.iter().map(|m| m.accessibility).max();
 
         if let Some(access) = least_restrictive {
             write!(buf, "{} ", access).unwrap();
         }
 
-        if std::array::IntoIter::new([&self.getter, &self.setter])
-            .map(|o| o.as_ref())
-            .flatten()
-            .any(|m| m.static_member)
-        {
+        if accessors.iter().any(|m| m.static_member) {
             buf.push_str("static ");
+        }
+
+        if accessors.iter().any(|m| m.abstract_member) {
+            buf.push_str("abstract ");
+        } else if accessors.iter().any(|m| m.virtual_member) {
+            buf.push_str("virtual ");
         }
 
         write!(buf, "{} {} {{ ", self.return_type.show(res), self.name).unwrap();
@@ -226,6 +228,12 @@ impl ResolvedDebug for Method<'_> {
 
         if self.static_member {
             buf.push_str("static ");
+        }
+
+        if self.abstract_member {
+            buf.push_str("abstract ");
+        } else if self.virtual_member {
+            buf.push_str("virtual ");
         }
 
         match &self.signature.return_type.1 {
@@ -372,10 +380,17 @@ name_display!(Event<'_>);
 impl ResolvedDebug for Event<'_> {
     fn show(&self, res: &Resolution) -> String {
         format!(
-            "{} {}{} {}",
+            "{} {}{}event {} {}",
             self.add_listener.accessibility,
             if self.add_listener.static_member {
                 "static "
+            } else {
+                ""
+            },
+            if self.add_listener.abstract_member {
+                "abstract "
+            } else if self.add_listener.virtual_member {
+                "virtual "
             } else {
                 ""
             },

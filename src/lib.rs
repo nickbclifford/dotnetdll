@@ -29,7 +29,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve()?;

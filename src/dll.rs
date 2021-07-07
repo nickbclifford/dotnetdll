@@ -148,7 +148,6 @@ impl<'a> DLL<'a> {
         let userstrings: UserString = self.get_heap("#US")?;
         let mut tables = self.get_logical_metadata()?.tables;
 
-
         let ctx = convert::Context {
             specs: &tables.type_spec,
             blobs: &blobs,
@@ -273,23 +272,12 @@ impl<'a> DLL<'a> {
                     properties: vec![],
                     methods: vec![],
                     events: vec![],
-                    nested_types: vec![],
+                    encloser: None,
                     overrides: vec![],
                     extends: if t.extends.is_null() {
                         None
                     } else {
-                        macro_rules! error {
-                            ($bind:ident) => {
-                                return Err(CLI(scroll::Error::Custom(format!("invalid extended type {:?} for type {}", $bind, name))))
-                            }
-                        }
-                        match convert::member_type_idx(t.extends, &ctx)? {
-                            MemberType::Base(b) => match &*b {
-                                BaseType::Type(s) => Some(s.clone()),
-                                bad => error!(bad)
-                            },
-                            bad => error!(bad)
-                        }
+                        Some(convert::member_type_source(t.extends, &ctx)?)
                     },
                     implements: vec![],
                     generic_parameters: vec![],
@@ -297,6 +285,10 @@ impl<'a> DLL<'a> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+
+        for n in tables.nested_class.iter() {
+            types[n.nested_class.0 - 1].encloser = Some(n.enclosing_class.0 - 1);
+        }
 
         let fields_len = tables.field.len();
         let method_len = tables.method_def.len();
@@ -412,6 +404,10 @@ impl<'a> DLL<'a> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+
+        for i in tables.interface_impl.iter() {
+            types[i.class.0 - 1].implements.push((vec![], convert::member_type_source(i.interface, &ctx)?));
+        }
 
         fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
             use members::Accessibility::*;

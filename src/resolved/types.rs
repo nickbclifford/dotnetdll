@@ -120,10 +120,10 @@ pub struct TypeDefinition<'a> {
     pub properties: Vec<members::Property<'a>>,
     pub methods: Vec<members::Method<'a>>,
     pub events: Vec<members::Event<'a>>,
-    pub nested_types: Vec<TypeDefinition<'a>>,
+    pub encloser: Option<usize>,
     pub overrides: Vec<MethodOverride<'a>>,
     pub extends: Option<TypeSource<MemberType>>,
-    pub implements: Vec<(Attribute<'a>, TypeSource<MemberType>)>,
+    pub implements: Vec<(Vec<Attribute<'a>>, TypeSource<MemberType>)>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
     pub flags: TypeFlags,
     pub security: Option<SecurityDeclaration<'a>>,
@@ -138,26 +138,54 @@ impl ResolvedDebug for TypeDefinition<'_> {
             Accessibility::Nested(a) => write!(buf, "{} ", a).unwrap(),
         }
 
+        if let Some(idx) = &self.encloser {
+            write!(buf, "[{}] ", res.type_definitions[*idx]).unwrap();
+        }
+
+        let kind = match &self.flags.kind {
+            Kind::Class => match &self.extends {
+                Some(TypeSource::User(u)) => match u.type_name(res).as_str() {
+                    "System.Enum" => "enum",
+                    "System.ValueType" => "struct",
+                    _ => "class",
+                },
+                _ => "class",
+            },
+            Kind::Interface => "interface",
+        };
+
+        if self.flags.abstract_type && kind != "interface" {
+            buf.push_str("abstract ");
+        }
+
         write!(
             buf,
             "{} {}{}",
-            match &self.flags.kind {
-                Kind::Class => {
-                    match &self.extends {
-                        Some(TypeSource::User(u)) => match u.type_name(res).as_str() {
-                            "System.Enum" => "enum",
-                            "System.ValueType" => "struct",
-                            _ => "class",
-                        },
-                        _ => "class",
-                    }
-                }
-                Kind::Interface => "interface",
-            },
+            kind,
             self.type_name(),
             self.generic_parameters.show(res)
         )
         .unwrap();
+
+        if let Some(ext) = &self.extends {
+            let supertype = ext.show(res);
+            if kind == "class" && supertype != "System.Object" {
+                write!(buf, " extends {}", supertype).unwrap();
+            }
+        }
+
+        if !self.implements.is_empty() {
+            write!(
+                buf,
+                " implements {}",
+                self.implements
+                    .iter()
+                    .map(|(_, t)| t.show(res))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .unwrap();
+        }
 
         if let Some(s) = show_constraints(&self.generic_parameters, res) {
             write!(buf, " {}", s).unwrap();
