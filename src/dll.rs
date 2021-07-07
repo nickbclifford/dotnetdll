@@ -148,6 +148,12 @@ impl<'a> DLL<'a> {
         let userstrings: UserString = self.get_heap("#US")?;
         let mut tables = self.get_logical_metadata()?.tables;
 
+
+        let ctx = convert::Context {
+            specs: &tables.type_spec,
+            blobs: &blobs,
+        };
+
         macro_rules! heap_idx {
             ($heap:ident, $idx:expr) => {
                 $heap.at_index($idx)?
@@ -238,6 +244,8 @@ impl<'a> DLL<'a> {
                 use types::*;
 
                 let layout_flags = t.flags & 0x18;
+                let name = heap_idx!(strings, t.type_name);
+
                 Ok(TypeDefinition {
                     attributes: vec![],
                     flags: TypeFlags::new(
@@ -259,7 +267,7 @@ impl<'a> DLL<'a> {
                             }
                         },
                     ),
-                    name: heap_idx!(strings, t.type_name),
+                    name,
                     namespace: optional_idx!(strings, t.type_namespace),
                     fields: vec![],
                     properties: vec![],
@@ -267,7 +275,22 @@ impl<'a> DLL<'a> {
                     events: vec![],
                     nested_types: vec![],
                     overrides: vec![],
-                    extends: None,
+                    extends: if t.extends.is_null() {
+                        None
+                    } else {
+                        macro_rules! error {
+                            ($bind:ident) => {
+                                return Err(CLI(scroll::Error::Custom(format!("invalid extended type {:?} for type {}", $bind, name))))
+                            }
+                        }
+                        match convert::member_type_idx(t.extends, &ctx)? {
+                            MemberType::Base(b) => match &*b {
+                                BaseType::Type(s) => Some(s.clone()),
+                                bad => error!(bad)
+                            },
+                            bad => error!(bad)
+                        }
+                    },
                     implements: vec![],
                     generic_parameters: vec![],
                     security: None,
@@ -389,11 +412,6 @@ impl<'a> DLL<'a> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-
-        let ctx = convert::Context {
-            specs: &tables.type_spec,
-            blobs: &blobs,
-        };
 
         fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
             use members::Accessibility::*;

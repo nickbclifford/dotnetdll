@@ -9,7 +9,7 @@ pub mod resource;
 pub mod signature;
 pub mod types;
 
-#[derive(Debug)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
 pub enum Accessibility {
     Private,
     FamilyANDAssembly,
@@ -38,4 +38,8 @@ impl Display for Accessibility {
             }
         )
     }
+}
+
+pub trait ResolvedDebug {
+    fn show(&self, res: &crate::dll::Resolution) -> String;
 }

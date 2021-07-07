@@ -1,13 +1,13 @@
 use super::{
     assembly,
     attribute::{Attribute, SecurityDeclaration},
-    generic::TypeGeneric,
-    members, module, signature,
+    generic::{show_constraints, TypeGeneric},
+    members, module, signature, ResolvedDebug,
 };
 use crate::{binary::signature::encoded::ArrayShape, dll::Resolution};
 
 use std::{
-    fmt::{Display, Formatter},
+    fmt::{Display, Formatter, Write},
     rc::Rc,
 };
 
@@ -128,6 +128,44 @@ pub struct TypeDefinition<'a> {
     pub flags: TypeFlags,
     pub security: Option<SecurityDeclaration<'a>>,
 }
+impl ResolvedDebug for TypeDefinition<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        let mut buf = String::new();
+
+        match &self.flags.accessibility {
+            Accessibility::NotPublic => {}
+            Accessibility::Public => buf.push_str("public "),
+            Accessibility::Nested(a) => write!(buf, "{} ", a).unwrap(),
+        }
+
+        write!(
+            buf,
+            "{} {}{}",
+            match &self.flags.kind {
+                Kind::Class => {
+                    match &self.extends {
+                        Some(TypeSource::User(u)) => match u.type_name(res).as_str() {
+                            "System.Enum" => "enum",
+                            "System.ValueType" => "struct",
+                            _ => "class",
+                        },
+                        _ => "class",
+                    }
+                }
+                Kind::Interface => "interface",
+            },
+            self.type_name(),
+            self.generic_parameters.show(res)
+        )
+        .unwrap();
+
+        if let Some(s) = show_constraints(&self.generic_parameters, res) {
+            write!(buf, " {}", s).unwrap();
+        }
+
+        buf
+    }
+}
 
 #[derive(Debug)]
 pub enum ResolutionScope<'a> {
@@ -222,6 +260,23 @@ pub enum TypeSource<EnclosingType> {
     User(UserType),
     Generic(GenericInstantiation<EnclosingType>),
 }
+impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
+    fn show(&self, res: &Resolution) -> String {
+        use TypeSource::*;
+        match self {
+            User(u) => u.type_name(res),
+            Generic(g) => format!(
+                "{}<{}>",
+                g.base.type_name(res),
+                g.parameters
+                    .iter()
+                    .map(|p| p.show(res))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum BaseType<EnclosingType> {
@@ -247,11 +302,62 @@ pub enum BaseType<EnclosingType> {
     ValuePointer(Option<CustomTypeModifier>, Option<EnclosingType>),
     FunctionPointer(signature::ManagedMethod),
 }
+impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
+    fn show(&self, res: &Resolution) -> String {
+        use BaseType::*;
+        match self {
+            Type(t) => t.show(res),
+            Boolean => "bool".to_string(),
+            Char => "char".to_string(),
+            Int8 => "sbyte".to_string(),
+            UInt8 => "byte".to_string(),
+            Int16 => "short".to_string(),
+            UInt16 => "ushort".to_string(),
+            Int32 => "int".to_string(),
+            UInt32 => "uint".to_string(),
+            Int64 => "long".to_string(),
+            UInt64 => "ulong".to_string(),
+            Float32 => "float".to_string(),
+            Float64 => "double".to_string(),
+            IntPtr => "nint".to_string(),
+            UIntPtr => "nuint".to_string(),
+            Object => "object".to_string(),
+            String => "string".to_string(),
+            Vector(_, t) => format!("{}[]", t.show(res)),
+            Array(t, shape) => format!("{}{}", t.show(res), "[]".repeat(shape.rank)), // can't be bothered to do explicit dimensions atm
+            ValuePointer(_, opt) => match opt {
+                Some(t) => format!("{}*", t.show(res)),
+                None => "void*".to_string(),
+            },
+            FunctionPointer(sig) => format!(
+                "delegate*<{}>",
+                sig.parameters
+                    .iter()
+                    .map(|p| p.1.show(res))
+                    .chain(std::iter::once(match &sig.return_type.1 {
+                        None => "void".to_string(),
+                        Some(t) => t.show(res),
+                    }))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum MemberType {
     Base(Box<BaseType<MemberType>>),
     TypeGeneric(usize),
+}
+impl ResolvedDebug for MemberType {
+    fn show(&self, res: &Resolution) -> String {
+        use MemberType::*;
+        match self {
+            Base(b) => b.show(res),
+            TypeGeneric(i) => format!("T{}", i),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +365,16 @@ pub enum MethodType {
     Base(Box<BaseType<MethodType>>),
     TypeGeneric(usize),
     MethodGeneric(usize),
+}
+impl ResolvedDebug for MethodType {
+    fn show(&self, res: &Resolution) -> String {
+        use MethodType::*;
+        match self {
+            Base(b) => b.show(res),
+            TypeGeneric(i) => format!("T{}", i),
+            MethodGeneric(i) => format!("M{}", i),
+        }
+    }
 }
 
 #[derive(Debug)]

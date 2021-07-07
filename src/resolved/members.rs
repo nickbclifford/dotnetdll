@@ -1,14 +1,14 @@
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
-    generic::MethodGeneric,
+    generic::{show_constraints, MethodGeneric},
     module::ExternalModuleReference,
     signature,
     types::{CustomTypeModifier, MemberType, MethodType, TypeDefinition, TypeSource},
+    ResolvedDebug,
 };
-use crate::binary::signature::kinds::MarshalSpec;
-
-use std::fmt::{Display, Formatter};
+use crate::{binary::signature::kinds::MarshalSpec, dll::Resolution};
+use std::fmt::{Display, Formatter, Write};
 
 macro_rules! name_display {
     ($i:ty) => {
@@ -20,10 +20,19 @@ macro_rules! name_display {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Accessibility {
     CompilerControlled,
     Access(super::Accessibility),
+}
+impl Display for Accessibility {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Accessibility::*;
+        match self {
+            CompilerControlled => write!(f, "[compiler controlled]"),
+            Access(a) => write!(f, "{}", a),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -46,6 +55,17 @@ pub struct Field<'a> {
     pub start_of_initial_value: Option<&'a [u8]>,
 }
 name_display!(Field<'_>);
+impl ResolvedDebug for Field<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        format!(
+            "{} {}{} {}",
+            self.accessibility,
+            if self.static_member { "static " } else { "" },
+            self.return_type.show(res),
+            self.name
+        )
+    }
+}
 
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
@@ -95,6 +115,49 @@ pub struct Property<'a> {
     pub default: Option<Constant>,
 }
 name_display!(Property<'_>);
+impl ResolvedDebug for Property<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        let mut buf = String::new();
+
+        let least_restrictive = std::array::IntoIter::new([
+            self.getter.as_ref().map(|m| m.accessibility),
+            self.setter.as_ref().map(|m| m.accessibility),
+        ])
+        .flatten()
+        .max();
+
+        if let Some(access) = least_restrictive {
+            write!(buf, "{} ", access).unwrap();
+        }
+
+        if std::array::IntoIter::new([&self.getter, &self.setter])
+            .map(|o| o.as_ref())
+            .flatten()
+            .any(|m| m.static_member)
+        {
+            buf.push_str("static ");
+        }
+
+        write!(buf, "{} {} {{ ", self.return_type.show(res), self.name).unwrap();
+
+        if let Some(method) = &self.getter {
+            if matches!(least_restrictive, Some(a) if method.accessibility < a) {
+                write!(buf, "{} ", method.accessibility).unwrap();
+            }
+            buf.push_str("get; ");
+        }
+        if let Some(method) = &self.setter {
+            if matches!(least_restrictive, Some(a) if method.accessibility < a) {
+                write!(buf, "{} ", method.accessibility).unwrap();
+            }
+            buf.push_str("set; ");
+        }
+
+        buf.push('}');
+
+        buf
+    }
+}
 
 #[derive(Debug)]
 pub enum VtableLayout {
@@ -157,6 +220,40 @@ pub struct Method<'a> {
     pub no_optimization: bool,
 }
 name_display!(Method<'_>);
+impl ResolvedDebug for Method<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        let mut buf = format!("{} ", self.accessibility);
+
+        if self.static_member {
+            buf.push_str("static ");
+        }
+
+        match &self.signature.return_type.1 {
+            None => buf.push_str("void "),
+            Some(t) => write!(buf, "{} ", t.show(res)).unwrap(),
+        }
+
+        write!(
+            buf,
+            "{}{}({})",
+            self.name,
+            self.generic_parameters.show(res),
+            self.signature
+                .parameters
+                .iter()
+                .map(|p| p.1.show(res))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .unwrap();
+
+        if let Some(constraints) = show_constraints(&self.generic_parameters, res) {
+            write!(buf, " {}", constraints).unwrap();
+        }
+
+        buf
+    }
+}
 
 #[derive(Debug)]
 pub enum CharacterSet {
@@ -272,3 +369,18 @@ pub struct Event<'a> {
     pub runtime_special_name: bool,
 }
 name_display!(Event<'_>);
+impl ResolvedDebug for Event<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        format!(
+            "{} {}{} {}",
+            self.add_listener.accessibility,
+            if self.add_listener.static_member {
+                "static "
+            } else {
+                ""
+            },
+            self.delegate_type.show(res),
+            self.name
+        )
+    }
+}

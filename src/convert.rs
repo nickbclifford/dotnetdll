@@ -18,9 +18,7 @@ pub struct Context<'a> {
     pub blobs: &'a Blob<'a>,
 }
 
-pub fn user_type(
-    TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec,
-) -> Result<UserType> {
+pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec) -> Result<UserType> {
     use index::TokenTarget::*;
     let idx = token.index - 1;
     match token.target {
@@ -168,10 +166,7 @@ pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     ))
 }
 
-pub fn managed_method(
-    sig: MethodDefSig,
-    ctx: &Context,
-) -> Result<signature::ManagedMethod> {
+pub fn managed_method(sig: MethodDefSig, ctx: &Context) -> Result<signature::ManagedMethod> {
     use signature::*;
     Ok(ManagedMethod {
         instance: sig.has_this,

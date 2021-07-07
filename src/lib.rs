@@ -25,81 +25,46 @@ pub mod resolved;
 mod tests {
     use scroll::Pread;
 
-    use super::{binary::*, dll::DLL};
+    use super::{binary::*, dll::DLL, resolved::ResolvedDebug};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve()?;
 
-        for t in r.type_definitions {
-            use super::resolved::types::Kind;
+        for t in r.type_definitions.iter() {
+            println!("{} {{", t.show(&r));
 
-            print!(
-                "{} ",
-                match t.flags.kind {
-                    Kind::Class => "class",
-                    Kind::Interface => "interface",
-                }
-            );
-
-            println!("{} {{", t.type_name());
-
-            for p in t.generic_parameters {
-                println!("\tgeneric {}", p.name);
-                for c in p.type_constraints.1 {
-                    println!("\t\tconstraint {:?}", c);
-                }
-            }
-
-            for f in t.fields {
-                print!("\t");
-                if f.static_member {
-                    print!("static ");
-                }
-                println!("field {}", f.name);
-            }
-            for p in t.properties {
-                print!("\t");
-
-                if [p.getter, p.setter]
-                    .iter()
-                    .filter_map(|m| m.as_ref())
-                    .chain(p.other.iter())
-                    .any(|m| m.static_member)
-                {
-                    print!("static ");
-                }
-
-                println!("property {}", p.name);
-            }
-            for e in t.events {
-                print!("\t");
-                if matches!(e.raise_event, Some(m) if m.static_member)
-                    || [e.add_listener, e.remove_listener]
+            println!(
+                "{}",
+                std::array::IntoIter::new([
+                    t.fields
                         .iter()
-                        .chain(e.other.iter())
-                        .any(|m| m.static_member)
-                {
-                    print!("static ");
-                }
-                println!("event {}", e.name);
-            }
-            for m in t.methods {
-                print!("\t");
-                if m.static_member {
-                    print!("static ");
-                }
-                println!("method {}", m.name);
-                for p in m.generic_parameters {
-                    println!("\t\tgeneric {}", p.name);
-                    for c in p.type_constraints.1 {
-                        println!("\t\t\tconstraint {:?}", c);
-                    }
-                }
-            }
+                        .map(|f| format!("\t{};", f.show(&r)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    t.properties
+                        .iter()
+                        .map(|p| format!("\t{};", p.show(&r)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    t.events
+                        .iter()
+                        .map(|e| format!("\t{};", e.show(&r)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    t.methods
+                        .iter()
+                        .map(|m| format!("\t{};", m.show(&r)))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ])
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+            );
 
             println!("}}\n");
         }

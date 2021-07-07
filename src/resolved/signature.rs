@@ -1,11 +1,23 @@
 use super::types::{CustomTypeModifier, MethodType};
 use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
+use crate::resolved::ResolvedDebug;
+use crate::dll::Resolution;
 
 #[derive(Debug, Clone)]
 pub enum ParameterType {
     Value(MethodType),
     Ref(MethodType),
     TypedReference,
+}
+impl ResolvedDebug for ParameterType {
+    fn show(&self, res: &Resolution) -> String {
+        use ParameterType::*;
+        match self {
+            Value(t) => t.show(res),
+            Ref(t) => format!("ref {}", t.show(res)),
+            TypedReference => "System.TypedReference".to_string()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

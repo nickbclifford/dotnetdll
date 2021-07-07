@@ -1,4 +1,5 @@
-use super::{attribute::Attribute, types};
+use super::{attribute::Attribute, types, ResolvedDebug};
+use crate::dll::Resolution;
 
 #[derive(Debug)]
 pub enum Variance {
@@ -13,6 +14,11 @@ pub struct SpecialConstraint {
     pub value_type: bool,
     pub has_default_constructor: bool,
 }
+impl SpecialConstraint {
+    pub fn is_empty(&self) -> bool {
+        !(self.reference_type || self.value_type || self.has_default_constructor)
+    }
+}
 
 #[derive(Debug)]
 pub struct Generic<'a, ConstraintType> {
@@ -26,3 +32,61 @@ pub struct Generic<'a, ConstraintType> {
 
 pub type TypeGeneric<'a> = Generic<'a, types::MemberType>;
 pub type MethodGeneric<'a> = Generic<'a, types::MethodType>;
+
+impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
+    fn show(&self, _: &Resolution) -> String {
+        use std::fmt::Write;
+
+        let mut buf = String::new();
+
+        if !self.is_empty() {
+            write!(
+                buf,
+                "<{}>",
+                self.iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<&str>>()
+                    .join(", ")
+            )
+            .unwrap();
+        }
+
+        buf
+    }
+}
+
+pub fn show_constraints<T: ResolvedDebug>(
+    v: &Vec<Generic<'_, T>>,
+    res: &Resolution,
+) -> Option<String> {
+    if v.iter()
+        .any(|g| !(g.special_constraint.is_empty() && g.type_constraints.1.is_empty()))
+    {
+        Some(
+            v.iter()
+                .map(|g| {
+                    let mut constraints = Vec::new();
+                    if g.special_constraint.reference_type {
+                        constraints.push("class".to_string());
+                    }
+                    if g.special_constraint.value_type {
+                        constraints.push("struct".to_string());
+                    }
+                    if g.special_constraint.has_default_constructor {
+                        constraints.push("new()".to_string());
+                    }
+                    constraints.extend(g.type_constraints.1.iter().map(|t| t.show(res)));
+
+                    if constraints.is_empty() {
+                        String::new()
+                    } else {
+                        format!("where {} : {}", g.name, constraints.join(", "))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    } else {
+        None
+    }
+}
