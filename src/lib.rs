@@ -40,6 +40,15 @@ mod tests {
             println!(
                 "{}",
                 std::array::IntoIter::new([
+                    t.overrides
+                        .iter()
+                        .map(|o| format!(
+                            "\toverride {} with {};",
+                            o.declaration.show(&r),
+                            o.implementation.show(&r)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                     t.fields
                         .iter()
                         .map(|f| format!("\t{};", f.show(&r)))

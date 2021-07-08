@@ -160,8 +160,23 @@ pub fn member_type_source(idx: index::TypeDefOrRef, ctx: &Context) -> Result<Typ
         }
     }
     match member_type_idx(idx, ctx)? {
-        MemberType::Base(b) => match &*b {
-            BaseType::Type(s) => Ok(s.clone()),
+        MemberType::Base(b) => match *b {
+            BaseType::Type(s) => Ok(s),
+            bad => error!(bad)
+        },
+        bad => error!(bad)
+    }
+}
+
+pub fn method_type_source(idx: index::TypeDefOrRef, ctx: &Context) -> Result<TypeSource<MethodType>> {
+    macro_rules! error {
+        ($bind:ident) => {
+            Err(DLLError::CLI(scroll::Error::Custom(format!("invalid type source {:?}", $bind))))
+        }
+    }
+    match method_type_idx(idx, ctx)? {
+        MethodType::Base(b) => match *b {
+            BaseType::Type(s) => Ok(s),
             bad => error!(bad)
         },
         bad => error!(bad)

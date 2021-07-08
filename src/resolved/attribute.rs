@@ -224,7 +224,7 @@ impl<'a> Attribute<'a> {
             )));
         }
 
-        let sig = self.constructor.signature();
+        let sig = self.constructor.signature(resolution);
 
         let mut fixed = Vec::with_capacity(sig.parameters.len());
 

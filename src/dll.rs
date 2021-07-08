@@ -16,7 +16,7 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -60,7 +60,9 @@ pub type Result<T> = std::result::Result<T, DLLError>;
 
 pub struct Resolution<'a> {
     pub assembly: Option<resolved::assembly::Assembly<'a>>,
+    pub assembly_references: Vec<Rc<resolved::assembly::ExternalAssemblyReference<'a>>>,
     pub module: resolved::module::Module<'a>,
+    pub module_references: Vec<Rc<resolved::module::ExternalModuleReference<'a>>>,
     pub type_definitions: Vec<resolved::types::TypeDefinition<'a>>,
     pub type_references: Vec<resolved::types::ExternalTypeReference<'a>>,
     // TODO
@@ -406,7 +408,9 @@ impl<'a> DLL<'a> {
             .collect::<Result<Vec<_>>>()?;
 
         for i in tables.interface_impl.iter() {
-            types[i.class.0 - 1].implements.push((vec![], convert::member_type_source(i.interface, &ctx)?));
+            types[i.class.0 - 1]
+                .implements
+                .push((vec![], convert::member_type_source(i.interface, &ctx)?));
         }
 
         fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
@@ -589,6 +593,191 @@ impl<'a> DLL<'a> {
 
                 owned_params.push((m_idx, range.clone().zip(&tables.param[range])));
             }
+        }
+
+        macro_rules! filter_map_try {
+            ($e:expr) => {
+                match $e {
+                    Ok(n) => n,
+                    Err(e) => return Some(Err(e)),
+                }
+            };
+        }
+
+        // TODO: convert member ref indices
+
+        let field_refs = tables
+            .member_ref
+            .iter()
+            .filter_map(|r| {
+                use crate::binary::signature::kinds::FieldSig;
+                use members::*;
+                use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+
+                match sig_blob.pread::<FieldSig>(0) {
+                    Ok(field_sig) => Some(Ok(ExternalFieldReference {
+                        attributes: vec![],
+                        parent: match r.class {
+                            MemberRefParent::TypeDef(i) => {
+                                FieldReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::TypeRef(i) => {
+                                FieldReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::TypeSpec(i) => {
+                                FieldReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::ModuleRef(i) => {
+                                FieldReferenceParent::Module(&module_refs[i - 1])
+                            }
+                            bad => {
+                                return Some(Err(CLI(scroll::Error::Custom(format!(
+                                    "bad parent index {:?} for field reference {}",
+                                    bad, name
+                                )))))
+                            }
+                        },
+                        name,
+                        return_type: filter_map_try!(convert::member_type_sig(field_sig.1, &ctx)),
+                    })),
+                    Err(_) => None,
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut method_map = HashMap::new();
+        let method_refs = tables
+            .member_ref
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| {
+                use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
+                use members::*;
+                use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+
+                match sig_blob.pread_with::<MethodRefSig>(0, ()) {
+                    Ok(ref_sig) => {
+                        let mut signature =
+                            filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
+                        if signature.calling_convention == CallingConvention::Vararg {
+                            signature.varargs = Some(filter_map_try!(ref_sig
+                                .varargs
+                                .into_iter()
+                                .map(|p| convert::parameter(p, &ctx))
+                                .collect::<Result<_>>()));
+                        }
+
+                        Some(Ok((
+                            idx,
+                            ExternalMethodReference {
+                                attributes: vec![],
+                                parent: match r.class {
+                                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeDef(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeRef(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeSpec(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::ModuleRef(i) => {
+                                        MethodReferenceParent::Module(Rc::clone(&module_refs[i - 1]))
+                                    }
+                                    MemberRefParent::MethodDef(i) => {
+                                        let (parent, method) = methods[i - 1];
+                                        MethodReferenceParent::VarargMethod { parent, method }
+                                    }
+                                    MemberRefParent::Null => {
+                                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                                            "invalid null parent index for method reference {}",
+                                            name
+                                        )))))
+                                    }
+                                },
+                                name,
+                                signature,
+                            },
+                        )))
+                    }
+                    Err(_) => None,
+                }
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .enumerate()
+            .map(|(current_idx, (orig_idx, r))| {
+                method_map.insert(orig_idx, current_idx);
+                Rc::new(r)
+            })
+            .collect::<Vec<_>>();
+
+        for i in tables.method_impl.iter() {
+            use members::*;
+            use metadata::index::MethodDefOrRef;
+            use types::*;
+
+            let idx = i.class.0 - 1;
+            let t = types.get_mut(idx).ok_or(scroll::Error::Custom(format!(
+                "invalid parent type index {} for method override",
+                idx
+            )))?;
+
+            macro_rules! build_method {
+                ($idx:expr, $name:literal) => {
+                    match $idx {
+                        MethodDefOrRef::MethodDef(i) => {
+                            let m_idx = i - 1;
+                            let &(parent, method) =
+                                methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
+                                    "invalid method index {} for method override {} in type {}",
+                                    m_idx, $name, t.name
+                                )))?;
+                            UserMethod::Definition { parent, method }
+                        }
+                        MethodDefOrRef::MemberRef(i) => {
+                            let r_idx = i - 1;
+                            let &m_idx = method_map.get(&r_idx).ok_or(scroll::Error::Custom(format!(
+                                "invalid member reference index {} for method override {} in type {}",
+                                r_idx, $name, t.name
+                            )))?;
+                            UserMethod::Reference(Rc::clone(&method_refs[m_idx]))
+                        }
+                        MethodDefOrRef::Null => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid null {} index for method override in type {}",
+                                $name, t.name
+                            ))))
+                        }
+                    }
+                }
+            }
+
+            t.overrides.push(MethodOverride {
+                implementation: build_method!(i.method_body, "implementation"),
+                declaration: build_method!(i.method_declaration, "declaration"),
+            });
         }
 
         macro_rules! get_method {
@@ -898,7 +1087,9 @@ impl<'a> DLL<'a> {
 
         Ok(Resolution {
             assembly,
+            assembly_references: assembly_refs,
             module,
+            module_references: module_refs,
             type_definitions: types,
             type_references: type_refs,
         })

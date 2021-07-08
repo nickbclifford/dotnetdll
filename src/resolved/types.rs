@@ -52,8 +52,8 @@ pub enum StringFormatting {
 
 #[derive(Debug)]
 pub struct MethodOverride<'a> {
-    implementation: &'a members::Method<'a>,
-    declaration: &'a members::Method<'a>,
+    pub implementation: members::UserMethod<'a>,
+    pub declaration: members::UserMethod<'a>,
 }
 
 #[derive(Debug)]
