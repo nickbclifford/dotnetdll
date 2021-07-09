@@ -398,9 +398,18 @@ impl<'a> DLL<'a> {
             .collect::<Result<Vec<_>>>()?;
 
         for i in tables.interface_impl.iter() {
-            types[i.class.0 - 1]
-                .implements
-                .push((vec![], convert::member_type_source(i.interface, &ctx)?));
+            let idx = i.class.0 - 1;
+            match types.get_mut(idx) {
+                Some(t) => t
+                    .implements
+                    .push((vec![], convert::member_type_source(i.interface, &ctx)?)),
+                None => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid type index {} for interface implementation",
+                        idx
+                    ))))
+                }
+            }
         }
 
         fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
@@ -423,6 +432,9 @@ impl<'a> DLL<'a> {
             })
         }
 
+        // this allows us to initialize the Vec out of order, which is safe because we know that everything
+        // will eventually be initialized in the end
+        // it's much simpler/efficient than trying to use a HashMap or something
         macro_rules! new_with_len {
             ($name:ident, $len:ident) => {
                 let mut $name = Vec::with_capacity($len);
@@ -588,6 +600,10 @@ impl<'a> DLL<'a> {
             }
         }
 
+        // we use filter_maps for the member refs because we distinguish between the two
+        // kinds by testing if they parse successfully or not, and filter_map makes it really
+        // easy to implement that inside an iterator. however, we need to propagate the Results
+        // through the final iterator so that they don't get turned into None and swallowed on failure
         macro_rules! filter_map_try {
             ($e:expr) => {
                 match $e {
@@ -647,6 +663,8 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        // only should be used before the event/method semantics phase
+        // since before then we know member index is a Method(usize)
         macro_rules! get_method {
             ($unwrap:expr) => {{
                 let MethodIndex {
@@ -740,6 +758,9 @@ impl<'a> DLL<'a> {
             }
         }
 
+        // this doesn't really matter that much, just to make the sequences nicer
+        // I originally tried to do this with uninitialized Vecs and no sequence field,
+        // but for reasons I don't understand, that broke
         for t in types.iter_mut() {
             t.generic_parameters.sort_by_key(|p| p.sequence);
 
@@ -890,12 +911,12 @@ impl<'a> DLL<'a> {
 
                 macro_rules! get_listener {
                     ($l_name:literal, $flag:literal, $variant:ident) => {{
-                        let m = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
+                        let sem = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
                             use metadata::index::HasSemantics;
                             check_bitmask!(s.semantics, $flag)
                                 && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
                         }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
-                        let m_idx = m.method.0 - 1;
+                        let m_idx = sem.method.0 - 1;
                         let method = extract_method!(parent, methods[m_idx]);
                         methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
                         method
@@ -1003,58 +1024,55 @@ impl<'a> DLL<'a> {
                                 .collect::<Result<_>>()));
                         }
 
+                        let parent = match r.class {
+                            MemberRefParent::TypeDef(i) => {
+                                MethodReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::TypeRef(i) => {
+                                MethodReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::TypeSpec(i) => {
+                                MethodReferenceParent::Type(filter_map_try!(
+                                    convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
+                                ))
+                            }
+                            MemberRefParent::ModuleRef(i) => {
+                                let idx = i - 1;
+                                MethodReferenceParent::Module(Rc::clone(filter_map_try!(
+                                    module_refs.get(idx).ok_or(CLI(scroll::Error::Custom(
+                                        format!(
+                                            "bad module ref index {} for method reference {}",
+                                            idx, name
+                                        )
+                                    )))
+                                )))
+                            }
+                            MemberRefParent::MethodDef(i) => {
+                                let idx = i - 1;
+                                MethodReferenceParent::VarargMethod(*filter_map_try!(methods
+                                    .get(idx)
+                                    .ok_or(CLI(scroll::Error::Custom(format!(
+                                        "bad method def index {} for method reference {}",
+                                        idx, name
+                                    ))))))
+                            }
+                            MemberRefParent::Null => {
+                                return Some(Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid null parent index for method reference {}",
+                                    name
+                                )))))
+                            }
+                        };
+
                         Some(Ok((
                             idx,
                             ExternalMethodReference {
                                 attributes: vec![],
-                                parent: match r.class {
-                                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeDef(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeRef(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeSpec(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::ModuleRef(i) => {
-                                        let idx = i - 1;
-                                        MethodReferenceParent::Module(Rc::clone(filter_map_try!(
-                                            module_refs.get(idx).ok_or(CLI(scroll::Error::Custom(
-                                                format!(
-                                                "bad module ref index {} for method reference {}",
-                                                idx, name
-                                            )
-                                            )))
-                                        )))
-                                    }
-                                    MemberRefParent::MethodDef(i) => {
-                                        let idx = i - 1;
-                                        MethodReferenceParent::VarargMethod(*filter_map_try!(
-                                            methods.get(idx).ok_or(CLI(scroll::Error::Custom(
-                                                format!(
-                                                "bad method def index {} for method reference {}",
-                                                idx, name
-                                            )
-                                            )))
-                                        ))
-                                    }
-                                    MemberRefParent::Null => {
-                                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                                            "invalid null parent index for method reference {}",
-                                            name
-                                        )))))
-                                    }
-                                },
+                                parent,
                                 name,
                                 signature,
                             },
