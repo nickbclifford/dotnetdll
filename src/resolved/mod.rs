@@ -41,5 +41,5 @@ impl Display for Accessibility {
 }
 
 pub trait ResolvedDebug {
-    fn show(&self, res: &crate::dll::Resolution) -> String;
+    fn show(&self, res: &crate::resolution::Resolution) -> String;
 }

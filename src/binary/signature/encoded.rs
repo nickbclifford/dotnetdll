@@ -427,9 +427,9 @@ impl TryFromCtx<'_> for NativeIntrinsic {
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
-        
+
         use NativeIntrinsic::*;
-        
+
         let val = match from.gread_with::<u8>(offset, scroll::LE)? {
             NATIVE_TYPE_BOOLEAN => Boolean,
             NATIVE_TYPE_I1 => Int8,
@@ -447,7 +447,12 @@ impl TryFromCtx<'_> for NativeIntrinsic {
             NATIVE_TYPE_INT => IntPtr,
             NATIVE_TYPE_UINT => UIntPtr,
             NATIVE_TYPE_FUNC => Function,
-            bad => return Err(scroll::Error::Custom(format!("bad native instrinsic value {:#04x}", bad)))
+            bad => {
+                return Err(scroll::Error::Custom(format!(
+                    "bad native instrinsic value {:#04x}",
+                    bad
+                )))
+            }
         };
 
         Ok((val, *offset))

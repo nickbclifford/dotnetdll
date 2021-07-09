@@ -1,3 +1,11 @@
+use std::{
+    fmt::{Display, Formatter, Write},
+    rc::Rc,
+};
+
+use crate::binary::signature::kinds::MarshalSpec;
+use crate::resolution::{MethodIndex, Resolution};
+
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -6,11 +14,6 @@ use super::{
     signature,
     types::{CustomTypeModifier, MemberType, MethodType, TypeDefinition, TypeSource},
     ResolvedDebug,
-};
-use crate::{binary::signature::kinds::MarshalSpec, dll::Resolution};
-use std::{
-    fmt::{Display, Formatter, Write},
-    rc::Rc,
 };
 
 macro_rules! name_display {
@@ -297,7 +300,7 @@ pub struct PInvoke<'a> {
 pub enum MethodReferenceParent<'a> {
     Type(TypeSource<MethodType>),
     Module(Rc<ExternalModuleReference<'a>>),
-    VarargMethod { parent: usize, method: usize },
+    VarargMethod(MethodIndex),
 }
 
 #[derive(Debug)]
@@ -311,28 +314,27 @@ name_display!(ExternalMethodReference<'_>);
 
 #[derive(Debug, Clone)]
 pub enum UserMethod<'a> {
-    Definition { parent: usize, method: usize },
+    Definition(MethodIndex),
     Reference(Rc<ExternalMethodReference<'a>>),
 }
 impl ResolvedDebug for UserMethod<'_> {
     fn show(&self, res: &Resolution) -> String {
-        let full_method_name = |&parent: &usize, &method: &usize| {
-            let parent_type = &res.type_definitions[parent];
-            // what the fuck?
-            format!("{}.{}", parent_type, parent_type.methods[method])
+        let full_method_name = |&idx: &MethodIndex| {
+            let parent_type = &res.type_definitions[idx.parent_type];
+            format!("{}.{}", parent_type, res[idx])
         };
 
         match self {
-            UserMethod::Definition { parent, method } => full_method_name(parent, method),
+            UserMethod::Definition(i) => full_method_name(i),
             UserMethod::Reference(r) => {
                 use MethodReferenceParent::*;
                 match &r.parent {
                     Type(t) => format!("{}.{}", t.show(res), r.name),
                     Module(m) => format!("{}.{}", m.name, r.name),
-                    VarargMethod { parent, method } => format!(
+                    VarargMethod(i) => format!(
                         "{} as vararg specialization for {}",
                         r.name,
-                        full_method_name(parent, method)
+                        full_method_name(i)
                     ),
                 }
             }
@@ -342,9 +344,7 @@ impl ResolvedDebug for UserMethod<'_> {
 impl<'a> UserMethod<'a> {
     pub fn signature(&'a self, res: &'a Resolution) -> &'a signature::ManagedMethod {
         match self {
-            UserMethod::Definition { parent, method } => {
-                &res.type_definitions[*parent].methods[*method].signature
-            }
+            UserMethod::Definition(i) => &res[*i].signature,
             UserMethod::Reference(r) => &r.signature,
         }
     }

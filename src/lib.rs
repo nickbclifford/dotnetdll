@@ -19,6 +19,7 @@ mod utils {
 pub mod binary;
 mod convert;
 pub mod dll;
+pub mod resolution;
 pub mod resolved;
 
 #[cfg(test)]
@@ -29,7 +30,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/Newtonsoft.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve()?;

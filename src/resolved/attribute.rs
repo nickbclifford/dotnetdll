@@ -1,10 +1,13 @@
+use scroll::{Pread, Result};
+
+use crate::binary::signature::{attribute::*, compressed::Unsigned};
+use crate::resolution::Resolution;
+
 use super::{
     members,
     signature::{Parameter, ParameterType},
     types::*,
 };
-use crate::{binary::signature::{attribute::*, compressed::Unsigned}, dll::Resolution};
-use scroll::{Pread, Result};
 
 fn parse_from_type<'def, 'inst>(
     f_type: FieldOrPropType<'inst>,
@@ -50,7 +53,13 @@ fn parse_from_type<'def, 'inst>(
             } else {
                 let mut elems = Vec::with_capacity(num_elem as usize);
                 for _ in 0..num_elem {
-                    elems.push(parse_from_type(*t.clone(), src, offset, resolution, resolve)?);
+                    elems.push(parse_from_type(
+                        *t.clone(),
+                        src,
+                        offset,
+                        resolution,
+                        resolve,
+                    )?);
                 }
                 Some(elems)
             })
@@ -70,7 +79,9 @@ fn parse_from_type<'def, 'inst>(
     })
 }
 
-fn process_def<'def, 'inst>((def, res): (&'def TypeDefinition<'def>, &'def Resolution<'def>)) -> Result<FieldOrPropType<'inst>> {
+fn process_def<'def, 'inst>(
+    (def, res): (&'def TypeDefinition<'def>, &'def Resolution<'def>),
+) -> Result<FieldOrPropType<'inst>> {
     let supertype = match &def.extends {
         Some(t) => t,
         None => return Ok(FieldOrPropType::Object),
@@ -146,7 +157,9 @@ fn method_to_type<'def, 'inst>(
                 Float64 => FieldOrPropType::Float64,
                 String => FieldOrPropType::String,
                 Object => FieldOrPropType::Object,
-                Vector(_, ref v) => FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?)),
+                Vector(_, ref v) => {
+                    FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?))
+                }
                 bad => {
                     return Err(scroll::Error::Custom(format!(
                         "bad type {:?} in custom attribute constructor",
@@ -209,7 +222,11 @@ pub struct Attribute<'a> {
 }
 
 impl<'a> Attribute<'a> {
-    pub fn instantiation_data(&self, resolver: &impl Resolver, resolution: &Resolution) -> Result<CustomAttributeData<'a>> {
+    pub fn instantiation_data(
+        &self,
+        resolver: &impl Resolver,
+        resolution: &Resolution,
+    ) -> Result<CustomAttributeData<'a>> {
         let bytes = self.value.ok_or(scroll::Error::Custom(
             "null data for custom attribute".to_string(),
         ))?;
@@ -259,7 +276,7 @@ impl<'a> Attribute<'a> {
             }
         }
 
-        let named = parse_named(bytes, offset,resolution, &resolve)?;
+        let named = parse_named(bytes, offset, resolution, &resolve)?;
 
         Ok(CustomAttributeData {
             constructor_args: fixed,

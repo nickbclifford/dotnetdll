@@ -4,7 +4,9 @@ use super::{
         heap::*,
         metadata, method,
     },
-    convert, resolved,
+    convert,
+    resolution::*,
+    resolved,
 };
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -15,8 +17,8 @@ use object::{
     },
 };
 use scroll::{Error as ScrollError, Pread};
-
 use std::{collections::HashMap, rc::Rc};
+use DLLError::*;
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -54,19 +56,7 @@ impl From<ScrollError> for DLLError {
     }
 }
 
-use DLLError::*;
-
 pub type Result<T> = std::result::Result<T, DLLError>;
-
-pub struct Resolution<'a> {
-    pub assembly: Option<resolved::assembly::Assembly<'a>>,
-    pub assembly_references: Vec<Rc<resolved::assembly::ExternalAssemblyReference<'a>>>,
-    pub module: resolved::module::Module<'a>,
-    pub module_references: Vec<Rc<resolved::module::ExternalModuleReference<'a>>>,
-    pub type_definitions: Vec<resolved::types::TypeDefinition<'a>>,
-    pub type_references: Vec<resolved::types::ExternalTypeReference<'a>>,
-    // TODO
-}
 
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
@@ -589,7 +579,10 @@ impl<'a> DLL<'a> {
                     no_optimization: check_bitmask!(m.impl_flags, 0x40),
                 });
 
-                methods[m_idx] = (type_idx, parent_methods.len() - 1);
+                methods[m_idx] = MethodIndex {
+                    parent_type: type_idx,
+                    member: MethodMemberIndex::Method(parent_methods.len() - 1),
+                };
 
                 owned_params.push((m_idx, range.clone().zip(&tables.param[range])));
             }
@@ -654,136 +647,16 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut method_map = HashMap::new();
-        let method_refs = tables
-            .member_ref
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, r)| {
-                use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
-                use members::*;
-                use metadata::index::{MemberRefParent, TypeDefOrRef};
-
-                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
-                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
-
-                match sig_blob.pread_with::<MethodRefSig>(0, ()) {
-                    Ok(ref_sig) => {
-                        let mut signature =
-                            filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
-                        if signature.calling_convention == CallingConvention::Vararg {
-                            signature.varargs = Some(filter_map_try!(ref_sig
-                                .varargs
-                                .into_iter()
-                                .map(|p| convert::parameter(p, &ctx))
-                                .collect::<Result<_>>()));
-                        }
-
-                        Some(Ok((
-                            idx,
-                            ExternalMethodReference {
-                                attributes: vec![],
-                                parent: match r.class {
-                                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeDef(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeRef(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(
-                                        filter_map_try!(convert::method_type_source(
-                                            TypeDefOrRef::TypeSpec(i),
-                                            &ctx
-                                        )),
-                                    ),
-                                    MemberRefParent::ModuleRef(i) => {
-                                        MethodReferenceParent::Module(Rc::clone(&module_refs[i - 1]))
-                                    }
-                                    MemberRefParent::MethodDef(i) => {
-                                        let (parent, method) = methods[i - 1];
-                                        MethodReferenceParent::VarargMethod { parent, method }
-                                    }
-                                    MemberRefParent::Null => {
-                                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                                            "invalid null parent index for method reference {}",
-                                            name
-                                        )))))
-                                    }
-                                },
-                                name,
-                                signature,
-                            },
-                        )))
-                    }
-                    Err(_) => None,
-                }
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .enumerate()
-            .map(|(current_idx, (orig_idx, r))| {
-                method_map.insert(orig_idx, current_idx);
-                Rc::new(r)
-            })
-            .collect::<Vec<_>>();
-
-        for i in tables.method_impl.iter() {
-            use members::*;
-            use metadata::index::MethodDefOrRef;
-            use types::*;
-
-            let idx = i.class.0 - 1;
-            let t = types.get_mut(idx).ok_or(scroll::Error::Custom(format!(
-                "invalid parent type index {} for method override",
-                idx
-            )))?;
-
-            macro_rules! build_method {
-                ($idx:expr, $name:literal) => {
-                    match $idx {
-                        MethodDefOrRef::MethodDef(i) => {
-                            let m_idx = i - 1;
-                            let &(parent, method) =
-                                methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
-                                    "invalid method index {} for method override {} in type {}",
-                                    m_idx, $name, t.name
-                                )))?;
-                            UserMethod::Definition { parent, method }
-                        }
-                        MethodDefOrRef::MemberRef(i) => {
-                            let r_idx = i - 1;
-                            let &m_idx = method_map.get(&r_idx).ok_or(scroll::Error::Custom(format!(
-                                "invalid member reference index {} for method override {} in type {}",
-                                r_idx, $name, t.name
-                            )))?;
-                            UserMethod::Reference(Rc::clone(&method_refs[m_idx]))
-                        }
-                        MethodDefOrRef::Null => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid null {} index for method override in type {}",
-                                $name, t.name
-                            ))))
-                        }
-                    }
-                }
-            }
-
-            t.overrides.push(MethodOverride {
-                implementation: build_method!(i.method_body, "implementation"),
-                declaration: build_method!(i.method_declaration, "declaration"),
-            });
-        }
-
         macro_rules! get_method {
-            ($m_idx:expr) => {{
-                let (type_idx, internal_idx) = methods[$m_idx];
-                &mut types[type_idx].methods[internal_idx]
+            ($unwrap:expr) => {{
+                let MethodIndex {
+                    parent_type,
+                    member,
+                } = $unwrap;
+                &mut types[parent_type].methods[match member {
+                    MethodMemberIndex::Method(i) => i,
+                    _ => unreachable!(),
+                }]
             }};
         }
 
@@ -848,17 +721,15 @@ impl<'a> DLL<'a> {
                 }
                 TypeOrMethodDef::MethodDef(i) => {
                     let idx = i - 1;
-                    match methods.get(idx) {
-                        Some(&(t, m)) => types[t].methods[m]
-                            .generic_parameters
-                            .push(make_generic!(method_type_idx)),
-                        None => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid method index {} for generic parameter {}",
-                                idx, name
-                            ))))
-                        }
-                    }
+                    let method =
+                        get_method!(*methods.get(idx).ok_or(scroll::Error::Custom(format!(
+                            "invalid method index {} for generic parameter {}",
+                            idx, name
+                        )))?);
+
+                    method
+                        .generic_parameters
+                        .push(make_generic!(method_type_idx));
                 }
                 TypeOrMethodDef::Null => {
                     return Err(CLI(scroll::Error::Custom(format!(
@@ -895,7 +766,7 @@ impl<'a> DLL<'a> {
                     marshal: None,
                 });
 
-                get_method!(m_idx).parameter_metadata[meta_idx] = param_val;
+                get_method!(methods[m_idx]).parameter_metadata[meta_idx] = param_val;
 
                 params[p_idx] = (m_idx, meta_idx);
             }
@@ -918,7 +789,7 @@ impl<'a> DLL<'a> {
                 },
                 HasFieldMarshal::Param(i) => match params.get(i) {
                     Some(&(m_idx, p_idx)) => {
-                        get_method!(m_idx).parameter_metadata[p_idx]
+                        get_method!(methods[m_idx]).parameter_metadata[p_idx]
                             .as_mut()
                             .unwrap()
                             .marshal = value;
@@ -974,15 +845,28 @@ impl<'a> DLL<'a> {
 
         // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
         // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
-        // TODO: indices for owned methods if anything needs to come after this stage
         macro_rules! extract_method {
-            ($parent:ident, $type_idx:ident, $internal_idx:ident) => {{
-                for (t_idx, i_idx) in methods.iter_mut() {
-                    if *t_idx == $type_idx && *i_idx > $internal_idx {
-                        *i_idx -= 1;
+            ($parent:ident, $idx:expr) => {{
+                let idx = $idx;
+                let internal_idx = match idx.member {
+                    MethodMemberIndex::Method(i) => i,
+                    _ => unreachable!(),
+                };
+                for MethodIndex {
+                    parent_type,
+                    member,
+                } in methods.iter_mut()
+                {
+                    if *parent_type == idx.parent_type {
+                        match member {
+                            MethodMemberIndex::Method(i_idx) if *i_idx > internal_idx => {
+                                *i_idx -= 1;
+                            }
+                            _ => {}
+                        }
                     }
                 }
-                $parent.methods.remove($internal_idx)
+                $parent.methods.remove(internal_idx)
             }};
         }
 
@@ -1002,15 +886,19 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, event.name);
 
+                let internal_idx = parent_events.len();
+
                 macro_rules! get_listener {
-                    ($l_name:literal, $flag:literal) => {{
+                    ($l_name:literal, $flag:literal, $variant:ident) => {{
                         let m = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
                             use metadata::index::HasSemantics;
                             check_bitmask!(s.semantics, $flag)
                                 && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
                         }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
-                        let (_, internal_idx) = methods[m.method.0 - 1];
-                        extract_method!(parent, type_idx, internal_idx)
+                        let m_idx = m.method.0 - 1;
+                        let method = extract_method!(parent, methods[m_idx]);
+                        methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
+                        method
                     }}
                 }
 
@@ -1018,37 +906,31 @@ impl<'a> DLL<'a> {
                     attributes: vec![],
                     name,
                     delegate_type: convert::member_type_idx(event.event_type, &ctx)?,
-                    add_listener: get_listener!("add", 0x8),
-                    remove_listener: get_listener!("remove", 0x10),
+                    add_listener: get_listener!("add", 0x8, EventAdd),
+                    remove_listener: get_listener!("remove", 0x10, EventRemove),
                     raise_event: None,
                     other: vec![],
                     special_name: check_bitmask!(event.event_flags, 0x200),
                     runtime_special_name: check_bitmask!(event.event_flags, 0x400),
                 });
-                events[e_idx] = (type_idx, parent_events.len() - 1);
+                events[e_idx] = (type_idx, internal_idx);
             }
         }
 
         for s in tables.method_semantics.iter() {
             use metadata::index::HasSemantics;
 
-            let m_idx = s.method.0 - 1;
-            let &(type_idx, internal_method_idx) =
-                methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
-                    "invalid method index {} for method semantics",
-                    m_idx
-                )))?;
+            let raw_idx = s.method.0 - 1;
+            let method_idx = *methods.get(raw_idx).ok_or(scroll::Error::Custom(format!(
+                "invalid method index {} for method semantics",
+                raw_idx
+            )))?;
 
-            let parent = &mut types[type_idx];
-            if internal_method_idx >= parent.methods.len() {
-                return Err(CLI(scroll::Error::Custom(format!(
-                    "invalid method index {} for type {}",
-                    internal_method_idx,
-                    parent.type_name()
-                ))));
-            }
+            let parent = &mut types[method_idx.parent_type];
 
-            let new_meth = extract_method!(parent, type_idx, internal_method_idx);
+            let new_meth = extract_method!(parent, method_idx);
+
+            let member_idx = &mut methods[raw_idx].member;
 
             match s.association {
                 HasSemantics::Event(i) => {
@@ -1059,8 +941,13 @@ impl<'a> DLL<'a> {
 
                     if check_bitmask!(s.semantics, 0x20) {
                         event.raise_event = Some(new_meth);
+                        *member_idx = MethodMemberIndex::EventRaise(internal_idx);
                     } else if check_bitmask!(s.semantics, 0x4) {
                         event.other.push(new_meth);
+                        *member_idx = MethodMemberIndex::EventOther {
+                            event: internal_idx,
+                            other: event.other.len() - 1,
+                        };
                     }
                 }
                 HasSemantics::Property(i) => {
@@ -1071,10 +958,16 @@ impl<'a> DLL<'a> {
 
                     if check_bitmask!(s.semantics, 0x1) {
                         property.setter = Some(new_meth);
+                        *member_idx = MethodMemberIndex::PropertySetter(internal_idx);
                     } else if check_bitmask!(s.semantics, 0x2) {
                         property.getter = Some(new_meth);
+                        *member_idx = MethodMemberIndex::PropertyGetter(internal_idx);
                     } else if check_bitmask!(s.semantics, 0x4) {
                         property.other.push(new_meth);
+                        *member_idx = MethodMemberIndex::PropertyOther {
+                            property: internal_idx,
+                            other: property.other.len() - 1,
+                        };
                     }
                 }
                 HasSemantics::Null => {
@@ -1083,6 +976,145 @@ impl<'a> DLL<'a> {
                     )));
                 }
             }
+        }
+
+        let mut method_map = HashMap::new();
+        let method_refs = tables
+            .member_ref
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| {
+                use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
+                use members::*;
+                use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+
+                match sig_blob.pread_with::<MethodRefSig>(0, ()) {
+                    Ok(ref_sig) => {
+                        let mut signature =
+                            filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
+                        if signature.calling_convention == CallingConvention::Vararg {
+                            signature.varargs = Some(filter_map_try!(ref_sig
+                                .varargs
+                                .into_iter()
+                                .map(|p| convert::parameter(p, &ctx))
+                                .collect::<Result<_>>()));
+                        }
+
+                        Some(Ok((
+                            idx,
+                            ExternalMethodReference {
+                                attributes: vec![],
+                                parent: match r.class {
+                                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeDef(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeRef(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(
+                                        filter_map_try!(convert::method_type_source(
+                                            TypeDefOrRef::TypeSpec(i),
+                                            &ctx
+                                        )),
+                                    ),
+                                    MemberRefParent::ModuleRef(i) => {
+                                        let idx = i - 1;
+                                        MethodReferenceParent::Module(Rc::clone(filter_map_try!(
+                                            module_refs.get(idx).ok_or(CLI(scroll::Error::Custom(
+                                                format!(
+                                                "bad module ref index {} for method reference {}",
+                                                idx, name
+                                            )
+                                            )))
+                                        )))
+                                    }
+                                    MemberRefParent::MethodDef(i) => {
+                                        let idx = i - 1;
+                                        MethodReferenceParent::VarargMethod(*filter_map_try!(
+                                            methods.get(idx).ok_or(CLI(scroll::Error::Custom(
+                                                format!(
+                                                "bad method def index {} for method reference {}",
+                                                idx, name
+                                            )
+                                            )))
+                                        ))
+                                    }
+                                    MemberRefParent::Null => {
+                                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                                            "invalid null parent index for method reference {}",
+                                            name
+                                        )))))
+                                    }
+                                },
+                                name,
+                                signature,
+                            },
+                        )))
+                    }
+                    Err(_) => None,
+                }
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .enumerate()
+            .map(|(current_idx, (orig_idx, r))| {
+                method_map.insert(orig_idx, current_idx);
+                Rc::new(r)
+            })
+            .collect::<Vec<_>>();
+
+        for i in tables.method_impl.iter() {
+            use members::*;
+            use metadata::index::MethodDefOrRef;
+            use types::*;
+
+            let idx = i.class.0 - 1;
+            let t = types.get_mut(idx).ok_or(scroll::Error::Custom(format!(
+                "invalid parent type index {} for method override",
+                idx
+            )))?;
+
+            macro_rules! build_method {
+                ($idx:expr, $name:literal) => {
+                    match $idx {
+                        MethodDefOrRef::MethodDef(i) => {
+                            let m_idx = i - 1;
+                            UserMethod::Definition(*methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
+                                "invalid method index {} for method override {} in type {}",
+                                m_idx, $name, t.name
+                            )))?)
+                        }
+                        MethodDefOrRef::MemberRef(i) => {
+                            let r_idx = i - 1;
+                            let &m_idx = method_map.get(&r_idx).ok_or(scroll::Error::Custom(format!(
+                                "invalid member reference index {} for method override {} in type {}",
+                                r_idx, $name, t.name
+                            )))?;
+                            UserMethod::Reference(Rc::clone(&method_refs[m_idx]))
+                        }
+                        MethodDefOrRef::Null => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid null {} index for method override in type {}",
+                                $name, t.name
+                            ))))
+                        }
+                    }
+                }
+            }
+
+            t.overrides.push(MethodOverride {
+                implementation: build_method!(i.method_body, "implementation"),
+                declaration: build_method!(i.method_declaration, "declaration"),
+            });
         }
 
         Ok(Resolution {

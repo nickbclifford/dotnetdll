@@ -1,14 +1,16 @@
+use std::{
+    fmt::{Display, Formatter, Write},
+    rc::Rc,
+};
+
+use crate::binary::signature::encoded::ArrayShape;
+use crate::resolution::Resolution;
+
 use super::{
     assembly,
     attribute::{Attribute, SecurityDeclaration},
     generic::{show_constraints, TypeGeneric},
     members, module, signature, ResolvedDebug,
-};
-use crate::{binary::signature::encoded::ArrayShape, dll::Resolution};
-
-use std::{
-    fmt::{Display, Formatter, Write},
-    rc::Rc,
 };
 
 #[derive(Debug)]

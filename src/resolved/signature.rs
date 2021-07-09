@@ -1,7 +1,7 @@
 use super::types::{CustomTypeModifier, MethodType};
 use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
+use crate::resolution::Resolution;
 use crate::resolved::ResolvedDebug;
-use crate::dll::Resolution;
 
 #[derive(Debug, Clone)]
 pub enum ParameterType {
@@ -15,7 +15,7 @@ impl ResolvedDebug for ParameterType {
         match self {
             Value(t) => t.show(res),
             Ref(t) => format!("ref {}", t.show(res)),
-            TypedReference => "System.TypedReference".to_string()
+            TypedReference => "System.TypedReference".to_string(),
         }
     }
 }
@@ -24,10 +24,7 @@ impl ResolvedDebug for ParameterType {
 pub struct Parameter(pub Option<CustomTypeModifier>, pub ParameterType);
 
 #[derive(Debug, Clone)]
-pub struct ReturnType(
-    pub Option<CustomTypeModifier>,
-    pub Option<ParameterType>,
-);
+pub struct ReturnType(pub Option<CustomTypeModifier>, pub Option<ParameterType>);
 
 #[derive(Debug, Clone)]
 pub struct MethodSignature<CallConv> {

@@ -1,5 +1,5 @@
 use super::{attribute::Attribute, types, ResolvedDebug};
-use crate::dll::Resolution;
+use crate::resolution::Resolution;
 
 #[derive(Debug)]
 pub enum Variance {
