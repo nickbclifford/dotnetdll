@@ -14,16 +14,36 @@ use crate::binary::metadata::index::TypeDefOrRef;
 use scroll::Pread;
 
 pub struct Context<'a> {
+    pub def_len: usize,
+    pub ref_len: usize,
     pub specs: &'a Vec<TypeSpec>,
     pub blobs: &'a Blob<'a>,
 }
 
-pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec) -> Result<UserType> {
+pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -> Result<UserType> {
     use index::TokenTarget::*;
     let idx = token.index - 1;
     match token.target {
-        Table(Kind::TypeDef) => Ok(UserType::Definition(idx)),
-        Table(Kind::TypeRef) => Ok(UserType::Reference(idx)),
+        Table(Kind::TypeDef) => {
+            if idx < ctx.def_len {
+                Ok(UserType::Definition(idx))
+            } else {
+                Err(format!(
+                    "invalid type definition index {} for user type",
+                    idx
+                ))
+            }
+        }
+        Table(Kind::TypeRef) => {
+            if idx < ctx.ref_len {
+                Ok(UserType::Reference(idx))
+            } else {
+                Err(format!(
+                    "invalid type reference index {} for user type",
+                    idx
+                ))
+            }
+        }
         bad => Err(format!(
             "bad metadata token target {:?} for a user type",
             bad
@@ -32,10 +52,10 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec) -> Result<UserTy
     .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
 }
 
-pub fn custom_modifier(src: CustomMod) -> Result<CustomTypeModifier> {
+pub fn custom_modifier(src: CustomMod, ctx: &Context) -> Result<CustomTypeModifier> {
     Ok(match src {
-        CustomMod::Required(t) => CustomTypeModifier::Required(user_type(t)?),
-        CustomMod::Optional(t) => CustomTypeModifier::Optional(user_type(t)?),
+        CustomMod::Required(t) => CustomTypeModifier::Required(user_type(t, ctx)?),
+        CustomMod::Optional(t) => CustomTypeModifier::Optional(user_type(t, ctx)?),
     })
 }
 
@@ -65,14 +85,14 @@ fn base_type_sig<'a, T>(
         String => BaseType::String,
         Array(t, shape) => BaseType::Array(enclosing(*t, ctx)?, shape),
         SzArray(cmod, t) => BaseType::Vector(
-            opt_map_try!(cmod, |c| custom_modifier(c)),
+            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
             enclosing(*t, ctx)?,
         ),
         Ptr(cmod, pt) => BaseType::ValuePointer(
-            opt_map_try!(cmod, |c| custom_modifier(c)),
+            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
             opt_map_try!(*pt, |t| enclosing(t, ctx)),
         ),
-        Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok)?)),
+        Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok, ctx)?)),
         FnPtrDef(d) => BaseType::FunctionPointer(managed_method(*d, ctx)?),
         FnPtrRef(r) => {
             let mut new_sig = managed_method(r.method_def, ctx)?;
@@ -86,7 +106,7 @@ fn base_type_sig<'a, T>(
         }
         GenericInstClass(tok, types) | GenericInstValueType(tok, types) => {
             BaseType::Type(TypeSource::Generic(GenericInstantiation {
-                base: user_type(tok)?,
+                base: user_type(tok, ctx)?,
                 parameters: types
                     .into_iter()
                     .map(|t| enclosing(t, ctx))
@@ -117,89 +137,87 @@ pub fn method_type_sig(sig: Type, ctx: &Context) -> Result<MethodType> {
     })
 }
 
-pub fn member_type_idx(idx: index::TypeDefOrRef, ctx: &Context) -> Result<MemberType> {
-    match idx {
-        TypeDefOrRef::TypeDef(i) => Ok(MemberType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Definition(i - 1)),
-        )))),
-        TypeDefOrRef::TypeRef(i) => Ok(MemberType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Reference(i - 1)),
-        )))),
-        TypeDefOrRef::TypeSpec(i) => member_type_sig(
-            ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?,
-            ctx,
-        ),
-        TypeDefOrRef::Null => Err(DLLError::CLI(scroll::Error::Custom(
-            "invalid null type index".to_string(),
-        ))),
-    }
+macro_rules! def_type_idx {
+    (fn $name:ident uses $sig:ident -> $t:ident) => {
+        pub fn $name(idx: index::TypeDefOrRef, ctx: &Context) -> Result<$t> {
+            match idx {
+                TypeDefOrRef::TypeDef(i) => {
+                    let idx = i - 1;
+                    if idx < ctx.def_len {
+                        Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
+                            UserType::Definition(idx),
+                        )))))
+                    } else {
+                        Err(format!(
+                            "invalid type definition index {} while parsing a type",
+                            idx
+                        ))
+                    }
+                }
+                TypeDefOrRef::TypeRef(i) => {
+                    let idx = i - 1;
+                    if idx < ctx.ref_len {
+                        Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
+                            UserType::Reference(idx),
+                        )))))
+                    } else {
+                        Err(format!(
+                            "invalid type reference index {} while parsing a type",
+                            idx
+                        ))
+                    }
+                }
+                TypeDefOrRef::TypeSpec(i) => {
+                    let idx = i - 1;
+                    match ctx.specs.get(idx) {
+                        Some(s) => Ok($sig(ctx.blobs.at_index(s.signature)?.pread(0)?, ctx)?),
+                        None => Err(format!(
+                            "invalid type spec index {} while parsing a type",
+                            idx
+                        )),
+                    }
+                }
+                TypeDefOrRef::Null => Err("invalid null type index".to_string()),
+            }
+            .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
+        }
+    };
 }
 
-pub fn method_type_idx(idx: index::TypeDefOrRef, ctx: &Context) -> Result<MethodType> {
-    match idx {
-        TypeDefOrRef::TypeDef(i) => Ok(MethodType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Definition(i - 1)),
-        )))),
-        TypeDefOrRef::TypeRef(i) => Ok(MethodType::Base(Box::new(BaseType::Type(
-            TypeSource::User(UserType::Reference(i - 1)),
-        )))),
-        TypeDefOrRef::TypeSpec(i) => method_type_sig(
-            ctx.blobs.at_index(ctx.specs[i - 1].signature)?.pread(0)?,
-            ctx,
-        ),
-        TypeDefOrRef::Null => Err(DLLError::CLI(scroll::Error::Custom(
-            "invalid null type index".to_string(),
-        ))),
-    }
+def_type_idx!(fn member_type_idx uses member_type_sig -> MemberType);
+def_type_idx!(fn method_type_idx uses method_type_sig -> MethodType);
+
+macro_rules! type_source_error {
+    ($bind:ident) => {
+        Err(DLLError::CLI(scroll::Error::Custom(format!(
+            "invalid type source {:?}",
+            $bind
+        ))))
+    };
 }
 
-pub fn member_type_source(
-    idx: index::TypeDefOrRef,
-    ctx: &Context,
-) -> Result<TypeSource<MemberType>> {
-    macro_rules! error {
-        ($bind:ident) => {
-            Err(DLLError::CLI(scroll::Error::Custom(format!(
-                "invalid type source {:?}",
-                $bind
-            ))))
-        };
-    }
-    match member_type_idx(idx, ctx)? {
-        MemberType::Base(b) => match *b {
-            BaseType::Type(s) => Ok(s),
-            bad => error!(bad),
-        },
-        bad => error!(bad),
-    }
+macro_rules! def_type_source {
+    (fn $name:ident uses $idx:ident -> $t:ident) => {
+        pub fn $name(idx: index::TypeDefOrRef, ctx: &Context) -> Result<TypeSource<$t>> {
+            match $idx(idx, ctx)? {
+                $t::Base(b) => match *b {
+                    BaseType::Type(s) => Ok(s),
+                    bad => type_source_error!(bad),
+                },
+                bad => type_source_error!(bad),
+            }
+        }
+    };
 }
 
-pub fn method_type_source(
-    idx: index::TypeDefOrRef,
-    ctx: &Context,
-) -> Result<TypeSource<MethodType>> {
-    macro_rules! error {
-        ($bind:ident) => {
-            Err(DLLError::CLI(scroll::Error::Custom(format!(
-                "invalid type source {:?}",
-                $bind
-            ))))
-        };
-    }
-    match method_type_idx(idx, ctx)? {
-        MethodType::Base(b) => match *b {
-            BaseType::Type(s) => Ok(s),
-            bad => error!(bad),
-        },
-        bad => error!(bad),
-    }
-}
+def_type_source!(fn member_type_source uses member_type_idx -> MemberType);
+def_type_source!(fn method_type_source uses method_type_idx -> MethodType);
 
 pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     use signature::ParameterType::*;
 
     Ok(signature::Parameter(
-        opt_map_try!(p.0, |c| custom_modifier(c)),
+        opt_map_try!(p.0, |c| custom_modifier(c, ctx)),
         match p.1 {
             ParamType::Type(t) => Value(method_type_sig(t, ctx)?),
             ParamType::ByRef(t) => Ref(method_type_sig(t, ctx)?),
@@ -220,7 +238,7 @@ pub fn managed_method(sig: MethodDefSig, ctx: &Context) -> Result<signature::Man
             .map(|p| parameter(p, ctx))
             .collect::<Result<_>>()?,
         return_type: ReturnType(
-            opt_map_try!(sig.ret_type.0, |c| custom_modifier(c)),
+            opt_map_try!(sig.ret_type.0, |c| custom_modifier(c, ctx)),
             match sig.ret_type.1 {
                 RetTypeType::Type(t) => Some(ParameterType::Value(method_type_sig(t, ctx)?)),
                 RetTypeType::ByRef(t) => Some(ParameterType::Ref(method_type_sig(t, ctx)?)),

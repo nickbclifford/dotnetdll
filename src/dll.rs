@@ -140,7 +140,12 @@ impl<'a> DLL<'a> {
         let userstrings: UserString = self.get_heap("#US")?;
         let mut tables = self.get_logical_metadata()?.tables;
 
+        let types_len = tables.type_def.len();
+        let type_ref_len = tables.type_ref.len();
+
         let ctx = convert::Context {
+            def_len: types_len,
+            ref_len: type_ref_len,
             specs: &tables.type_spec,
             blobs: &blobs,
         };
@@ -161,6 +166,29 @@ impl<'a> DLL<'a> {
             };
         }
 
+        macro_rules! range_index {
+            (enumerated $enum:expr => range $field:ident in $table:ident, indexes $index_table:ident with len $len:ident) => {{
+                let (idx, var) = $enum;
+                let range = (var.$field.0 - 1)..(match tables.$table.get(idx + 1) {
+                    Some(r) => r.$field.0,
+                    None => $len + 1,
+                } - 1);
+                match tables.$index_table.get(range.clone()) {
+                    Some(rows) => range.zip(rows),
+                    None => {
+                        return Err(CLI(scroll::Error::Custom(format!(
+                            "invalid {} range in {} {}",
+                            stringify!($index_table),
+                            stringify!($table),
+                            idx
+                        ))))
+                    }
+                }
+            }};
+        }
+
+        use resolved::*;
+
         macro_rules! build_version {
             ($src:ident) => {
                 Version {
@@ -171,17 +199,6 @@ impl<'a> DLL<'a> {
                 }
             };
         }
-
-        macro_rules! range_index {
-            (($idx:expr, $var:expr), $field:ident, $len:expr, $table:ident) => {
-                ($var.$field.0 - 1)..(match tables.$table.get($idx + 1) {
-                    Some(r) => r.$field.0,
-                    None => $len + 1,
-                } - 1)
-            };
-        }
-
-        use resolved::*;
 
         let mut assembly = None;
         if let Some(a) = tables.assembly.first() {
@@ -279,21 +296,38 @@ impl<'a> DLL<'a> {
             .collect::<Result<Vec<_>>>()?;
 
         for n in tables.nested_class.iter() {
-            types[n.nested_class.0 - 1].encloser = Some(n.enclosing_class.0 - 1);
+            let nest_idx = n.nested_class.0 - 1;
+            match types.get_mut(nest_idx) {
+                Some(t) => {
+                    let enclose_idx = n.enclosing_class.0 - 1;
+                    if enclose_idx < types_len {
+                        t.encloser = Some(enclose_idx);
+                    } else {
+                        return Err(CLI(scroll::Error::Custom(format!(
+                            "invalid enclosing type index {} for nested class declaration of type {}",
+                            nest_idx, t.name
+                        ))));
+                    }
+                }
+                None => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid type index {} for nested class declaration",
+                        nest_idx
+                    ))))
+                }
+            }
         }
 
         let fields_len = tables.field.len();
         let method_len = tables.method_def.len();
 
-        let owned_fields = tables.type_def.iter().enumerate().map(|(idx, t)| {
-            let f_range = range_index!((idx, t), field_list, fields_len, type_def);
-            f_range.clone().zip(&tables.field[f_range])
-        });
+        let owned_fields = tables.type_def.iter().enumerate().map(|e| {
+            Ok(range_index!(enumerated e => range field_list in type_def, indexes field with len fields_len))
+        }).collect::<Result<Vec<_>>>()?;
 
-        let owned_methods = tables.type_def.iter().enumerate().map(|(idx, t)| {
-            let m_range = range_index!((idx, t), method_list, method_len, type_def);
-            m_range.clone().zip(&tables.method_def[m_range])
-        });
+        let owned_methods = tables.type_def.iter().enumerate().map(|e| {
+            Ok(range_index!(enumerated e => range method_list in type_def, indexes method_def with len method_len))
+        }).collect::<Result<Vec<_>>>()?;
 
         let files: Vec<_> = tables
             .file
@@ -308,6 +342,7 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<_>>()?;
 
+        let export_len = tables.exported_type.len();
         let exports: Vec<_> = tables
             .exported_type
             .iter()
@@ -315,24 +350,55 @@ impl<'a> DLL<'a> {
                 use metadata::index::Implementation;
                 use types::*;
 
+                let name = heap_idx!(strings, e.type_name);
                 Ok(Rc::new(ExportedType {
                     attributes: vec![],
                     flags: TypeFlags::new(e.flags, Layout::Automatic),
-                    name: heap_idx!(strings, e.type_name),
+                    name,
                     namespace: optional_idx!(strings, e.type_namespace),
                     implementation: match e.implementation {
-                        Implementation::File(f) => TypeImplementation::ModuleFile {
-                            type_def_idx: e.type_def_id as usize,
-                            file: Rc::clone(&files[f - 1]),
-                        },
-                        Implementation::AssemblyRef(a) => {
-                            TypeImplementation::TypeForwarder(Rc::clone(&assembly_refs[a - 1]))
+                        Implementation::File(f) => {
+                            let idx = f - 1;
+                            match files.get(idx) {
+                                Some(f) => TypeImplementation::ModuleFile {
+                                    type_def_idx: e.type_def_id as usize,
+                                    file: Rc::clone(f),
+                                },
+                                None => {
+                                    return Err(CLI(scroll::Error::Custom(format!(
+                                        "invalid file index {} in exported type {}",
+                                        idx, name
+                                    ))))
+                                }
+                            }
                         }
-                        Implementation::ExportedType(t) => TypeImplementation::Nested(t - 1),
+                        Implementation::AssemblyRef(a) => {
+                            let idx = a - 1;
+                            match assembly_refs.get(idx) {
+                                Some(a) => TypeImplementation::TypeForwarder(Rc::clone(a)),
+                                None => {
+                                    return Err(CLI(scroll::Error::Custom(format!(
+                                        "invalid assembly reference index {} in exported type {}",
+                                        idx, name
+                                    ))))
+                                }
+                            }
+                        }
+                        Implementation::ExportedType(t) => {
+                            let idx = t - 1;
+                            if idx < export_len {
+                                TypeImplementation::Nested(idx)
+                            } else {
+                                return Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid nested type index {} in exported type {}",
+                                    idx, name
+                                ))));
+                            }
+                        }
                         Implementation::Null => {
                             return Err(CLI(scroll::Error::Custom(format!(
                                 "invalid null implementation index for exported type {}",
-                                heap_idx!(strings, e.type_name)
+                                name
                             ))))
                         }
                     },
@@ -372,23 +438,51 @@ impl<'a> DLL<'a> {
 
                 Ok(types::ExternalTypeReference {
                     attributes: vec![],
-                    name: heap_idx!(strings, r.type_name),
-                    namespace: optional_idx!(strings, r.type_namespace),
+                    name,
+                    namespace,
                     scope: match r.resolution_scope {
                         BinRS::Module(_) => ResolutionScope::CurrentModule,
                         BinRS::ModuleRef(m) => {
-                            ResolutionScope::ExternalModule(Rc::clone(&module_refs[m - 1]))
+                            let idx = m - 1;
+                            match module_refs.get(idx) {
+                                Some(m) => ResolutionScope::ExternalModule(Rc::clone(m)),
+                                None => {
+                                    return Err(CLI(scroll::Error::Custom(format!(
+                                        "invalid module reference index {} for type reference {}",
+                                        idx, name
+                                    ))))
+                                }
+                            }
                         }
                         BinRS::AssemblyRef(a) => {
-                            ResolutionScope::Assembly(Rc::clone(&assembly_refs[a - 1]))
+                            let idx = a - 1;
+                            match assembly_refs.get(idx) {
+                                Some(a) => ResolutionScope::Assembly(Rc::clone(a)),
+                                None => {
+                                    return Err(CLI(scroll::Error::Custom(format!(
+                                        "invalid assembly reference index {} for type reference {}",
+                                        idx, name
+                                    ))))
+                                }
+                            }
                         }
-                        BinRS::TypeRef(t) => ResolutionScope::Nested(t - 1),
+                        BinRS::TypeRef(t) => {
+                            let idx = t - 1;
+                            if idx < type_ref_len {
+                                ResolutionScope::Nested(idx)
+                            } else {
+                                return Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid nested type index {} for type reference {}",
+                                    idx, name
+                                ))));
+                            }
+                        }
                         BinRS::Null => ResolutionScope::Exported(Rc::clone(
                             exports
                                 .iter()
                                 .find(|e| e.name == name && e.namespace == namespace)
                                 .ok_or(scroll::Error::Custom(format!(
-                                    "missing exported type for type ref {}",
+                                    "missing exported type for type reference {}",
                                     name
                                 )))?,
                         )),
@@ -434,7 +528,7 @@ impl<'a> DLL<'a> {
 
         // this allows us to initialize the Vec out of order, which is safe because we know that everything
         // will eventually be initialized in the end
-        // it's much simpler/efficient than trying to use a HashMap or something
+        // it's much simpler/more efficient than trying to use a HashMap or something
         macro_rules! new_with_len {
             ($name:ident, $len:ident) => {
                 let mut $name = Vec::with_capacity($len);
@@ -458,7 +552,7 @@ impl<'a> DLL<'a> {
                 parent_fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
-                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c)),
+                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c, &ctx)),
                     return_type: convert::member_type_sig(t, &ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
@@ -527,7 +621,6 @@ impl<'a> DLL<'a> {
                 use members::*;
 
                 let name = heap_idx!(strings, m.name);
-                let range = range_index!((m_idx, m), param_list, params_len, method_def);
 
                 let sig = convert::managed_method(
                     heap_idx!(blobs, m.signature).pread_with(0, ())?,
@@ -596,7 +689,13 @@ impl<'a> DLL<'a> {
                     member: MethodMemberIndex::Method(parent_methods.len() - 1),
                 };
 
-                owned_params.push((m_idx, range.clone().zip(&tables.param[range])));
+                owned_params.push((
+                    m_idx,
+                    range_index!(
+                        enumerated (m_idx, m) => range param_list in method_def,
+                        indexes param with len params_len
+                    ),
+                ));
             }
         }
 
@@ -626,35 +725,40 @@ impl<'a> DLL<'a> {
                 let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
+                let parent = match r.class {
+                    MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
+                    )),
+                    MemberRefParent::ModuleRef(i) => {
+                        let idx = i - 1;
+                        match module_refs.get(idx) {
+                            Some(m) => FieldReferenceParent::Module(m),
+                            None => {
+                                return Some(Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid module reference index {} for field reference {}",
+                                    idx, name
+                                )))))
+                            }
+                        }
+                    }
+                    bad => {
+                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                            "bad parent index {:?} for field reference {}",
+                            bad, name
+                        )))))
+                    }
+                };
+
                 match sig_blob.pread::<FieldSig>(0) {
                     Ok(field_sig) => Some(Ok(ExternalFieldReference {
                         attributes: vec![],
-                        parent: match r.class {
-                            MemberRefParent::TypeDef(i) => {
-                                FieldReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::TypeRef(i) => {
-                                FieldReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::TypeSpec(i) => {
-                                FieldReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::ModuleRef(i) => {
-                                FieldReferenceParent::Module(&module_refs[i - 1])
-                            }
-                            bad => {
-                                return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "bad parent index {:?} for field reference {}",
-                                    bad, name
-                                )))))
-                            }
-                        },
+                        parent,
                         name,
                         return_type: filter_map_try!(convert::member_type_sig(field_sig.1, &ctx)),
                     })),
@@ -799,29 +903,35 @@ impl<'a> DLL<'a> {
             let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
 
             match marshal.parent {
-                HasFieldMarshal::Field(i) => match fields.get(i) {
-                    Some(&field) => get_field!(field).marshal = value,
-                    None => {
-                        return Err(CLI(scroll::Error::Custom(format!(
-                            "bad field index {} for field marshal",
-                            i
-                        ))))
+                HasFieldMarshal::Field(i) => {
+                    let idx = i - 1;
+                    match fields.get(idx) {
+                        Some(&field) => get_field!(field).marshal = value,
+                        None => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "bad field index {} for field marshal",
+                                idx
+                            ))))
+                        }
                     }
-                },
-                HasFieldMarshal::Param(i) => match params.get(i) {
-                    Some(&(m_idx, p_idx)) => {
-                        get_method!(methods[m_idx]).parameter_metadata[p_idx]
-                            .as_mut()
-                            .unwrap()
-                            .marshal = value;
+                }
+                HasFieldMarshal::Param(i) => {
+                    let idx = i - 1;
+                    match params.get(idx) {
+                        Some(&(m_idx, p_idx)) => {
+                            get_method!(methods[m_idx]).parameter_metadata[p_idx]
+                                .as_mut()
+                                .unwrap()
+                                .marshal = value;
+                        }
+                        None => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "bad parameter index {} for field marshal",
+                                idx
+                            ))))
+                        }
                     }
-                    None => {
-                        return Err(CLI(scroll::Error::Custom(format!(
-                            "bad parameter index {} for field marshal",
-                            i
-                        ))))
-                    }
-                },
+                }
                 HasFieldMarshal::Null => {
                     return Err(CLI(scroll::Error::Custom(
                         "invalid null parent index for field marshal".to_string(),
@@ -837,10 +947,20 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.property_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let parent_props = &mut types[type_idx].properties;
+            let parent_props = match types.get_mut(type_idx) {
+                Some(t) => &mut t.properties,
+                None => {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid parent type index {} for property map {}",
+                        type_idx, map_idx
+                    ))))
+                }
+            };
 
-            let range = range_index!((map_idx, map), property_list, prop_len, property_map);
-            for (p_idx, prop) in range.clone().zip(&tables.property[range]) {
+            for (p_idx, prop) in range_index!(
+                enumerated (map_idx, map) => range property_list in property_map,
+                indexes property with len prop_len
+            ) {
                 use super::binary::signature::kinds::PropertySig;
                 use members::*;
 
@@ -853,7 +973,7 @@ impl<'a> DLL<'a> {
                     setter: None,
                     other: vec![],
                     type_modifier: opt_map_try!(sig.custom_modifier, |c| convert::custom_modifier(
-                        c
+                        c, &ctx
                     )),
                     return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
@@ -873,13 +993,9 @@ impl<'a> DLL<'a> {
                     MethodMemberIndex::Method(i) => i,
                     _ => unreachable!(),
                 };
-                for MethodIndex {
-                    parent_type,
-                    member,
-                } in methods.iter_mut()
-                {
-                    if *parent_type == idx.parent_type {
-                        match member {
+                for m in methods.iter_mut() {
+                    if m.parent_type == idx.parent_type {
+                        match &mut m.member {
                             MethodMemberIndex::Method(i_idx) if *i_idx > internal_idx => {
                                 *i_idx -= 1;
                             }
@@ -898,11 +1014,18 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let parent = &mut types[type_idx];
+            let parent = types
+                .get_mut(type_idx)
+                .ok_or(scroll::Error::Custom(format!(
+                    "invalid parent type index {} for event map {}",
+                    type_idx, map_idx
+                )))?;
             let parent_events = &mut parent.events;
 
-            let range = range_index!((map_idx, map), event_list, event_len, event_map);
-            for (e_idx, event) in range.clone().zip(&tables.event[range]) {
+            for (e_idx, event) in range_index!(
+                enumerated (map_idx, map) => range event_list in event_map,
+                indexes event with len event_len
+            ) {
                 use members::*;
 
                 let name = heap_idx!(strings, event.name);
@@ -917,9 +1040,13 @@ impl<'a> DLL<'a> {
                                 && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
                         }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
                         let m_idx = sem.method.0 - 1;
-                        let method = extract_method!(parent, methods[m_idx]);
-                        methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
-                        method
+                        if m_idx < method_len {
+                            let method = extract_method!(parent, methods[m_idx]);
+                            methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
+                            method
+                        } else {
+                            return Err(CLI(scroll::Error::Custom(format!("invalid method index {} in {} index for event {}", m_idx, $l_name, name))));
+                        }
                     }}
                 }
 
@@ -955,8 +1082,9 @@ impl<'a> DLL<'a> {
 
             match s.association {
                 HasSemantics::Event(i) => {
-                    let &(_, internal_idx) = events.get(i - 1).ok_or(scroll::Error::Custom(
-                        format!("invalid event index {} for method semantics", i),
+                    let idx = i - 1;
+                    let &(_, internal_idx) = events.get(idx).ok_or(scroll::Error::Custom(
+                        format!("invalid event index {} for method semantics", idx),
                     ))?;
                     let event = &mut parent.events[internal_idx];
 
@@ -972,8 +1100,9 @@ impl<'a> DLL<'a> {
                     }
                 }
                 HasSemantics::Property(i) => {
-                    let &(_, internal_idx) = properties.get(i - 1).ok_or(scroll::Error::Custom(
-                        format!("invalid property index {} for method semantics", i),
+                    let idx = i - 1;
+                    let &(_, internal_idx) = properties.get(idx).ok_or(scroll::Error::Custom(
+                        format!("invalid property index {} for method semantics", idx),
                     ))?;
                     let property = &mut parent.properties[internal_idx];
 
@@ -1042,23 +1171,27 @@ impl<'a> DLL<'a> {
                             }
                             MemberRefParent::ModuleRef(i) => {
                                 let idx = i - 1;
-                                MethodReferenceParent::Module(Rc::clone(filter_map_try!(
-                                    module_refs.get(idx).ok_or(CLI(scroll::Error::Custom(
-                                        format!(
+                                match module_refs.get(idx) {
+                                    Some(m) => MethodReferenceParent::Module(Rc::clone(m)),
+                                    None => {
+                                        return Some(Err(CLI(scroll::Error::Custom(format!(
                                             "bad module ref index {} for method reference {}",
                                             idx, name
-                                        )
-                                    )))
-                                )))
+                                        )))))
+                                    }
+                                }
                             }
                             MemberRefParent::MethodDef(i) => {
                                 let idx = i - 1;
-                                MethodReferenceParent::VarargMethod(*filter_map_try!(methods
-                                    .get(idx)
-                                    .ok_or(CLI(scroll::Error::Custom(format!(
-                                        "bad method def index {} for method reference {}",
-                                        idx, name
-                                    ))))))
+                                match methods.get(idx) {
+                                    Some(&m) => MethodReferenceParent::VarargMethod(m),
+                                    None => {
+                                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                                            "bad method def index {} for method reference {}",
+                                            idx, name
+                                        )))))
+                                    }
+                                }
                             }
                             MemberRefParent::Null => {
                                 return Some(Err(CLI(scroll::Error::Custom(format!(
@@ -1106,18 +1239,23 @@ impl<'a> DLL<'a> {
                     match $idx {
                         MethodDefOrRef::MethodDef(i) => {
                             let m_idx = i - 1;
-                            UserMethod::Definition(*methods.get(m_idx).ok_or(scroll::Error::Custom(format!(
-                                "invalid method index {} for method override {} in type {}",
-                                m_idx, $name, t.name
-                            )))?)
+                            match methods.get(m_idx) {
+                                Some(&m) => UserMethod::Definition(m),
+                                None => return Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid method index {} for method override {} in type {}",
+                                    m_idx, $name, t.name
+                                ))))
+                            }
                         }
                         MethodDefOrRef::MemberRef(i) => {
                             let r_idx = i - 1;
-                            let &m_idx = method_map.get(&r_idx).ok_or(scroll::Error::Custom(format!(
-                                "invalid member reference index {} for method override {} in type {}",
-                                r_idx, $name, t.name
-                            )))?;
-                            UserMethod::Reference(Rc::clone(&method_refs[m_idx]))
+                            match method_map.get(&r_idx) {
+                                Some(&m_idx) => UserMethod::Reference(Rc::clone(&method_refs[m_idx])),
+                                None => return Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid member reference index {} for method override {} in type {}",
+                                    r_idx, $name, t.name
+                                ))))
+                            }
                         }
                         MethodDefOrRef::Null => {
                             return Err(CLI(scroll::Error::Custom(format!(
