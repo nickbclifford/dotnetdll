@@ -263,9 +263,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
                     // check all valid suffixes
                     #(#normal_suffixes,)*
                     #(#composed_suffixes,)*
-                    bad => return Err(scroll::Error::Custom(
-                        format!("bad suffix instruction {:?} for prefix {}", bad, stringify!(#prefix_name))
-                    ))
+                    bad => throw!("bad suffix instruction {:?} for prefix {}", bad, stringify!(#prefix_name))
                 }
             }
         }
@@ -332,9 +330,9 @@ pub fn instructions(input: TokenStream) -> TokenStream {
                         #(#extended_parses,)*
                         // constructed prefixed instructions
                         #(#prefix_parses,)*
-                        bad => return Err(scroll::Error::Custom(format!("unknown extended opcode 0xFE {:#04x}", bad)))
+                        bad => throw!("unknown extended opcode 0xFE {:#04x}", bad)
                     },
-                    bad => return Err(scroll::Error::Custom(format!("unknown opcode {:#04x}", bad)))
+                    bad => throw!("unknown opcode {:#04x}", bad)
                 };
 
                 Ok((val, *offset))
@@ -412,7 +410,7 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
 
                 let val = match (coded & mask) as usize {
                     #(#match_arms,)*
-                    bad_tag => return Err(scroll::Error::Custom(format!("bad {} coded index tag {}", stringify!(#name), bad_tag)))
+                    bad_tag => throw!("bad {} coded index tag {}", stringify!(#name), bad_tag)
                 };
 
                 Ok((val, *offset))

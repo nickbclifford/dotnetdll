@@ -150,6 +150,12 @@ impl<'a> DLL<'a> {
             blobs: &blobs,
         };
 
+        macro_rules! throw {
+            ($($arg:tt)*) => {
+                return Err(CLI(scroll::Error::Custom(format!($($arg)*))))
+            }
+        }
+
         macro_rules! heap_idx {
             ($heap:ident, $idx:expr) => {
                 $heap.at_index($idx)?
@@ -175,14 +181,12 @@ impl<'a> DLL<'a> {
                 } - 1);
                 match tables.$index_table.get(range.clone()) {
                     Some(rows) => range.zip(rows),
-                    None => {
-                        return Err(CLI(scroll::Error::Custom(format!(
-                            "invalid {} range in {} {}",
-                            stringify!($index_table),
-                            stringify!($table),
-                            idx
-                        ))))
-                    }
+                    None => throw!(
+                        "invalid {} range in {} {}",
+                        stringify!($index_table),
+                        stringify!($table),
+                        idx
+                    ),
                 }
             }};
         }
@@ -210,12 +214,7 @@ impl<'a> DLL<'a> {
                     0x0000 => HashAlgorithm::None,
                     0x8003 => HashAlgorithm::ReservedMD5,
                     0x8004 => HashAlgorithm::SHA1,
-                    other => {
-                        return Err(CLI(scroll::Error::Custom(format!(
-                            "unrecognized assembly hash algorithm {:#06x}",
-                            other
-                        ))))
-                    }
+                    other => throw!("unrecognized assembly hash algorithm {:#06x}", other),
                 },
                 version: build_version!(a),
                 flags: Flags::new(a.flags),
@@ -303,18 +302,16 @@ impl<'a> DLL<'a> {
                     if enclose_idx < types_len {
                         t.encloser = Some(enclose_idx);
                     } else {
-                        return Err(CLI(scroll::Error::Custom(format!(
+                        throw!(
                             "invalid enclosing type index {} for nested class declaration of type {}",
                             nest_idx, t.name
-                        ))));
+                        );
                     }
                 }
-                None => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid type index {} for nested class declaration",
-                        nest_idx
-                    ))))
-                }
+                None => throw!(
+                    "invalid type index {} for nested class declaration",
+                    nest_idx
+                ),
             }
         }
 
@@ -365,10 +362,7 @@ impl<'a> DLL<'a> {
                                     file: Rc::clone(f),
                                 },
                                 None => {
-                                    return Err(CLI(scroll::Error::Custom(format!(
-                                        "invalid file index {} in exported type {}",
-                                        idx, name
-                                    ))))
+                                    throw!("invalid file index {} in exported type {}", idx, name)
                                 }
                             }
                         }
@@ -377,10 +371,11 @@ impl<'a> DLL<'a> {
                             match assembly_refs.get(idx) {
                                 Some(a) => TypeImplementation::TypeForwarder(Rc::clone(a)),
                                 None => {
-                                    return Err(CLI(scroll::Error::Custom(format!(
+                                    throw!(
                                         "invalid assembly reference index {} in exported type {}",
-                                        idx, name
-                                    ))))
+                                        idx,
+                                        name
+                                    )
                                 }
                             }
                         }
@@ -389,18 +384,17 @@ impl<'a> DLL<'a> {
                             if idx < export_len {
                                 TypeImplementation::Nested(idx)
                             } else {
-                                return Err(CLI(scroll::Error::Custom(format!(
+                                throw!(
                                     "invalid nested type index {} in exported type {}",
-                                    idx, name
-                                ))));
+                                    idx,
+                                    name
+                                );
                             }
                         }
-                        Implementation::Null => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid null implementation index for exported type {}",
-                                name
-                            ))))
-                        }
+                        Implementation::Null => throw!(
+                            "invalid null implementation index for exported type {}",
+                            name
+                        ),
                     },
                 }))
             })
@@ -446,24 +440,22 @@ impl<'a> DLL<'a> {
                             let idx = m - 1;
                             match module_refs.get(idx) {
                                 Some(m) => ResolutionScope::ExternalModule(Rc::clone(m)),
-                                None => {
-                                    return Err(CLI(scroll::Error::Custom(format!(
-                                        "invalid module reference index {} for type reference {}",
-                                        idx, name
-                                    ))))
-                                }
+                                None => throw!(
+                                    "invalid module reference index {} for type reference {}",
+                                    idx,
+                                    name
+                                ),
                             }
                         }
                         BinRS::AssemblyRef(a) => {
                             let idx = a - 1;
                             match assembly_refs.get(idx) {
                                 Some(a) => ResolutionScope::Assembly(Rc::clone(a)),
-                                None => {
-                                    return Err(CLI(scroll::Error::Custom(format!(
-                                        "invalid assembly reference index {} for type reference {}",
-                                        idx, name
-                                    ))))
-                                }
+                                None => throw!(
+                                    "invalid assembly reference index {} for type reference {}",
+                                    idx,
+                                    name
+                                ),
                             }
                         }
                         BinRS::TypeRef(t) => {
@@ -471,10 +463,11 @@ impl<'a> DLL<'a> {
                             if idx < type_ref_len {
                                 ResolutionScope::Nested(idx)
                             } else {
-                                return Err(CLI(scroll::Error::Custom(format!(
+                                throw!(
                                     "invalid nested type index {} for type reference {}",
-                                    idx, name
-                                ))));
+                                    idx,
+                                    name
+                                );
                             }
                         }
                         BinRS::Null => ResolutionScope::Exported(Rc::clone(
@@ -497,12 +490,7 @@ impl<'a> DLL<'a> {
                 Some(t) => t
                     .implements
                     .push((vec![], convert::member_type_source(i.interface, &ctx)?)),
-                None => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid type index {} for interface implementation",
-                        idx
-                    ))))
-                }
+                None => throw!("invalid type index {} for interface implementation", idx),
             }
         }
 
@@ -518,11 +506,7 @@ impl<'a> DLL<'a> {
                 0x4 => Access(Family),
                 0x5 => Access(FamilyORAssembly),
                 0x6 => Access(Public),
-                _ => {
-                    return Err(CLI(scroll::Error::Custom(
-                        "flags value 0x7 has no meaning for member accessibility".to_string(),
-                    )))
-                }
+                _ => throw!("flags value 0x7 has no meaning for member accessibility"),
             })
         }
 
@@ -584,12 +568,10 @@ impl<'a> DLL<'a> {
                 Some(&field) => {
                     get_field!(field).offset = Some(layout.offset as usize);
                 }
-                None => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "bad parent field index {} for field layout specification",
-                        idx
-                    ))));
-                }
+                None => throw!(
+                    "bad parent field index {} for field layout specification",
+                    idx
+                ),
             }
         }
 
@@ -600,12 +582,7 @@ impl<'a> DLL<'a> {
                     get_field!(field).start_of_initial_value =
                         Some(&self.buffer[rva.rva as usize..])
                 }
-                None => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "bad parent field index {} for field RVA specification",
-                        idx
-                    ))));
-                }
+                None => throw!("bad parent field index {} for field RVA specification", idx),
             }
         }
 
@@ -663,12 +640,7 @@ impl<'a> DLL<'a> {
                     body_format: match m.impl_flags & 0x3 {
                         0x0 => BodyFormat::IL,
                         0x1 => BodyFormat::Native,
-                        0x2 => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid code type value OPTIL (0x2) for method {}",
-                                name
-                            ))))
-                        }
+                        0x2 => throw!("invalid code type value OPTIL (0x2) for method {}", name),
                         0x3 => BodyFormat::Runtime,
                         _ => unreachable!(),
                     },
@@ -799,10 +771,7 @@ impl<'a> DLL<'a> {
                             0x1 => Variance::Covariant,
                             0x2 => Variance::Invariant,
                             _ => {
-                                return Err(CLI(scroll::Error::Custom(format!(
-                                    "invalid variance value 0x3 for generic parameter {}",
-                                    name
-                                ))))
+                                throw!("invalid variance value 0x3 for generic parameter {}", name)
                             }
                         },
                         special_constraint: SpecialConstraint {
@@ -833,12 +802,7 @@ impl<'a> DLL<'a> {
                     let idx = i - 1;
                     match types.get_mut(idx) {
                         Some(t) => t.generic_parameters.push(make_generic!(member_type_idx)),
-                        None => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid type index {} for generic parameter {}",
-                                idx, name
-                            ))))
-                        }
+                        None => throw!("invalid type index {} for generic parameter {}", idx, name),
                     }
                 }
                 TypeOrMethodDef::MethodDef(i) => {
@@ -854,10 +818,7 @@ impl<'a> DLL<'a> {
                         .push(make_generic!(method_type_idx));
                 }
                 TypeOrMethodDef::Null => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid null owner index for generic parameter {}",
-                        name
-                    ))))
+                    throw!("invalid null owner index for generic parameter {}", name)
                 }
             }
         }
@@ -907,12 +868,7 @@ impl<'a> DLL<'a> {
                     let idx = i - 1;
                     match fields.get(idx) {
                         Some(&field) => get_field!(field).marshal = value,
-                        None => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "bad field index {} for field marshal",
-                                idx
-                            ))))
-                        }
+                        None => throw!("bad field index {} for field marshal", idx),
                     }
                 }
                 HasFieldMarshal::Param(i) => {
@@ -924,19 +880,10 @@ impl<'a> DLL<'a> {
                                 .unwrap()
                                 .marshal = value;
                         }
-                        None => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "bad parameter index {} for field marshal",
-                                idx
-                            ))))
-                        }
+                        None => throw!("bad parameter index {} for field marshal", idx),
                     }
                 }
-                HasFieldMarshal::Null => {
-                    return Err(CLI(scroll::Error::Custom(
-                        "invalid null parent index for field marshal".to_string(),
-                    )))
-                }
+                HasFieldMarshal::Null => throw!("invalid null parent index for field marshal"),
             }
         }
 
@@ -949,12 +896,11 @@ impl<'a> DLL<'a> {
 
             let parent_props = match types.get_mut(type_idx) {
                 Some(t) => &mut t.properties,
-                None => {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid parent type index {} for property map {}",
-                        type_idx, map_idx
-                    ))))
-                }
+                None => throw!(
+                    "invalid parent type index {} for property map {}",
+                    type_idx,
+                    map_idx
+                ),
             };
 
             for (p_idx, prop) in range_index!(
@@ -1045,7 +991,7 @@ impl<'a> DLL<'a> {
                             methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
                             method
                         } else {
-                            return Err(CLI(scroll::Error::Custom(format!("invalid method index {} in {} index for event {}", m_idx, $l_name, name))));
+                            throw!("invalid method index {} in {} index for event {}", m_idx, $l_name, name);
                         }
                     }}
                 }
@@ -1120,11 +1066,7 @@ impl<'a> DLL<'a> {
                         };
                     }
                 }
-                HasSemantics::Null => {
-                    return Err(CLI(scroll::Error::Custom(
-                        "invalid null index for method semantics".to_string(),
-                    )));
-                }
+                HasSemantics::Null => throw!("invalid null index for method semantics",),
             }
         }
 
@@ -1241,28 +1183,26 @@ impl<'a> DLL<'a> {
                             let m_idx = i - 1;
                             match methods.get(m_idx) {
                                 Some(&m) => UserMethod::Definition(m),
-                                None => return Err(CLI(scroll::Error::Custom(format!(
+                                None => throw!(
                                     "invalid method index {} for method override {} in type {}",
                                     m_idx, $name, t.name
-                                ))))
+                                )
                             }
                         }
                         MethodDefOrRef::MemberRef(i) => {
                             let r_idx = i - 1;
                             match method_map.get(&r_idx) {
                                 Some(&m_idx) => UserMethod::Reference(Rc::clone(&method_refs[m_idx])),
-                                None => return Err(CLI(scroll::Error::Custom(format!(
+                                None => throw!(
                                     "invalid member reference index {} for method override {} in type {}",
                                     r_idx, $name, t.name
-                                ))))
+                                )
                             }
                         }
-                        MethodDefOrRef::Null => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid null {} index for method override in type {}",
-                                $name, t.name
-                            ))))
-                        }
+                        MethodDefOrRef::Null => throw!(
+                            "invalid null {} index for method override in type {}",
+                            $name, t.name
+                        )
                     }
                 }
             }

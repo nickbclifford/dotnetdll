@@ -6,7 +6,7 @@ use scroll::{ctx::TryFromCtx, Pread};
 use paste::paste;
 
 macro_rules! tables {
-    ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ },)+) => {
+    ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ }),+) => {
         #[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq)]
         pub enum Kind {
             $(
@@ -273,5 +273,5 @@ tables! {
     },
     TypeSpec = 0x1B {
         signature: index::Blob,
-    },
+    }
 }

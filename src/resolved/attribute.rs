@@ -9,6 +9,12 @@ use super::{
     types::*,
 };
 
+macro_rules! throw {
+    ($($arg:tt)*) => {
+        return Err(scroll::Error::Custom(format!($($arg)*)))
+    }
+}
+
 fn parse_from_type<'def, 'inst>(
     f_type: FieldOrPropType<'inst>,
     src: &'inst [u8],
@@ -68,12 +74,7 @@ fn parse_from_type<'def, 'inst>(
             let t = process_def(resolve(name)?)?;
             match parse_from_type(t, src, offset, resolution, resolve)? {
                 FixedArg::Integral(i) => FixedArg::Enum(name, i),
-                bad => {
-                    return Err(scroll::Error::Custom(format!(
-                        "bad value {:?} for enum {}",
-                        bad, name
-                    )))
-                }
+                bad => throw!("bad value {:?} for enum {}", bad, name),
             }
         }
     })
@@ -123,7 +124,7 @@ fn method_to_type<'def, 'inst>(
     resolution: &'def Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FieldOrPropType<'inst>> {
-    return match m {
+    match m {
         MethodType::Base(b) => {
             use BaseType::*;
             let t = match &**b {
@@ -137,10 +138,7 @@ fn method_to_type<'def, 'inst>(
                         }
                     }
                     TypeSource::Generic(g) => {
-                        return Err(scroll::Error::Custom(format!(
-                            "bad type {:?} in custom attribute constructor",
-                            g
-                        )))
+                        throw!("bad type {:?} in custom attribute constructor", g)
                     }
                 },
                 Boolean => FieldOrPropType::Boolean,
@@ -160,23 +158,18 @@ fn method_to_type<'def, 'inst>(
                 Vector(_, ref v) => {
                     FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?))
                 }
-                bad => {
-                    return Err(scroll::Error::Custom(format!(
-                        "bad type {:?} in custom attribute constructor",
-                        bad
-                    )))
-                }
+                bad => throw!("bad type {:?} in custom attribute constructor", bad),
             };
 
             Ok(t)
         }
-        MethodType::TypeGeneric(_) => Err(scroll::Error::Custom(
-            "type generic parameters are not allowed in custom attributes".to_string(),
-        )),
-        MethodType::MethodGeneric(_) => Err(scroll::Error::Custom(
-            "method generic parameters are not allowed in custom attributes".to_string(),
-        )),
-    };
+        MethodType::TypeGeneric(_) => {
+            throw!("type generic parameters are not allowed in custom attributes")
+        }
+        MethodType::MethodGeneric(_) => {
+            throw!("method generic parameters are not allowed in custom attributes")
+        }
+    }
 }
 
 fn parse_named<'def, 'inst>(
@@ -203,12 +196,7 @@ fn parse_named<'def, 'inst>(
         named.push(match kind {
             0x53 => NamedArg::Field(name, value),
             0x54 => NamedArg::Property(name, value),
-            bad => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad named argument tag {:#04x}",
-                    bad
-                )))
-            }
+            bad => throw!("bad named argument tag {:#04x}", bad),
         })
     }
 
@@ -235,10 +223,7 @@ impl<'a> Attribute<'a> {
 
         let prolog: u16 = bytes.gread_with(offset, scroll::LE)?;
         if prolog != 0x0001 {
-            return Err(scroll::Error::Custom(format!(
-                "bad custom attribute data prolog {:#06x}",
-                prolog
-            )));
+            throw!("bad custom attribute data prolog {:#06x}", prolog);
         }
 
         let sig = self.constructor.signature(resolution);
@@ -263,15 +248,10 @@ impl<'a> Attribute<'a> {
                     )?);
                 }
                 ParameterType::Ref(_) => {
-                    return Err(scroll::Error::Custom(
-                        "ref parameters are not allowed in custom attributes".to_string(),
-                    ))
+                    throw!("ref parameters are not allowed in custom attributes")
                 }
                 ParameterType::TypedReference => {
-                    return Err(scroll::Error::Custom(
-                        "TypedReference parameters are not allowed in custom attributes"
-                            .to_string(),
-                    ))
+                    throw!("TypedReference parameters are not allowed in custom attributes",)
                 }
             }
         }
@@ -311,10 +291,7 @@ impl<'a> SecurityDeclaration<'a> {
 
         let period: u8 = self.value.gread_with(offset, scroll::LE)?;
         if period != ('.' as u8) {
-            return Err(scroll::Error::Custom(format!(
-                "bad security permission set sentinel {:#04x}",
-                period
-            )));
+            throw!("bad security permission set sentinel {:#04x}", period);
         }
 
         let Unsigned(num_attributes) = self.value.gread(offset)?;

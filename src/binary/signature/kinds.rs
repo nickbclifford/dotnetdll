@@ -43,12 +43,7 @@ impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
             }
             0x5 => CallingConvention::Vararg,
             0x0 => CallingConvention::Default,
-            _ => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad method def kind tag {:#04x}",
-                    tag
-                )))
-            }
+            _ => throw!("bad method def kind tag {:#04x}", tag),
         };
 
         let compressed::Unsigned(param_count) = from.gread(offset)?;
@@ -150,12 +145,7 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
             3 => Thiscall,
             4 => Fastcall,
             5 => Vararg,
-            bad => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad standalone method calling convention {:#03x}",
-                    bad
-                )))
-            }
+            bad => throw!("bad standalone method calling convention {:#03x}", bad),
         };
 
         let compressed::Unsigned(param_count) = from.gread(offset)?;
@@ -209,7 +199,7 @@ impl TryFromCtx<'_> for FieldSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x6 {
-            return Err(scroll::Error::Custom(format!("bad field tag {:#04x}", tag)));
+            throw!("bad field tag {:#04x}", tag);
         }
 
         let prev_offset = *offset;
@@ -238,10 +228,7 @@ impl TryFromCtx<'_> for PropertySig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag & 0x8 != 0x8 {
-            return Err(scroll::Error::Custom(format!(
-                "bad property signature tag {:#04x}",
-                tag
-            )));
+            throw!("bad property signature tag {:#04x}", tag);
         }
 
         let has_this = check_bitmask!(tag, 0x20);
@@ -295,10 +282,7 @@ impl TryFromCtx<'_> for LocalVarSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x7 {
-            return Err(scroll::Error::Custom(format!(
-                "bad local var signature tag {:#04x}",
-                tag
-            )));
+            throw!("bad local var signature tag {:#04x}", tag);
         }
 
         let compressed::Unsigned(var_count) = from.gread(offset)?;
@@ -349,7 +333,7 @@ impl TryFromCtx<'_> for MethodSpec {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x0a {
-            return Err(scroll::Error::Custom("bad method spec tag".to_string()));
+            throw!("bad method spec tag {:#04x}", tag);
         }
 
         let compressed::Unsigned(type_count) = from.gread(offset)?;

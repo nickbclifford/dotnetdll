@@ -73,12 +73,7 @@ impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
                         "null enum name encountered when parsing custom attribute".to_string(),
                     ))?,
             ),
-            bad => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad custom attribute type tag {:#04x}",
-                    bad
-                )))
-            }
+            bad => throw!("bad custom attribute type tag {:#04x}", bad),
         };
 
         Ok((val, *offset))

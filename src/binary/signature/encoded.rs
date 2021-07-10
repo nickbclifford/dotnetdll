@@ -6,7 +6,7 @@ use paste::paste;
 use scroll::{ctx::TryFromCtx, Pread};
 
 macro_rules! element_types {
-    ($($name:ident = $val:literal,)+) => {
+    ($($name:ident = $val:literal),+) => {
         $(
             paste! {
                 pub const [<ELEMENT_TYPE_ $name>]: u8 = $val;
@@ -50,7 +50,7 @@ element_types! {
     INTERNAL = 0x21,
     MODIFIER = 0x40,
     SENTINEL = 0x41,
-    PINNED = 0x45,
+    PINNED = 0x45
 }
 
 #[derive(Debug)]
@@ -70,11 +70,7 @@ impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
                     0 => table::Kind::TypeDef,
                     1 => table::Kind::TypeRef,
                     2 => table::Kind::TypeSpec,
-                    _ => {
-                        return Err(scroll::Error::Custom(
-                            "bad token table specifier".to_string(),
-                        ))
-                    }
+                    _ => throw!("bad token table specifier 0x3"),
                 }),
                 index: (value >> 2) as usize,
             }),
@@ -142,12 +138,7 @@ impl TryFromCtx<'_> for CustomMod {
             match tag as u8 {
                 ELEMENT_TYPE_CMOD_OPT => CustomMod::Optional(token),
                 ELEMENT_TYPE_CMOD_REQD => CustomMod::Required(token),
-                _ => {
-                    return Err(scroll::Error::Custom(format!(
-                        "bad modifier tag type {:#04x}",
-                        tag
-                    )))
-                }
+                _ => throw!("bad modifier tag type {:#04x}", tag),
             },
             *offset,
         ))
@@ -239,12 +230,7 @@ impl TryFromCtx<'_> for Type {
                 match next_tag {
                     ELEMENT_TYPE_CLASS => GenericInstClass(token, types),
                     ELEMENT_TYPE_VALUETYPE => GenericInstValueType(token, types),
-                    _ => {
-                        return Err(scroll::Error::Custom(format!(
-                            "bad generic instantiation tag {:#04x}",
-                            next_tag
-                        )))
-                    }
+                    _ => throw!("bad generic instantiation tag {:#04x}", next_tag),
                 }
             }
             ELEMENT_TYPE_MVAR => {
@@ -285,12 +271,7 @@ impl TryFromCtx<'_> for Type {
                 let compressed::Unsigned(number) = from.gread(offset)?;
                 Var(number)
             }
-            _ => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad type discriminator tag {:#04x}",
-                    tag
-                )))
-            }
+            _ => throw!("bad type discriminator tag {:#04x}", tag),
         };
 
         Ok((val, *offset))
@@ -447,12 +428,7 @@ impl TryFromCtx<'_> for NativeIntrinsic {
             NATIVE_TYPE_INT => IntPtr,
             NATIVE_TYPE_UINT => UIntPtr,
             NATIVE_TYPE_FUNC => Function,
-            bad => {
-                return Err(scroll::Error::Custom(format!(
-                    "bad native instrinsic value {:#04x}",
-                    bad
-                )))
-            }
+            bad => throw!("bad native instrinsic value {:#04x}", bad),
         };
 
         Ok((val, *offset))
