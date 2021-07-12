@@ -5,6 +5,7 @@ use std::rc::Rc;
 pub struct Resolution<'a> {
     pub assembly: Option<assembly::Assembly<'a>>,
     pub assembly_references: Vec<Rc<assembly::ExternalAssemblyReference<'a>>>,
+    pub manifest_resources: Vec<resource::ManifestResource<'a>>,
     pub module: module::Module<'a>,
     pub module_references: Vec<Rc<module::ExternalModuleReference<'a>>>,
     pub type_definitions: Vec<types::TypeDefinition<'a>>,

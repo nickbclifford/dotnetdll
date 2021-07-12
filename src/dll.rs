@@ -339,6 +339,61 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<_>>()?;
 
+        let resources: Vec<_> = tables
+            .manifest_resource
+            .iter()
+            .map(|r| {
+                use metadata::index::Implementation as BinImpl;
+                use resource::*;
+
+                let name = heap_idx!(strings, r.name);
+
+                Ok(ManifestResource {
+                    attributes: vec![],
+                    offset: r.offset as usize,
+                    name,
+                    visibility: match r.flags & 0x7 {
+                        0x1 => Visibility::Public,
+                        0x2 => Visibility::Private,
+                        bad => throw!(
+                            "invalid visibility {:#03x} for manifest resource {}",
+                            bad,
+                            name
+                        ),
+                    },
+                    implementation: match r.implementation {
+                        BinImpl::File(f) => {
+                            let idx = f - 1;
+                            match files.get(idx) {
+                                Some(f) => Some(Implementation::File(Rc::clone(f))),
+                                None => throw!(
+                                    "invalid file index {} for manifest resource {}",
+                                    idx,
+                                    name
+                                ),
+                            }
+                        }
+                        BinImpl::AssemblyRef(a) => {
+                            let idx = a - 1;
+                            match assembly_refs.get(idx) {
+                                Some(a) => Some(Implementation::Assembly(Rc::clone(a))),
+                                None => throw!(
+                                    "invalid assembly reference index {} for manifest resource {}",
+                                    idx,
+                                    name
+                                ),
+                            }
+                        }
+                        BinImpl::ExportedType(_) => throw!(
+                            "exported type indices are invalid in manifest resource implementations (found in resource {})",
+                            name
+                        ),
+                        BinImpl::Null => None
+                    },
+                })
+            })
+            .collect::<Result<_>>()?;
+
         let export_len = tables.exported_type.len();
         let exports: Vec<_> = tables
             .exported_type
@@ -783,7 +838,7 @@ impl<'a> DLL<'a> {
             *parent = Some(SecurityDeclaration {
                 attributes: vec![],
                 action: s.action,
-                value: heap_idx!(blobs, s.permission_set)
+                value: heap_idx!(blobs, s.permission_set),
             });
         }
 
@@ -1249,6 +1304,7 @@ impl<'a> DLL<'a> {
         Ok(Resolution {
             assembly,
             assembly_references: assembly_refs,
+            manifest_resources: resources,
             module,
             module_references: module_refs,
             type_definitions: types,
