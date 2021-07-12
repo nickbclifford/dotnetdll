@@ -266,13 +266,13 @@ impl<'a> Attribute<'a> {
 }
 
 // we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
-// it's not really possible to use those unless you're writing raw metadata though so we'll ignore them
+// it's not really possible to use those unless you're writing raw metadata though so we'll ignore them (for now)
 
 #[derive(Debug)]
 pub struct SecurityDeclaration<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub action: u16,
-    value: &'a [u8],
+    pub(crate) value: &'a [u8],
 }
 
 #[derive(Debug)]

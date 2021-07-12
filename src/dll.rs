@@ -754,6 +754,39 @@ impl<'a> DLL<'a> {
             }};
         }
 
+        for (idx, s) in tables.decl_security.iter().enumerate() {
+            use attribute::*;
+            use metadata::index::HasDeclSecurity;
+
+            let parent = match s.parent {
+                HasDeclSecurity::TypeDef(t) => {
+                    let t_idx = t - 1;
+                    match types.get_mut(t_idx) {
+                        Some(t) => &mut t.security,
+                        None => throw!("invalid type parent index {} for security declaration {}", t_idx, idx)
+                    }
+                }
+                HasDeclSecurity::MethodDef(m) => {
+                    let m_idx = m - 1;
+                    match methods.get(m_idx) {
+                        Some(&m) => &mut get_method!(m).security,
+                        None => throw!("invalid method parent index {} for security declaration {}", m_idx, idx)
+                    }
+                }
+                HasDeclSecurity::Assembly(_) => match &mut assembly {
+                    Some(a) => &mut a.security,
+                    None => throw!("invalid assembly parent index for security declaration {} when no assembly exists in the current module", idx)
+                }
+                HasDeclSecurity::Null => throw!("invalid null parent index for security declaration {}", idx)
+            };
+
+            *parent = Some(SecurityDeclaration {
+                attributes: vec![],
+                action: s.action,
+                value: heap_idx!(blobs, s.permission_set)
+            });
+        }
+
         for (idx, p) in tables.generic_param.iter().enumerate() {
             use generic::*;
             use metadata::index::TypeOrMethodDef;
