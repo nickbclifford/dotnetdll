@@ -1,7 +1,7 @@
 use std::{
+    cell::RefCell,
     fmt::{Display, Formatter, Write},
     rc::Rc,
-    cell::RefCell
 };
 
 use crate::binary::signature::encoded::ArrayShape;

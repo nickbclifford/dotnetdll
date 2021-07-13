@@ -542,15 +542,22 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        for i in tables.interface_impl.iter() {
-            let idx = i.class.0 - 1;
-            match types.get_mut(idx) {
-                Some(t) => t
-                    .implements
-                    .push((vec![], convert::member_type_source(i.interface, &ctx)?)),
-                None => throw!("invalid type index {} for interface implementation", idx),
-            }
-        }
+        let interface_idxs = tables
+            .interface_impl
+            .iter()
+            .map(|i| {
+                let idx = i.class.0 - 1;
+                match types.get_mut(idx) {
+                    Some(t) => {
+                        t.implements
+                            .push((vec![], convert::member_type_source(i.interface, &ctx)?));
+
+                        Ok((idx, t.implements.len() - 1))
+                    }
+                    None => throw!("invalid type index {} for interface implementation", idx),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
             use members::Accessibility::*;
@@ -600,7 +607,7 @@ impl<'a> DLL<'a> {
                     static_member: check_bitmask!(f.flags, 0x10),
                     init_only: check_bitmask!(f.flags, 0x20),
                     literal: check_bitmask!(f.flags, 0x40),
-                    default: None,
+                    default: None, // TODO
                     not_serialized: check_bitmask!(f.flags, 0x80),
                     special_name: check_bitmask!(f.flags, 0x200),
                     pinvoke: check_bitmask!(f.flags, 0x2000),
@@ -666,15 +673,7 @@ impl<'a> DLL<'a> {
                 parent_methods.push(Method {
                     attributes: vec![],
                     name,
-                    body: Some(body::Method {
-                        header: body::Header {
-                            initialize_locals: false,
-                            maximum_stack_size: 0,
-                            local_variables: vec![],
-                        },
-                        body: vec![],
-                        data_sections: vec![],
-                    }),
+                    body: None, // TODO
                     signature: sig,
                     accessibility: member_accessibility(m.flags)?,
                     generic_parameters: vec![],
@@ -691,7 +690,7 @@ impl<'a> DLL<'a> {
                     strict: check_bitmask!(m.flags, 0x200),
                     abstract_member: check_bitmask!(m.flags, 0x400),
                     special_name: check_bitmask!(m.flags, 0x800),
-                    pinvoke: None,
+                    pinvoke: None, // TODO
                     runtime_special_name: check_bitmask!(m.flags, 0x1000),
                     security: None,
                     require_sec_object: check_bitmask!(m.flags, 0x8000),
@@ -884,7 +883,7 @@ impl<'a> DLL<'a> {
                     is_in: check_bitmask!(param.flags, 0x1),
                     is_out: check_bitmask!(param.flags, 0x2),
                     optional: check_bitmask!(param.flags, 0x10),
-                    default: None,
+                    default: None, // TODO
                     marshal: None,
                 });
 
@@ -960,7 +959,7 @@ impl<'a> DLL<'a> {
                     return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
-                    default: None,
+                    default: None, // TODO
                 });
                 properties[p_idx] = (type_idx, parent_props.len() - 1);
             }
@@ -1363,6 +1362,29 @@ impl<'a> DLL<'a> {
                 value: optional_idx!(blobs, a.value),
             };
 
+            // panicking indexers after the indexes from the attribute are okay here,
+            // since they've already been checked during resolution
+
+            macro_rules! at_generic {
+                ($g:expr) => {{
+                    use metadata::index::TypeOrMethodDef;
+                    let g = $g;
+                    match g.owner {
+                        TypeOrMethodDef::TypeDef(t) => {
+                            res.type_definitions[t - 1].generic_parameters[g.number as usize]
+                                .attributes
+                                .push(attr);
+                        }
+                        TypeOrMethodDef::MethodDef(m) => {
+                            res[methods[m - 1]].generic_parameters[g.number as usize]
+                                .attributes
+                                .push(attr);
+                        }
+                        TypeOrMethodDef::Null => unreachable!(),
+                    }
+                }};
+            }
+
             match a.parent {
                 MethodDef(i) => {
                     let m_idx = i - 1;
@@ -1426,7 +1448,18 @@ impl<'a> DLL<'a> {
                         ),
                     }
                 }
-                InterfaceImpl(_) => {} // TODO
+                InterfaceImpl(i) => {
+                    let i_idx = i - 1;
+
+                    match interface_idxs.get(i_idx) {
+                        Some(&(parent, internal)) => res.type_definitions[parent].implements[internal].0.push(attr),
+                        None => throw!(
+                            "invalid interface implementation index {} for parent of custom attribute {}",
+                            i_idx,
+                            idx
+                        )
+                    }
+                }
                 MemberRef(i) => {
                     let m_idx = i - 1;
 
@@ -1443,7 +1476,25 @@ impl<'a> DLL<'a> {
                     }
                 }
                 Module(_) => res.module.attributes.push(attr),
-                DeclSecurity(_) => {} // TODO
+                DeclSecurity(i) => {
+                    use metadata::index::HasDeclSecurity;
+
+                    let s_idx = i - 1;
+
+                    match tables.decl_security.get(s_idx) {
+                        Some(s) => match s.parent {
+                            HasDeclSecurity::TypeDef(t) => res.type_definitions[t - 1].security.as_mut().unwrap().attributes.push(attr),
+                            HasDeclSecurity::MethodDef(m) => res[methods[m - 1]].security.as_mut().unwrap().attributes.push(attr),
+                            HasDeclSecurity::Assembly(_) => res.assembly.as_mut().and_then(|a| a.security.as_mut()).unwrap().attributes.push(attr),
+                            HasDeclSecurity::Null => unreachable!()
+                        },
+                        None => throw!(
+                            "invalid security declaration index {} for parent of custom attribute {}",
+                            s_idx,
+                            idx
+                        )
+                    }
+                }
                 Property(i) => {
                     let p_idx = i - 1;
 
@@ -1542,8 +1593,30 @@ impl<'a> DLL<'a> {
                         )
                     }
                 }
-                GenericParam(_) => {} // TODO
-                GenericParamConstraint(_) => {} // TODO
+                GenericParam(i) => {
+                    let g_idx = i - 1;
+
+                    match tables.generic_param.get(g_idx) {
+                        Some(g) => at_generic!(g),
+                        None => throw!(
+                            "invalid generic parameter index {} for parent of custom attribute {}",
+                            g_idx,
+                            idx
+                        )
+                    }
+                }
+                GenericParamConstraint(i) => {
+                    let g_idx = i - 1;
+
+                    match tables.generic_param_constraint.get(g_idx) {
+                        Some(c) => at_generic!(tables.generic_param[c.owner.0 - 1]),
+                        None => throw!(
+                            "invalid generic constraint index {} for parent of custom attribute {}",
+                            g_idx,
+                            idx
+                        )
+                    }
+                }
                 MethodSpec(_) => {} // TODO
                 StandAloneSig(_) => {
                     eprintln!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
