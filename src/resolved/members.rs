@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     fmt::{Display, Formatter, Write},
     rc::Rc,
 };
@@ -76,7 +77,7 @@ impl ResolvedDebug for Field<'_> {
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
     Type(TypeSource<MethodType>),
-    Module(&'a ExternalModuleReference<'a>),
+    Module(Rc<RefCell<ExternalModuleReference<'a>>>),
 }
 
 #[derive(Debug)]
@@ -299,7 +300,7 @@ pub struct PInvoke<'a> {
 #[derive(Debug)]
 pub enum MethodReferenceParent<'a> {
     Type(TypeSource<MethodType>),
-    Module(Rc<ExternalModuleReference<'a>>),
+    Module(Rc<RefCell<ExternalModuleReference<'a>>>),
     VarargMethod(MethodIndex),
 }
 
@@ -315,7 +316,7 @@ name_display!(ExternalMethodReference<'_>);
 #[derive(Debug, Clone)]
 pub enum UserMethod<'a> {
     Definition(MethodIndex),
-    Reference(Rc<ExternalMethodReference<'a>>),
+    Reference(Rc<RefCell<ExternalMethodReference<'a>>>),
 }
 impl ResolvedDebug for UserMethod<'_> {
     fn show(&self, res: &Resolution) -> String {
@@ -326,11 +327,12 @@ impl ResolvedDebug for UserMethod<'_> {
 
         match self {
             UserMethod::Definition(i) => full_method_name(i),
-            UserMethod::Reference(r) => {
+            UserMethod::Reference(rc) => {
+                let r = rc.borrow();
                 use MethodReferenceParent::*;
                 match &r.parent {
                     Type(t) => format!("{}.{}", t.show(res), r.name),
-                    Module(m) => format!("{}.{}", m.name, r.name),
+                    Module(m) => format!("{}.{}", m.borrow().name, r.name),
                     VarargMethod(i) => format!(
                         "{} as vararg specialization for {}",
                         r.name,
@@ -338,14 +340,6 @@ impl ResolvedDebug for UserMethod<'_> {
                     ),
                 }
             }
-        }
-    }
-}
-impl<'a> UserMethod<'a> {
-    pub fn signature(&'a self, res: &'a Resolution) -> &'a signature::ManagedMethod {
-        match self {
-            UserMethod::Definition(i) => &res[*i].signature,
-            UserMethod::Reference(r) => &r.signature,
         }
     }
 }

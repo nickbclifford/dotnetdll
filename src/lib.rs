@@ -36,6 +36,10 @@ mod tests {
         let r = dll.resolve()?;
 
         for t in r.type_definitions.iter() {
+            for a in t.attributes.iter() {
+                println!("[{}(...)]", a.constructor.show(&r))
+            }
+
             println!("{} {{", t.show(&r));
 
             println!(

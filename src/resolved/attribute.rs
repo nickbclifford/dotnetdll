@@ -120,14 +120,14 @@ fn process_def<'def, 'inst>(
 }
 
 fn method_to_type<'def, 'inst>(
-    m: &'def MethodType,
+    m: MethodType,
     resolution: &'def Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FieldOrPropType<'inst>> {
     match m {
         MethodType::Base(b) => {
             use BaseType::*;
-            let t = match &**b {
+            let t = match *b {
                 Type(ts) => match ts {
                     TypeSource::User(t) => {
                         let name = t.type_name(resolution);
@@ -155,7 +155,7 @@ fn method_to_type<'def, 'inst>(
                 Float64 => FieldOrPropType::Float64,
                 String => FieldOrPropType::String,
                 Object => FieldOrPropType::Object,
-                Vector(_, ref v) => {
+                Vector(_, v) => {
                     FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?))
                 }
                 bad => throw!("bad type {:?} in custom attribute constructor", bad),
@@ -206,14 +206,14 @@ fn parse_named<'def, 'inst>(
 #[derive(Debug, Clone)]
 pub struct Attribute<'a> {
     pub constructor: members::UserMethod<'a>,
-    value: Option<&'a [u8]>,
+    pub(crate) value: Option<&'a [u8]>,
 }
 
 impl<'a> Attribute<'a> {
     pub fn instantiation_data(
-        &self,
+        &'a self,
         resolver: &impl Resolver,
-        resolution: &Resolution,
+        resolution: &'a Resolution<'a>,
     ) -> Result<CustomAttributeData<'a>> {
         let bytes = self.value.ok_or(scroll::Error::Custom(
             "null data for custom attribute".to_string(),
@@ -226,9 +226,14 @@ impl<'a> Attribute<'a> {
             throw!("bad custom attribute data prolog {:#06x}", prolog);
         }
 
-        let sig = self.constructor.signature(resolution);
+        use members::UserMethod;
 
-        let mut fixed = Vec::with_capacity(sig.parameters.len());
+        let params = match &self.constructor {
+            UserMethod::Definition(m) => resolution[*m].signature.parameters.clone(),
+            UserMethod::Reference(r) => r.borrow().signature.parameters.clone(),
+        };
+
+        let mut fixed = Vec::with_capacity(params.len());
 
         let resolve = |s: &str| {
             resolver
@@ -236,7 +241,7 @@ impl<'a> Attribute<'a> {
                 .map_err(|e| scroll::Error::Custom(e.to_string()))
         };
 
-        for Parameter(_, param) in sig.parameters.iter() {
+        for Parameter(_, param) in params.into_iter() {
             match param {
                 ParameterType::Value(p_type) => {
                     fixed.push(parse_from_type(
@@ -284,7 +289,7 @@ pub struct SecurityAttributeData<'a> {
 impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
         &self,
-        resolution: &Resolution,
+        resolution: &'a Resolution<'a>,
         resolver: &impl Resolver,
     ) -> Result<Vec<SecurityAttributeData<'a>>> {
         let offset = &mut 0;

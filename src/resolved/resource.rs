@@ -1,10 +1,10 @@
 use super::{assembly, attribute::Attribute, module};
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Debug)]
 pub enum Implementation<'a> {
-    File(Rc<module::File<'a>>),
-    Assembly(Rc<assembly::ExternalAssemblyReference<'a>>),
+    File(Rc<RefCell<module::File<'a>>>),
+    Assembly(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
 }
 
 #[derive(Debug)]

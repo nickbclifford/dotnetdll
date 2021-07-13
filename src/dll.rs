@@ -17,7 +17,7 @@ use object::{
     },
 };
 use scroll::{Error as ScrollError, Pread};
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use DLLError::*;
 
 #[derive(Debug)]
@@ -231,7 +231,7 @@ impl<'a> DLL<'a> {
             .map(|a| {
                 use assembly::*;
 
-                Ok(Rc::new(ExternalAssemblyReference {
+                Ok(Rc::new(RefCell::new(ExternalAssemblyReference {
                     attributes: vec![],
                     version: build_version!(a),
                     flags: Flags::new(a.flags),
@@ -239,7 +239,7 @@ impl<'a> DLL<'a> {
                     name: heap_idx!(strings, a.name),
                     culture: optional_idx!(strings, a.culture),
                     hash_value: optional_idx!(blobs, a.hash_value),
-                }))
+                })))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -330,12 +330,12 @@ impl<'a> DLL<'a> {
             .file
             .iter()
             .map(|f| {
-                Ok(Rc::new(module::File {
+                Ok(Rc::new(RefCell::new(module::File {
                     attributes: vec![],
                     has_metadata: !check_bitmask!(f.flags, 0x0001),
                     name: heap_idx!(strings, f.name),
                     hash_value: heap_idx!(blobs, f.hash_value),
-                }))
+                })))
             })
             .collect::<Result<_>>()?;
 
@@ -403,7 +403,7 @@ impl<'a> DLL<'a> {
                 use types::*;
 
                 let name = heap_idx!(strings, e.type_name);
-                Ok(Rc::new(ExportedType {
+                Ok(Rc::new(RefCell::new(ExportedType {
                     attributes: vec![],
                     flags: TypeFlags::new(e.flags, Layout::Automatic),
                     name,
@@ -451,7 +451,7 @@ impl<'a> DLL<'a> {
                             name
                         ),
                     },
-                }))
+                })))
             })
             .collect::<Result<_>>()?;
 
@@ -468,10 +468,10 @@ impl<'a> DLL<'a> {
             .module_ref
             .iter()
             .map(|r| {
-                Ok(Rc::new(module::ExternalModuleReference {
+                Ok(Rc::new(RefCell::new(module::ExternalModuleReference {
                     attributes: vec![],
                     name: heap_idx!(strings, r.name),
-                }))
+                })))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -528,7 +528,10 @@ impl<'a> DLL<'a> {
                         BinRS::Null => ResolutionScope::Exported(Rc::clone(
                             exports
                                 .iter()
-                                .find(|e| e.name == name && e.namespace == namespace)
+                                .find(|rc| {
+                                    let e = rc.borrow();
+                                    e.name == name && e.namespace == namespace
+                                })
                                 .ok_or(scroll::Error::Custom(format!(
                                     "missing exported type for type reference {}",
                                     name
@@ -738,61 +741,6 @@ impl<'a> DLL<'a> {
                 }
             };
         }
-
-        // TODO: convert member ref indices
-
-        let field_refs = tables
-            .member_ref
-            .iter()
-            .filter_map(|r| {
-                use crate::binary::signature::kinds::FieldSig;
-                use members::*;
-                use metadata::index::{MemberRefParent, TypeDefOrRef};
-
-                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
-                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
-
-                let parent = match r.class {
-                    MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
-                    )),
-                    MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
-                    )),
-                    MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
-                    )),
-                    MemberRefParent::ModuleRef(i) => {
-                        let idx = i - 1;
-                        match module_refs.get(idx) {
-                            Some(m) => FieldReferenceParent::Module(m),
-                            None => {
-                                return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "invalid module reference index {} for field reference {}",
-                                    idx, name
-                                )))))
-                            }
-                        }
-                    }
-                    bad => {
-                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                            "bad parent index {:?} for field reference {}",
-                            bad, name
-                        )))))
-                    }
-                };
-
-                match sig_blob.pread::<FieldSig>(0) {
-                    Ok(field_sig) => Some(Ok(ExternalFieldReference {
-                        attributes: vec![],
-                        parent,
-                        name,
-                        return_type: filter_map_try!(convert::member_type_sig(field_sig.1, &ctx)),
-                    })),
-                    Err(_) => None,
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
 
         // only should be used before the event/method semantics phase
         // since before then we know member index is a Method(usize)
@@ -1158,6 +1106,74 @@ impl<'a> DLL<'a> {
             }
         }
 
+        let mut field_map = HashMap::new();
+        let field_refs = tables
+            .member_ref
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| {
+                use crate::binary::signature::kinds::FieldSig;
+                use members::*;
+                use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+
+                let parent = match r.class {
+                    MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
+                        convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
+                    )),
+                    MemberRefParent::ModuleRef(i) => {
+                        let idx = i - 1;
+                        match module_refs.get(idx) {
+                            Some(m) => FieldReferenceParent::Module(Rc::clone(m)),
+                            None => {
+                                return Some(Err(CLI(scroll::Error::Custom(format!(
+                                    "invalid module reference index {} for field reference {}",
+                                    idx, name
+                                )))))
+                            }
+                        }
+                    }
+                    bad => {
+                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                            "bad parent index {:?} for field reference {}",
+                            bad, name
+                        )))))
+                    }
+                };
+
+                match sig_blob.pread::<FieldSig>(0) {
+                    Ok(field_sig) => Some(Ok((
+                        idx,
+                        ExternalFieldReference {
+                            attributes: vec![],
+                            parent,
+                            name,
+                            return_type: filter_map_try!(convert::member_type_sig(
+                                field_sig.1,
+                                &ctx
+                            )),
+                        },
+                    ))),
+                    Err(_) => None,
+                }
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .enumerate()
+            .map(|(current_idx, (orig_idx, r))| {
+                field_map.insert(orig_idx, current_idx);
+                Rc::new(RefCell::new(r))
+            })
+            .collect::<Vec<_>>();
+
         let mut method_map = HashMap::new();
         let method_refs = tables
             .member_ref
@@ -1249,7 +1265,7 @@ impl<'a> DLL<'a> {
             .enumerate()
             .map(|(current_idx, (orig_idx, r))| {
                 method_map.insert(orig_idx, current_idx);
-                Rc::new(r)
+                Rc::new(RefCell::new(r))
             })
             .collect::<Vec<_>>();
 
@@ -1301,7 +1317,7 @@ impl<'a> DLL<'a> {
             });
         }
 
-        Ok(Resolution {
+        let mut res = Resolution {
             assembly,
             assembly_references: assembly_refs,
             manifest_resources: resources,
@@ -1309,6 +1325,236 @@ impl<'a> DLL<'a> {
             module_references: module_refs,
             type_definitions: types,
             type_references: type_refs,
-        })
+        };
+
+        for (idx, a) in tables.custom_attribute.iter().enumerate() {
+            use attribute::*;
+            use members::UserMethod;
+            use metadata::index::{CustomAttributeType, HasCustomAttribute::*};
+
+            let attr = Attribute {
+                constructor: match a.attr_type {
+                    CustomAttributeType::MethodDef(i) => {
+                        let m_idx = i - 1;
+                        match methods.get(m_idx) {
+                            Some(&m) => UserMethod::Definition(m),
+                            None => throw!(
+                                "invalid method index {} for constructor of custom attribute {}",
+                                m_idx,
+                                idx
+                            ),
+                        }
+                    }
+                    CustomAttributeType::MemberRef(i) => {
+                        let r_idx = i - 1;
+                        match method_map.get(&r_idx) {
+                            Some(&m_idx) => UserMethod::Reference(Rc::clone(&method_refs[m_idx])),
+                            None => throw!(
+                                "invalid member reference index {} for constructor of custom attribute {}",
+                                r_idx, idx
+                            )
+                        }
+                    }
+                    CustomAttributeType::Null => throw!(
+                        "invalid null index for constructor of custom attribute {}",
+                        idx
+                    ),
+                },
+                value: optional_idx!(blobs, a.value),
+            };
+
+            match a.parent {
+                MethodDef(i) => {
+                    let m_idx = i - 1;
+                    match methods.get(m_idx) {
+                        Some(&m) => res[m].attributes.push(attr),
+                        None => throw!(
+                            "invalid method index {} for parent of custom attribute {}",
+                            m_idx,
+                            idx
+                        ),
+                    }
+                }
+                Field(i) => {
+                    let f_idx = i - 1;
+                    match fields.get(f_idx) {
+                        Some(&(parent, internal)) => res.type_definitions[parent].fields[internal]
+                            .attributes
+                            .push(attr),
+                        None => throw!(
+                            "invalid field index {} for parent of custom attribute {}",
+                            f_idx,
+                            idx
+                        ),
+                    }
+                }
+                TypeRef(i) => {
+                    let r_idx = i - 1;
+                    match res.type_references.get_mut(r_idx) {
+                        Some(r) => r.attributes.push(attr),
+                        None => throw!(
+                            "invalid type reference index {} for parent of custom attribute {}",
+                            r_idx,
+                            idx
+                        ),
+                    }
+                }
+                TypeDef(i) => {
+                    let t_idx = i - 1;
+                    match res.type_definitions.get_mut(t_idx) {
+                        Some(t) => t.attributes.push(attr),
+                        None => throw!(
+                            "invalid type definition index {} for parent of custom attribute {}",
+                            t_idx,
+                            idx
+                        ),
+                    }
+                }
+                Param(i) => {
+                    let p_idx = i - 1;
+                    match params.get(p_idx) {
+                        Some(&(parent, internal)) => res[methods[parent]].parameter_metadata
+                            [internal]
+                            .as_mut()
+                            .unwrap()
+                            .attributes
+                            .push(attr),
+                        None => throw!(
+                            "invalid parameter index {} for parent of custom attribute {}",
+                            p_idx,
+                            idx
+                        ),
+                    }
+                }
+                InterfaceImpl(_) => {} // TODO
+                MemberRef(i) => {
+                    let m_idx = i - 1;
+
+                    match field_map.get(&m_idx) {
+                        Some(&f) => field_refs[f].borrow_mut().attributes.push(attr),
+                        None => match method_map.get(&m_idx) {
+                            Some(&m) => method_refs[m].borrow_mut().attributes.push(attr),
+                            None => throw!(
+                                "invalid member reference index {} for parent of custom attribute {}",
+                                m_idx,
+                                idx
+                            ),
+                        },
+                    }
+                }
+                Module(_) => res.module.attributes.push(attr),
+                DeclSecurity(_) => {} // TODO
+                Property(i) => {
+                    let p_idx = i - 1;
+
+                    match properties.get(p_idx) {
+                        Some(&(parent, internal)) => res.type_definitions[parent].properties
+                            [internal]
+                            .attributes
+                            .push(attr),
+                        None => throw!(
+                            "invalid property index {} for parent of custom attribute {}",
+                            p_idx,
+                            idx
+                        ),
+                    }
+                }
+                Event(i) => {
+                    let e_idx = i - 1;
+
+                    match events.get(e_idx) {
+                        Some(&(parent, internal)) => res.type_definitions[parent].events[internal]
+                            .attributes
+                            .push(attr),
+                        None => throw!(
+                            "invalid event index {} for parent of custom attribute {}",
+                            e_idx,
+                            idx
+                        ),
+                    }
+                }
+                ModuleRef(i) => {
+                    let m_idx = i - 1;
+
+                    match res.module_references.get(m_idx) {
+                        Some(m) => m.borrow_mut().attributes.push(attr),
+                        None => throw!(
+                            "invalid module reference index {} for parent of custom attribute {}",
+                            m_idx,
+                            idx
+                        ),
+                    }
+                }
+                Assembly(_) => {
+                    match res.assembly.as_mut() {
+                        Some(a) => a.attributes.push(attr),
+                        None => throw!(
+                            "custom attribute {} has the module assembly as a parent, but this module does not have an assembly",
+                            idx
+                        )
+                    }
+                }
+                AssemblyRef(i) => {
+                    let r_idx = i - 1;
+
+                    match res.assembly_references.get(r_idx) {
+                        Some(a) => a.borrow_mut().attributes.push(attr),
+                        None => throw!(
+                            "invalid assembly reference index {} for parent of custom attribute {}",
+                            r_idx,
+                            idx
+                        )
+                    }
+                }
+                File(i) => {
+                    let f_idx = i - 1;
+
+                    match files.get(f_idx) {
+                        Some(f) => f.borrow_mut().attributes.push(attr),
+                        None => throw!(
+                            "invalid file index {} for parent of custom attribute {}",
+                            f_idx,
+                            idx
+                        )
+                    }
+                }
+                ExportedType(i) => {
+                    let e_idx = i - 1;
+
+                    match exports.get(e_idx) {
+                        Some(e) => e.borrow_mut().attributes.push(attr),
+                        None => throw!(
+                            "invalid exported type index {} for parent of custom attribute {}",
+                            e_idx,
+                            idx
+                        )
+                    }
+                }
+                ManifestResource(i) => {
+                    let r_idx = i - 1;
+
+                    match res.manifest_resources.get_mut(r_idx) {
+                        Some(r) => r.attributes.push(attr),
+                        None => throw!(
+                            "invalid manifest resource index {} for parent of custom attribute {}",
+                            r_idx,
+                            idx
+                        )
+                    }
+                }
+                GenericParam(_) => {} // TODO
+                GenericParamConstraint(_) => {} // TODO
+                MethodSpec(_) => {} // TODO
+                StandAloneSig(_) => {
+                    eprintln!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
+                }
+                TypeSpec(_) => {
+                    eprintln!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx)
+                }
+                Null => throw!("invalid null index for parent of custom attribute {}", idx)
+            }
+        }
+
+        Ok(res)
     }
 }

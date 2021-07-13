@@ -1,6 +1,7 @@
 use std::{
     fmt::{Display, Formatter, Write},
     rc::Rc,
+    cell::RefCell
 };
 
 use crate::binary::signature::encoded::ArrayShape;
@@ -200,10 +201,10 @@ impl ResolvedDebug for TypeDefinition<'_> {
 #[derive(Debug)]
 pub enum ResolutionScope<'a> {
     Nested(usize),
-    ExternalModule(Rc<module::ExternalModuleReference<'a>>),
+    ExternalModule(Rc<RefCell<module::ExternalModuleReference<'a>>>),
     CurrentModule,
-    Assembly(Rc<assembly::ExternalAssemblyReference<'a>>),
-    Exported(Rc<ExportedType<'a>>),
+    Assembly(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
+    Exported(Rc<RefCell<ExportedType<'a>>>),
 }
 
 #[derive(Debug)]
@@ -219,9 +220,9 @@ pub enum TypeImplementation<'a> {
     Nested(usize),
     ModuleFile {
         type_def_idx: usize,
-        file: Rc<module::File<'a>>,
+        file: Rc<RefCell<module::File<'a>>>,
     },
-    TypeForwarder(Rc<assembly::ExternalAssemblyReference<'a>>),
+    TypeForwarder(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
 }
 
 #[derive(Debug)]
