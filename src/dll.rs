@@ -607,7 +607,7 @@ impl<'a> DLL<'a> {
                     static_member: check_bitmask!(f.flags, 0x10),
                     init_only: check_bitmask!(f.flags, 0x20),
                     literal: check_bitmask!(f.flags, 0x40),
-                    default: None, // TODO
+                    default: None,
                     not_serialized: check_bitmask!(f.flags, 0x80),
                     special_name: check_bitmask!(f.flags, 0x200),
                     pinvoke: check_bitmask!(f.flags, 0x2000),
@@ -883,7 +883,7 @@ impl<'a> DLL<'a> {
                     is_in: check_bitmask!(param.flags, 0x1),
                     is_out: check_bitmask!(param.flags, 0x2),
                     optional: check_bitmask!(param.flags, 0x10),
-                    default: None, // TODO
+                    default: None,
                     marshal: None,
                 });
 
@@ -959,9 +959,113 @@ impl<'a> DLL<'a> {
                     return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
-                    default: None, // TODO
+                    default: None,
                 });
                 properties[p_idx] = (type_idx, parent_props.len() - 1);
+            }
+        }
+
+        for (idx, c) in tables.constant.iter().enumerate() {
+            use crate::binary::signature::encoded::*;
+            use members::Constant::*;
+            use metadata::index::HasConstant;
+
+            if c.value.is_null() {
+                println!("wtf");
+            }
+
+            let blob = heap_idx!(blobs, c.value);
+
+            let value = Some(match c.constant_type {
+                ELEMENT_TYPE_BOOLEAN => Boolean(blob.pread_with::<u8>(0, scroll::LE)? == 1),
+                ELEMENT_TYPE_CHAR => {
+                    let char_bytes = blob.pread_with::<u16>(0, scroll::LE)?;
+                    match char::from_u32(char_bytes as u32) {
+                        Some(ch) => Char(ch),
+                        None => throw!(
+                            "invalid UTF-32 character {:#06x} for constant {}",
+                            char_bytes,
+                            idx
+                        ),
+                    }
+                }
+                ELEMENT_TYPE_I1 => Int8(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_U1 => UInt8(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_I2 => Int16(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_U2 => UInt16(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_I4 => Int32(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_U4 => UInt32(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_I8 => Int64(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_U8 => UInt64(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_R4 => Float32(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_R8 => Float64(blob.pread_with(0, scroll::LE)?),
+                ELEMENT_TYPE_STRING => {
+                    let num_utf16 = blob.len() / 2;
+                    let mut offset = 0;
+                    let chars = (0..num_utf16)
+                        .map(|_| blob.gread_with(&mut offset, scroll::LE))
+                        .collect::<scroll::Result<Vec<_>>>()?;
+                    match std::string::String::from_utf16(&chars) {
+                        Ok(s) => String(s),
+                        Err(e) => throw!("invalid UTF-16 String ({}) for constant {}", e, idx),
+                    }
+                }
+                ELEMENT_TYPE_CLASS => {
+                    let t: u32 = blob.pread_with(0, scroll::LE)?;
+                    if t == 0 {
+                        Null
+                    } else {
+                        throw!("invalid class reference {:#010x} for constant {}, only null references allowed", t, idx)
+                    }
+                }
+                bad => throw!(
+                    "unrecognized element type {:#04x} for constant {}",
+                    bad,
+                    idx
+                ),
+            });
+
+            match c.parent {
+                HasConstant::Field(i) => {
+                    let f_idx = i - 1;
+
+                    match fields.get(f_idx) {
+                        Some(&(parent, internal)) => types[parent].fields[internal].default = value,
+                        None => throw!("invalid field parent index {} for constant {}", f_idx, idx),
+                    }
+                }
+                HasConstant::Param(i) => {
+                    let p_idx = i - 1;
+
+                    match params.get(p_idx) {
+                        Some(&(parent, internal)) => {
+                            get_method!(methods[parent]).parameter_metadata[internal]
+                                .as_mut()
+                                .unwrap()
+                                .default = value
+                        }
+                        None => throw!(
+                            "invalid parameter parent index {} for constant {}",
+                            p_idx,
+                            idx
+                        ),
+                    }
+                }
+                HasConstant::Property(i) => {
+                    let f_idx = i - 1;
+
+                    match properties.get(f_idx) {
+                        Some(&(parent, internal)) => {
+                            types[parent].properties[internal].default = value
+                        }
+                        None => throw!(
+                            "invalid property parent index {} for constant {}",
+                            f_idx,
+                            idx
+                        ),
+                    }
+                }
+                HasConstant::Null => throw!("invalid null parent index for constant {}", idx),
             }
         }
 
