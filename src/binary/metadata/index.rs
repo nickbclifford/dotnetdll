@@ -109,7 +109,7 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Sizes<'a>> for Simple<T> {
     fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let idx = if *sizes.tables.get(&T::get_kind()).unwrap_or(&0) < (1 << 16) {
+        let idx = if *sizes.tables.get(&T::kind()).unwrap_or(&0) < (1 << 16) {
             from.gread_with::<u16>(offset, scroll::LE)? as usize
         } else {
             from.gread_with::<u32>(offset, scroll::LE)? as usize

@@ -25,10 +25,13 @@ fn parse_from_type<'def, 'inst>(
     use FieldOrPropType::*;
     Ok(match f_type {
         Boolean => FixedArg::Boolean(src.gread_with::<u8>(offset, scroll::LE)? == 1),
-        Char => FixedArg::Char(
-            char::from_u32(src.gread_with::<u16>(offset, scroll::LE)? as u32)
-                .ok_or(scroll::Error::Custom("invalid character".to_string()))?,
-        ),
+        Char => {
+            let value = src.gread_with::<u16>(offset, scroll::LE)? as u32;
+            match char::from_u32(value) {
+                Some(c) => FixedArg::Char(c),
+                None => throw!("invalid UTF-32 character {:#06x}", value),
+            }
+        }
         Int8 => FixedArg::Integral(IntegralParam::Int8(src.gread_with(offset, scroll::LE)?)),
         UInt8 => FixedArg::Integral(IntegralParam::UInt8(src.gread_with(offset, scroll::LE)?)),
         Int16 => FixedArg::Integral(IntegralParam::Int16(src.gread_with(offset, scroll::LE)?)),
@@ -40,11 +43,10 @@ fn parse_from_type<'def, 'inst>(
         Float32 => FixedArg::Float32(src.gread_with(offset, scroll::LE)?),
         Float64 => FixedArg::Float64(src.gread_with(offset, scroll::LE)?),
         String => FixedArg::String(src.gread::<SerString>(offset)?.0),
-        Type => FixedArg::Type(
-            src.gread::<SerString>(offset)?
-                .0
-                .ok_or(scroll::Error::Custom("invalid null type name".to_string()))?,
-        ),
+        Type => match src.gread::<SerString>(offset)?.0 {
+            Some(s) => FixedArg::Type(s),
+            None => throw!("invalid null type name"),
+        },
         Object => FixedArg::Object(Box::new(parse_from_type(
             src.gread(offset)?,
             src,
@@ -187,7 +189,7 @@ fn parse_named<'def, 'inst>(
         let name = src
             .gread::<SerString>(offset)?
             .0
-            .ok_or(scroll::Error::Custom(
+            .ok_or_else(|| scroll::Error::Custom(
                 "null string name found when parsing".to_string(),
             ))?;
 
@@ -215,7 +217,7 @@ impl<'a> Attribute<'a> {
         resolver: &impl Resolver,
         resolution: &'a Resolution<'a>,
     ) -> Result<CustomAttributeData<'a>> {
-        let bytes = self.value.ok_or(scroll::Error::Custom(
+        let bytes = self.value.ok_or_else(|| scroll::Error::Custom(
             "null data for custom attribute".to_string(),
         ))?;
 
@@ -295,7 +297,7 @@ impl<'a> SecurityDeclaration<'a> {
         let offset = &mut 0;
 
         let period: u8 = self.value.gread_with(offset, scroll::LE)?;
-        if period != ('.' as u8) {
+        if period != b'.' {
             throw!("bad security permission set sentinel {:#04x}", period);
         }
 
@@ -308,7 +310,7 @@ impl<'a> SecurityDeclaration<'a> {
                 self.value
                     .gread::<SerString>(offset)?
                     .0
-                    .ok_or(scroll::Error::Custom(
+                    .ok_or_else(|| scroll::Error::Custom(
                         "null attribute type name found when parsing security".to_string(),
                     ))?;
 

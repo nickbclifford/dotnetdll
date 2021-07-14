@@ -133,6 +133,7 @@ impl<'a> DLL<'a> {
         self.raw_rva(def.rva)?.pread(0).map_err(CLI)
     }
 
+    #[allow(clippy::nonminimal_bool)]
     pub fn resolve(&self) -> Result<Resolution<'a>> {
         let strings: Strings = self.get_heap("#Strings")?;
         let blobs: Blob = self.get_heap("#Blob")?;
@@ -455,9 +456,9 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<_>>()?;
 
-        let module_row = tables.module.first().ok_or(scroll::Error::Custom(
-            "missing required module metadata table".to_string(),
-        ))?;
+        let module_row = tables.module.first().ok_or_else(|| {
+            scroll::Error::Custom("missing required module metadata table".to_string())
+        })?;
         let module = module::Module {
             attributes: vec![],
             name: heap_idx!(strings, module_row.name),
@@ -525,18 +526,13 @@ impl<'a> DLL<'a> {
                                 );
                             }
                         }
-                        BinRS::Null => ResolutionScope::Exported(Rc::clone(
-                            exports
-                                .iter()
-                                .find(|rc| {
-                                    let e = rc.borrow();
-                                    e.name == name && e.namespace == namespace
-                                })
-                                .ok_or(scroll::Error::Custom(format!(
-                                    "missing exported type for type reference {}",
-                                    name
-                                )))?,
-                        )),
+                        BinRS::Null => match exports.iter().find(|rc| {
+                            let e = rc.borrow();
+                            e.name == name && e.namespace == namespace
+                        }) {
+                            Some(e) => ResolutionScope::Exported(Rc::clone(e)),
+                            None => throw!("missing exported type for type reference {}", name),
+                        },
                     },
                 })
             })
@@ -842,11 +838,14 @@ impl<'a> DLL<'a> {
                 }
                 TypeOrMethodDef::MethodDef(i) => {
                     let idx = i - 1;
-                    let method =
-                        get_method!(*methods.get(idx).ok_or(scroll::Error::Custom(format!(
+                    let method = match methods.get(idx) {
+                        Some(&m) => get_method!(m),
+                        None => throw!(
                             "invalid method index {} for generic parameter {}",
-                            idx, name
-                        )))?);
+                            idx,
+                            name
+                        ),
+                    };
 
                     method
                         .generic_parameters
@@ -1099,12 +1098,12 @@ impl<'a> DLL<'a> {
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let parent = types
-                .get_mut(type_idx)
-                .ok_or(scroll::Error::Custom(format!(
+            let parent = types.get_mut(type_idx).ok_or_else(|| {
+                scroll::Error::Custom(format!(
                     "invalid parent type index {} for event map {}",
                     type_idx, map_idx
-                )))?;
+                ))
+            })?;
             let parent_events = &mut parent.events;
 
             for (e_idx, event) in range_index!(
@@ -1154,10 +1153,10 @@ impl<'a> DLL<'a> {
             use metadata::index::HasSemantics;
 
             let raw_idx = s.method.0 - 1;
-            let method_idx = *methods.get(raw_idx).ok_or(scroll::Error::Custom(format!(
-                "invalid method index {} for method semantics",
-                raw_idx
-            )))?;
+            let method_idx = match methods.get(raw_idx) {
+                Some(&m) => m,
+                None => throw!("invalid method index {} for method semantics", raw_idx),
+            };
 
             let parent = &mut types[method_idx.parent_type];
 
@@ -1168,7 +1167,7 @@ impl<'a> DLL<'a> {
             match s.association {
                 HasSemantics::Event(i) => {
                     let idx = i - 1;
-                    let &(_, internal_idx) = events.get(idx).ok_or(scroll::Error::Custom(
+                    let &(_, internal_idx) = events.get(idx).ok_or_else(|| scroll::Error::Custom(
                         format!("invalid event index {} for method semantics", idx),
                     ))?;
                     let event = &mut parent.events[internal_idx];
@@ -1186,7 +1185,7 @@ impl<'a> DLL<'a> {
                 }
                 HasSemantics::Property(i) => {
                     let idx = i - 1;
-                    let &(_, internal_idx) = properties.get(idx).ok_or(scroll::Error::Custom(
+                    let &(_, internal_idx) = properties.get(idx).ok_or_else(|| scroll::Error::Custom(
                         format!("invalid property index {} for method semantics", idx),
                     ))?;
                     let property = &mut parent.properties[internal_idx];
@@ -1378,7 +1377,7 @@ impl<'a> DLL<'a> {
             use types::*;
 
             let idx = i.class.0 - 1;
-            let t = types.get_mut(idx).ok_or(scroll::Error::Custom(format!(
+            let t = types.get_mut(idx).ok_or_else(|| scroll::Error::Custom(format!(
                 "invalid parent type index {} for method override",
                 idx
             )))?;

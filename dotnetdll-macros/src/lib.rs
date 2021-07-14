@@ -201,8 +201,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         (if v
             .attrs
             .iter()
-            .find(|a| a.path.is_ident("extended"))
-            .is_some()
+            .any(|a| a.path.is_ident("extended"))
         {
             &mut extended_parses
         } else {

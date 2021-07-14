@@ -56,7 +56,7 @@ impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
 }
 
 pub fn show_constraints<T: ResolvedDebug>(
-    v: &Vec<Generic<'_, T>>,
+    v: &[Generic<'_, T>],
     res: &Resolution,
 ) -> Option<String> {
     if v.iter()

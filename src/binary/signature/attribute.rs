@@ -69,7 +69,7 @@ impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
             0x55 => Enum(
                 from.gread::<SerString>(offset)?
                     .0
-                    .ok_or(scroll::Error::Custom(
+                    .ok_or_else(|| scroll::Error::Custom(
                         "null enum name encountered when parsing custom attribute".to_string(),
                     ))?,
             ),

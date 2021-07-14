@@ -21,7 +21,7 @@ macro_rules! tables {
             }
 
             impl HasKind for $name {
-                fn get_kind() -> Kind {
+                fn kind() -> Kind {
                     Kind::$name
                 }
             }
@@ -57,6 +57,12 @@ macro_rules! tables {
                 }
             }
 
+            impl Default for Tables {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+
             macro_rules! tables_kind_push {
                 ($tables:ident, $kind:ident, $add:expr) => {
                     match $kind {
@@ -71,7 +77,7 @@ macro_rules! tables {
 }
 
 pub trait HasKind {
-    fn get_kind() -> Kind;
+    fn kind() -> Kind;
 }
 
 tables! {
