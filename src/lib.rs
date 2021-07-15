@@ -75,7 +75,7 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n")
                 ])
-                .filter(|p| !p.is_empty())
+                .filter(|p: &String| !p.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n\n")
             );

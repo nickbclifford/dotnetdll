@@ -55,7 +55,7 @@ pub struct Field<'a> {
     pub default: Option<Constant>,
     pub not_serialized: bool,
     pub special_name: bool,
-    pub pinvoke: bool,
+    pub pinvoke: Option<PInvoke<'a>>,
     pub runtime_special_name: bool,
     pub offset: Option<usize>,
     pub marshal: Option<MarshalSpec>,
@@ -243,6 +243,10 @@ impl ResolvedDebug for Method<'_> {
             buf.push_str("virtual ");
         }
 
+        if self.pinvoke.is_some() {
+            buf.push_str("extern ");
+        }
+
         match &self.signature.return_type.1 {
             None => buf.push_str("void "),
             Some(t) => write!(buf, "{} ", t.show(res)).unwrap(),
@@ -294,7 +298,7 @@ pub struct PInvoke<'a> {
     pub supports_last_error: bool,
     pub calling_convention: UnmanagedCallingConvention,
     pub import_name: &'a str,
-    pub import_scope: ExternalModuleReference<'a>,
+    pub import_scope: Rc<RefCell<ExternalModuleReference<'a>>>,
 }
 
 #[derive(Debug)]

@@ -606,7 +606,7 @@ impl<'a> DLL<'a> {
                     default: None,
                     not_serialized: check_bitmask!(f.flags, 0x80),
                     special_name: check_bitmask!(f.flags, 0x200),
-                    pinvoke: check_bitmask!(f.flags, 0x2000),
+                    pinvoke: None,
                     runtime_special_name: check_bitmask!(f.flags, 0x400),
                     offset: None,
                     marshal: None,
@@ -686,7 +686,7 @@ impl<'a> DLL<'a> {
                     strict: check_bitmask!(m.flags, 0x200),
                     abstract_member: check_bitmask!(m.flags, 0x400),
                     special_name: check_bitmask!(m.flags, 0x800),
-                    pinvoke: None, // TODO
+                    pinvoke: None,
                     runtime_special_name: check_bitmask!(m.flags, 0x1000),
                     security: None,
                     require_sec_object: check_bitmask!(m.flags, 0x8000),
@@ -724,19 +724,6 @@ impl<'a> DLL<'a> {
             }
         }
 
-        // we use filter_maps for the member refs because we distinguish between the two
-        // kinds by testing if they parse successfully or not, and filter_map makes it really
-        // easy to implement that inside an iterator. however, we need to propagate the Results
-        // through the final iterator so that they don't get turned into None and swallowed on failure
-        macro_rules! filter_map_try {
-            ($e:expr) => {
-                match $e {
-                    Ok(n) => n,
-                    Err(e) => return Some(Err(e)),
-                }
-            };
-        }
-
         // only should be used before the event/method semantics phase
         // since before then we know member index is a Method(usize)
         macro_rules! get_method {
@@ -750,6 +737,62 @@ impl<'a> DLL<'a> {
                     _ => unreachable!(),
                 }]
             }};
+        }
+
+        for i in tables.impl_map.iter() {
+            use members::*;
+            use metadata::index::MemberForwarded;
+
+            let name = heap_idx!(strings, i.import_name);
+
+            let value = Some(PInvoke {
+                no_mangle: check_bitmask!(i.mapping_flags, 0x1),
+                character_set: match i.mapping_flags & 0x6 {
+                    0x0 => CharacterSet::NotSpecified,
+                    0x2 => CharacterSet::Ansi,
+                    0x4 => CharacterSet::Unicode,
+                    0x6 => CharacterSet::Auto,
+                    bad => throw!("invalid character set specifier {:#03x} for PInvoke import {}", bad, name)
+                },
+                supports_last_error: check_bitmask!(i.mapping_flags, 0x40),
+                calling_convention: match i.mapping_flags & 0x700 {
+                    0x100 => UnmanagedCallingConvention::Platformapi,
+                    0x200 => UnmanagedCallingConvention::Cdecl,
+                    0x300 => UnmanagedCallingConvention::Stdcall,
+                    0x400 => UnmanagedCallingConvention::Thiscall,
+                    0x500 => UnmanagedCallingConvention::Fastcall,
+                    bad => throw!("invalid calling convention specifier {:#05x} for PInvoke import {}", bad, name)
+                },
+                import_name: name,
+                import_scope: {
+                    let idx = i.import_scope.0 - 1;
+
+                    match module_refs.get(idx) {
+                        Some(m) => Rc::clone(m),
+                        None => throw!("invalid module reference index {} for PInvoke import {}", idx, name)
+                    }
+                }
+            });
+
+            match i.member_forwarded {
+                MemberForwarded::Field(i) => {
+                    let idx = i - 1;
+
+                    match fields.get(idx) {
+                        Some(&(parent, internal)) => types[parent].fields[internal].pinvoke = value,
+                        None => throw!("invalid field index {} for PInvoke import {}", idx, name)
+                    }
+                }
+                MemberForwarded::MethodDef(i) => {
+                    let idx = i - 1;
+
+                    match methods.get(idx) {
+                        Some(&m) => get_method!(m).pinvoke = value,
+                        None => throw!("invalid method index {} for PInvoke import {}", idx, name)
+                    }
+                }
+                MemberForwarded::Null => throw!("invalid null member index for PInvoke import {}", name)
+            }
         }
 
         for (idx, s) in tables.decl_security.iter().enumerate() {
@@ -968,10 +1011,6 @@ impl<'a> DLL<'a> {
             use crate::binary::signature::encoded::*;
             use members::Constant::*;
             use metadata::index::HasConstant;
-
-            if c.value.is_null() {
-                println!("wtf");
-            }
 
             let blob = heap_idx!(blobs, c.value);
 
@@ -1206,6 +1245,19 @@ impl<'a> DLL<'a> {
                 }
                 HasSemantics::Null => throw!("invalid null index for method semantics",),
             }
+        }
+
+        // we use filter_maps for the member refs because we distinguish between the two
+        // kinds by testing if they parse successfully or not, and filter_map makes it really
+        // easy to implement that inside an iterator. however, we need to propagate the Results
+        // through the final iterator so that they don't get turned into None and swallowed on failure
+        macro_rules! filter_map_try {
+            ($e:expr) => {
+                match $e {
+                    Ok(n) => n,
+                    Err(e) => return Some(Err(e)),
+                }
+            };
         }
 
         let mut field_map = HashMap::new();
