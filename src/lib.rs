@@ -30,55 +30,48 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve()?;
 
         for t in r.type_definitions.iter() {
-            for a in t.attributes.iter() {
-                println!("[{}(...)]", a.constructor.show(&r))
-            }
-
             println!("{} {{", t.show(&r));
 
-            println!(
-                "{}",
-                std::array::IntoIter::new([
-                    t.overrides
-                        .iter()
-                        .map(|o| format!(
-                            "\toverride {} with {};",
-                            o.declaration.show(&r),
-                            o.implementation.show(&r)
-                        ))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    t.fields
-                        .iter()
-                        .map(|f| format!("\t{};", f.show(&r)))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    t.properties
-                        .iter()
-                        .map(|p| format!("\t{};", p.show(&r)))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    t.events
-                        .iter()
-                        .map(|e| format!("\t{};", e.show(&r)))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    t.methods
-                        .iter()
-                        .map(|m| format!("\t{};", m.show(&r)))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ])
-                .filter(|p: &String| !p.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-            );
+            for m in t.methods.iter() {
+                print!("\t{}", m.show(&r));
+
+                if let Some(b) = &m.body {
+                    println!(" {{");
+
+                    if b.header.initialize_locals {
+                        println!("\t\tinit locals")
+                    }
+                    println!("\t\tmaximum stack size {}", b.header.maximum_stack_size);
+                    let locals = &b.header.local_variables;
+                    if !locals.is_empty() {
+                        println!("\t\tlocal variables:");
+
+                        let max_size = ((locals.len() - 1) as f32).log10().ceil() as usize;
+
+                        for (idx, v) in locals.iter().enumerate() {
+                            println!("\t\t\t{:1$}: {2}", idx, max_size, v.show(&r));
+                        }
+                    }
+
+                    let max_size = ((b.body.len() - 1) as f32).log10().ceil() as usize;
+
+                    println!("\t\t---");
+
+                    for (idx, instr) in b.body.iter().enumerate() {
+                        println!("\t\t{:1$}: {2}", idx, max_size, instr.show(&r))
+                    }
+
+                    println!("\t}}");
+                } else {
+                    println!(";");
+                }
+            }
 
             println!("}}\n");
         }

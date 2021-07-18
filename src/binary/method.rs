@@ -43,13 +43,13 @@ impl TryFromCtx<'_> for Header {
 
 #[derive(Debug, Pread)]
 pub struct Exception {
-    flags: u32,
-    try_offset: u32,
-    try_length: u32,
-    handler_offset: u32,
-    handler_length: u32,
-    class_token: u32,
-    filter_offset: u32,
+    pub flags: u32,
+    pub try_offset: u32,
+    pub try_length: u32,
+    pub handler_offset: u32,
+    pub handler_length: u32,
+    pub class_token: u32,
+    pub filter_offset: u32,
 }
 
 #[derive(Debug)]
@@ -60,7 +60,7 @@ pub enum SectionKind {
 
 #[derive(Debug)]
 pub struct DataSection {
-    section: SectionKind,
+    pub section: SectionKind,
     more_sections: bool,
 }
 
@@ -123,9 +123,16 @@ impl TryFromCtx<'_> for DataSection {
 }
 
 #[derive(Debug)]
+pub struct InstructionUnit {
+    pub offset: usize,
+    pub bytesize: usize,
+    pub instruction: il::Instruction,
+}
+
+#[derive(Debug)]
 pub struct Method {
     pub header: Header,
-    pub body: Vec<il::Instruction>,
+    pub body: Vec<InstructionUnit>,
     pub data_sections: Vec<DataSection>,
 }
 
@@ -145,7 +152,13 @@ impl TryFromCtx<'_> for Method {
         let mut body = vec![];
         let mut body_offset = 0;
         while body_offset < body_size {
-            body.push(body_bytes.gread(&mut body_offset)?);
+            let before_offset = body_offset;
+            let instruction = body_bytes.gread(&mut body_offset)?;
+            body.push(InstructionUnit {
+                offset: before_offset,
+                bytesize: body_offset - before_offset,
+                instruction
+            });
         }
 
         let mut data_sections = vec![];

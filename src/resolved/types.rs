@@ -277,6 +277,15 @@ pub enum CustomTypeModifier {
     Optional(UserType),
     Required(UserType),
 }
+impl ResolvedDebug for CustomTypeModifier {
+    fn show(&self, res: &Resolution) -> String {
+        use CustomTypeModifier::*;
+        match self {
+            Optional(t) => format!("[opt {}]", t.type_name(res)),
+            Required(t) => format!("[req {}]", t.type_name(res))
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GenericInstantiation<CtxBaseType> {
@@ -417,6 +426,34 @@ pub enum LocalVariable {
         by_ref: bool,
         var_type: MethodType,
     },
+}
+impl ResolvedDebug for LocalVariable {
+    fn show(&self, res: &Resolution) -> String {
+        use LocalVariable::*;
+
+        match self {
+            TypedReference => "System.TypedReference".to_string(),
+            Variable { custom_modifier, pinned, by_ref, var_type } => {
+                let mut buf = String::new();
+
+                if let Some(m) = custom_modifier {
+                    write!(buf, "{} ", m.show(res)).unwrap();
+                }
+
+                if *pinned {
+                    buf.push_str("fixed ");
+                }
+
+                if *by_ref {
+                    buf.push_str("ref ");
+                }
+
+                write!(buf, "{}", var_type.show(res)).unwrap();
+
+                buf
+            }
+        }
+    }
 }
 
 pub trait Resolver {

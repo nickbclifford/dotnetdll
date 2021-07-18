@@ -148,7 +148,9 @@ impl<'a> DLL<'a> {
             def_len: types_len,
             ref_len: type_ref_len,
             specs: &tables.type_spec,
+            sigs: &tables.stand_alone_sig,
             blobs: &blobs,
+            userstrings: &userstrings,
         };
 
         macro_rules! throw {
@@ -669,7 +671,7 @@ impl<'a> DLL<'a> {
                 parent_methods.push(Method {
                     attributes: vec![],
                     name,
-                    body: None, // TODO
+                    body: None,
                     signature: sig,
                     accessibility: member_accessibility(m.flags)?,
                     generic_parameters: vec![],
@@ -752,7 +754,11 @@ impl<'a> DLL<'a> {
                     0x2 => CharacterSet::Ansi,
                     0x4 => CharacterSet::Unicode,
                     0x6 => CharacterSet::Auto,
-                    bad => throw!("invalid character set specifier {:#03x} for PInvoke import {}", bad, name)
+                    bad => throw!(
+                        "invalid character set specifier {:#03x} for PInvoke import {}",
+                        bad,
+                        name
+                    ),
                 },
                 supports_last_error: check_bitmask!(i.mapping_flags, 0x40),
                 calling_convention: match i.mapping_flags & 0x700 {
@@ -761,7 +767,11 @@ impl<'a> DLL<'a> {
                     0x300 => UnmanagedCallingConvention::Stdcall,
                     0x400 => UnmanagedCallingConvention::Thiscall,
                     0x500 => UnmanagedCallingConvention::Fastcall,
-                    bad => throw!("invalid calling convention specifier {:#05x} for PInvoke import {}", bad, name)
+                    bad => throw!(
+                        "invalid calling convention specifier {:#05x} for PInvoke import {}",
+                        bad,
+                        name
+                    ),
                 },
                 import_name: name,
                 import_scope: {
@@ -769,9 +779,13 @@ impl<'a> DLL<'a> {
 
                     match module_refs.get(idx) {
                         Some(m) => Rc::clone(m),
-                        None => throw!("invalid module reference index {} for PInvoke import {}", idx, name)
+                        None => throw!(
+                            "invalid module reference index {} for PInvoke import {}",
+                            idx,
+                            name
+                        ),
                     }
-                }
+                },
             });
 
             match i.member_forwarded {
@@ -780,7 +794,7 @@ impl<'a> DLL<'a> {
 
                     match fields.get(idx) {
                         Some(&(parent, internal)) => types[parent].fields[internal].pinvoke = value,
-                        None => throw!("invalid field index {} for PInvoke import {}", idx, name)
+                        None => throw!("invalid field index {} for PInvoke import {}", idx, name),
                     }
                 }
                 MemberForwarded::MethodDef(i) => {
@@ -788,10 +802,12 @@ impl<'a> DLL<'a> {
 
                     match methods.get(idx) {
                         Some(&m) => get_method!(m).pinvoke = value,
-                        None => throw!("invalid method index {} for PInvoke import {}", idx, name)
+                        None => throw!("invalid method index {} for PInvoke import {}", idx, name),
                     }
                 }
-                MemberForwarded::Null => throw!("invalid null member index for PInvoke import {}", name)
+                MemberForwarded::Null => {
+                    throw!("invalid null member index for PInvoke import {}", name)
+                }
             }
         }
 
@@ -1206,9 +1222,12 @@ impl<'a> DLL<'a> {
             match s.association {
                 HasSemantics::Event(i) => {
                     let idx = i - 1;
-                    let &(_, internal_idx) = events.get(idx).ok_or_else(|| scroll::Error::Custom(
-                        format!("invalid event index {} for method semantics", idx),
-                    ))?;
+                    let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
+                        scroll::Error::Custom(format!(
+                            "invalid event index {} for method semantics",
+                            idx
+                        ))
+                    })?;
                     let event = &mut parent.events[internal_idx];
 
                     if check_bitmask!(s.semantics, 0x20) {
@@ -1224,9 +1243,12 @@ impl<'a> DLL<'a> {
                 }
                 HasSemantics::Property(i) => {
                     let idx = i - 1;
-                    let &(_, internal_idx) = properties.get(idx).ok_or_else(|| scroll::Error::Custom(
-                        format!("invalid property index {} for method semantics", idx),
-                    ))?;
+                    let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
+                        scroll::Error::Custom(format!(
+                            "invalid property index {} for method semantics",
+                            idx
+                        ))
+                    })?;
                     let property = &mut parent.properties[internal_idx];
 
                     if check_bitmask!(s.semantics, 0x1) {
@@ -1423,52 +1445,27 @@ impl<'a> DLL<'a> {
             })
             .collect::<Vec<_>>();
 
+        let m_ctx = convert::MethodContext {
+            field_refs: &field_refs,
+            field_map: &field_map,
+            field_indices: &fields,
+            method_specs: &tables.method_spec,
+            method_indices: &methods,
+            method_refs: &method_refs,
+            method_map: &method_map,
+        };
+
         for i in tables.method_impl.iter() {
-            use members::*;
-            use metadata::index::MethodDefOrRef;
             use types::*;
 
             let idx = i.class.0 - 1;
-            let t = types.get_mut(idx).ok_or_else(|| scroll::Error::Custom(format!(
-                "invalid parent type index {} for method override",
-                idx
-            )))?;
-
-            macro_rules! build_method {
-                ($idx:expr, $name:literal) => {
-                    match $idx {
-                        MethodDefOrRef::MethodDef(i) => {
-                            let m_idx = i - 1;
-                            match methods.get(m_idx) {
-                                Some(&m) => UserMethod::Definition(m),
-                                None => throw!(
-                                    "invalid method index {} for method override {} in type {}",
-                                    m_idx, $name, t.name
-                                )
-                            }
-                        }
-                        MethodDefOrRef::MemberRef(i) => {
-                            let r_idx = i - 1;
-                            match method_map.get(&r_idx) {
-                                Some(&m_idx) => UserMethod::Reference(Rc::clone(&method_refs[m_idx])),
-                                None => throw!(
-                                    "invalid member reference index {} for method override {} in type {}",
-                                    r_idx, $name, t.name
-                                )
-                            }
-                        }
-                        MethodDefOrRef::Null => throw!(
-                            "invalid null {} index for method override in type {}",
-                            $name, t.name
-                        )
-                    }
-                }
+            match types.get_mut(idx) {
+                Some(t) => t.overrides.push(MethodOverride {
+                    implementation: convert::user_method(i.method_body, &m_ctx)?,
+                    declaration: convert::user_method(i.method_declaration, &m_ctx)?,
+                }),
+                None => throw!("invalid parent type index {} for method override", idx),
             }
-
-            t.overrides.push(MethodOverride {
-                implementation: build_method!(i.method_body, "implementation"),
-                declaration: build_method!(i.method_declaration, "declaration"),
-            });
         }
 
         let mut res = Resolution {
@@ -1772,7 +1769,9 @@ impl<'a> DLL<'a> {
                         )
                     }
                 }
-                MethodSpec(_) => {} // TODO
+                MethodSpec(_) => {
+                    eprintln!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx)
+                }
                 StandAloneSig(_) => {
                     eprintln!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
                 }
@@ -1781,6 +1780,142 @@ impl<'a> DLL<'a> {
                 }
                 Null => throw!("invalid null index for parent of custom attribute {}", idx)
             }
+        }
+
+        let sig_len = tables.stand_alone_sig.len();
+
+        for (idx, m) in tables.method_def.iter().enumerate() {
+            use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
+            use body::*;
+            use metadata::{
+                index::{Token, TokenTarget},
+                table::Kind,
+            };
+            use types::LocalVariable;
+
+            if m.rva == 0 {
+                continue;
+            }
+
+            let name = res[methods[idx]].name;
+
+            let raw_body = self.get_method(m)?;
+
+            let header = match raw_body.header {
+                method::Header::Tiny { .. } => Header {
+                    initialize_locals: false,
+                    maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
+                    local_variables: vec![],
+                },
+                method::Header::Fat {
+                    flags,
+                    max_stack,
+                    local_var_sig_tok,
+                    ..
+                } => {
+                    let local_variables = if local_var_sig_tok == 0 {
+                        vec![]
+                    } else {
+                        let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
+                        if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
+                            && tok.index <= sig_len
+                        {
+                            let vars: LocalVarSig =
+                                heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature)
+                                    .pread(0)?;
+
+                            vars.0
+                                .into_iter()
+                                .map(|v| {
+                                    Ok(match v {
+                                        LocalVar::TypedByRef => LocalVariable::TypedReference,
+                                        LocalVar::Variable {
+                                            custom_modifier,
+                                            pinned,
+                                            by_ref,
+                                            var_type,
+                                        } => LocalVariable::Variable {
+                                            custom_modifier: opt_map_try!(custom_modifier, |c| {
+                                                convert::custom_modifier(c, &ctx)
+                                            }),
+                                            pinned,
+                                            by_ref,
+                                            var_type: convert::method_type_sig(var_type, &ctx)?,
+                                        },
+                                    })
+                                })
+                                .collect::<Result<Vec<_>>>()?
+                        } else {
+                            throw!(
+                                "invalid local variable signature token {:?} for method {}",
+                                tok,
+                                name
+                            );
+                        }
+                    };
+                    Header {
+                        initialize_locals: check_bitmask!(flags, 0x10),
+                        maximum_stack_size: max_stack as usize,
+                        local_variables,
+                    }
+                }
+            };
+
+            let raw_instrs = raw_body.body;
+
+            let instr_offsets: Vec<_> = raw_instrs.iter().map(|i| i.offset).collect();
+
+            let data_sections = raw_body
+                .data_sections
+                .into_iter()
+                .map(|d| {
+                    use crate::binary::method::SectionKind;
+                    Ok(match d.section {
+                        SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
+                            e.into_iter().map(|h| {
+                                macro_rules! get_offset {
+                                    ($byte:expr, $name:literal) => {
+                                        instr_offsets
+                                            .iter()
+                                            .position(|&i| i == $byte as usize)
+                                            .ok_or_else(|| scroll::Error::Custom(
+                                                format!("could not find corresponding instruction for {} offset {}", $name, $byte)
+                                            ))?
+                                    }
+                                }
+
+                                let try_offset = get_offset!(h.try_offset, "try");
+                                let handler_offset = get_offset!(h.handler_offset, "handler");
+
+                                Ok(Exception {
+                                    typed_exception: check_bitmask!(h.flags, 0x0),
+                                    filter: check_bitmask!(h.flags, 0x1),
+                                    finally: check_bitmask!(h.flags, 0x2),
+                                    fault: check_bitmask!(h.flags, 0x4),
+                                    try_offset,
+                                    try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
+                                    handler_offset,
+                                    handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset,
+                                    class: convert::type_token(h.class_token.to_le_bytes().pread(0)?, &ctx)?,
+                                    filter_offset: get_offset!(h.filter_offset, "filter")
+                                })
+                            }).collect::<Result<_>>()?,
+                        ),
+                        SectionKind::Unrecognized => DataSection::Unrecognized,
+                    })
+                })
+                .collect::<Result<_>>()?;
+
+            let instrs = raw_instrs
+                .into_iter()
+                .map(|i| convert::instruction(i, &instr_offsets, &ctx, &m_ctx))
+                .collect::<Result<_>>()?;
+
+            res[methods[idx]].body = Some(Method {
+                header,
+                body: instrs,
+                data_sections,
+            });
         }
 
         Ok(res)

@@ -25,7 +25,7 @@ pub enum DataSection {
 
 #[derive(Debug)]
 pub struct Exception {
-    pub exception: bool,
+    pub typed_exception: bool,
     pub filter: bool,
     pub finally: bool,
     pub fault: bool,

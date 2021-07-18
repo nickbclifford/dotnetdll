@@ -1,4 +1,5 @@
-use super::{members::*, signature, types::*};
+use super::{members::*, signature, types::*, ResolvedDebug};
+use crate::resolution::Resolution;
 
 #[derive(Debug)]
 pub enum NumberSign {
@@ -24,6 +25,13 @@ pub enum ConversionType {
     UInt64,
     IntPtr,
     UIntPtr,
+}
+
+#[derive(Debug)]
+pub enum Alignment {
+    Byte,
+    Double,
+    Quad,
 }
 
 #[derive(Debug)]
@@ -59,16 +67,16 @@ pub enum Instruction<'a> {
     AddOverflow(NumberSign),
     And,
     ArgumentList,
-    BranchEqual(isize),
-    BranchGreaterOrEqual(NumberSign, isize),
-    BranchGreater(NumberSign, isize),
-    BranchLessOrEqual(NumberSign, isize),
-    BranchLess(NumberSign, isize),
-    BranchNotEqual(isize),
-    Branch(isize),
+    BranchEqual(usize),
+    BranchGreaterOrEqual(NumberSign, usize),
+    BranchGreater(NumberSign, usize),
+    BranchLessOrEqual(NumberSign, usize),
+    BranchLess(NumberSign, usize),
+    BranchNotEqual(usize),
+    Branch(usize),
     Breakpoint,
-    BranchFalsy(isize),
-    BranchTruthy(isize),
+    BranchFalsy(usize),
+    BranchTruthy(usize),
     Call {
         tail_call: bool,
         method: MethodSource<'a>,
@@ -86,7 +94,7 @@ pub enum Instruction<'a> {
     ConvertFloat64,
     ConvertUnsignedToFloat,
     CopyMemoryBlock {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
     },
     Divide(NumberSign),
@@ -94,26 +102,26 @@ pub enum Instruction<'a> {
     EndFilter,
     EndFinally,
     InitializeMemoryBlock {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
     },
-    Jump(UserMethod<'a>), // the standard suggests this doesn't work with generics?
+    Jump(MethodSource<'a>),
     LoadArgument(u16),
     LoadArgumentAddress(u16),
     LoadConstantInt32(i32),
     LoadConstantInt64(i64),
     LoadConstantFloat32(f32),
     LoadConstantFloat64(f64),
-    LoadMethodPointer(UserMethod<'a>), // ditto
+    LoadMethodPointer(MethodSource<'a>),
     LoadIndirect {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         value_type: LoadType,
     },
     LoadLocalVariable(u16),
     LoadLocalVariableAddress(u16),
     LoadNull,
-    Leave(isize),
+    Leave(usize),
     LocalMemoryAllocate,
     Multiply,
     MultiplyOverflow(NumberSign),
@@ -128,14 +136,14 @@ pub enum Instruction<'a> {
     ShiftRight(NumberSign),
     StoreArgument(u16),
     StoreIndirect {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         value_type: StoreType,
     },
     StoreLocal(u16),
     Subtract,
     SubtractOverflow(NumberSign),
-    Switch(Vec<isize>),
+    Switch(Vec<usize>),
     Xor,
 
     Box(MethodType),
@@ -171,14 +179,14 @@ pub enum Instruction<'a> {
     },
     LoadField {
         skip_null_check: bool,
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         field: FieldSource<'a>,
     },
     LoadFieldAddress(FieldSource<'a>),
     LoadLength,
     LoadObject {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         object_type: MethodType,
     },
@@ -187,7 +195,7 @@ pub enum Instruction<'a> {
         field: FieldSource<'a>,
     },
     LoadStaticFieldAddress(FieldSource<'a>),
-    LoadString(&'a str),
+    LoadString(String),
     LoadTokenField(FieldSource<'a>),
     LoadTokenMethod(MethodSource<'a>),
     LoadTokenType(MethodType),
@@ -195,7 +203,7 @@ pub enum Instruction<'a> {
         skip_null_check: bool,
         method: MethodSource<'a>,
     },
-    MakeTypedReference(TypeSource<MethodType>),
+    MakeTypedReference(MethodType),
     NewArray(MethodType),
     NewObject(UserMethod<'a>), // constructors can't have generics
     ReadTypedReferenceType,
@@ -216,12 +224,12 @@ pub enum Instruction<'a> {
     },
     StoreField {
         skip_null_check: bool,
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         field: FieldSource<'a>,
     },
     StoreObject {
-        unaligned: bool,
+        unaligned: Option<Alignment>,
         volatile: bool,
         object_type: MethodType,
     },
@@ -235,4 +243,285 @@ pub enum Instruction<'a> {
         unbox_type: MethodType,
     },
     UnboxIntoValue(MethodType),
+}
+impl ResolvedDebug for Instruction<'_> {
+    #[allow(unused_macros)]
+    fn show(&self, res: &Resolution) -> String {
+        use Instruction::*;
+
+        macro_rules! modifiers {
+            ($($body:expr),*) => {{
+                let mut mods = vec![];
+
+                macro_rules! align {
+                    ($a:ident) => {
+                        if let Some(a) = $a {
+                            mods.push(format!("aligned({:?})", a));
+                        }
+                    };
+                }
+
+                macro_rules! constraint {
+                    ($c:ident) => {
+                        if let Some(c) = $c {
+                            mods.push(format!("constraint {}", c.show(res)))
+                        }
+                    }
+                }
+
+                macro_rules! const_bool {
+                    ($name:ident) => {
+                        macro_rules! $name {
+                            ($v:ident) => {
+                                if *$v {
+                                    mods.push(stringify!($name).to_string());
+                                }
+                            }
+                        }
+                    };
+                }
+
+                const_bool!(volatile);
+                const_bool!(tail);
+                const_bool!(notypecheck);
+                const_bool!(norangecheck);
+                const_bool!(nonullcheck);
+                const_bool!(readonly);
+
+                $($body;)*
+
+                if mods.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", mods.join(", "))
+                }
+            }};
+        }
+
+        match self {
+            Call { tail_call, method } => {
+                format!("Call{}({})", modifiers!(tail!(tail_call)), method.show(res))
+            }
+            CallIndirect {
+                tail_call,
+                signature,
+            } => format!(
+                "CallIndirect{}({})",
+                modifiers!(tail!(tail_call)),
+                signature.show(res)
+            ),
+            CopyMemoryBlock {
+                unaligned,
+                volatile,
+            } => format!(
+                "CopyMemoryBlock{}",
+                modifiers!(align!(unaligned), volatile!(volatile))
+            ),
+            InitializeMemoryBlock {
+                unaligned,
+                volatile,
+            } => format!(
+                "InitializeMemoryBlock{}",
+                modifiers!(align!(unaligned), volatile!(volatile))
+            ),
+            Jump(m) => format!("Jump({})", m.show(res)),
+            LoadMethodPointer(m) => format!("LoadMethodPointer({})", m.show(res)),
+            LoadIndirect {
+                unaligned,
+                volatile,
+                value_type,
+            } => format!(
+                "LoadIndirect{}({:?})",
+                modifiers!(align!(unaligned), volatile!(volatile)),
+                value_type
+            ),
+            StoreIndirect {
+                unaligned,
+                volatile,
+                value_type,
+            } => format!(
+                "StoreIndirect{}({:?})",
+                modifiers!(align!(unaligned), volatile!(volatile)),
+                value_type
+            ),
+            Box(t) => format!("Box({})", t.show(res)),
+            CallVirtual {
+                constraint,
+                skip_null_check,
+                tail_call,
+                method,
+            } => format!(
+                "CallVirtual{}({})",
+                modifiers!(
+                    constraint!(constraint),
+                    nonullcheck!(skip_null_check),
+                    tail!(tail_call)
+                ),
+                method.show(res)
+            ),
+            CastClass {
+                skip_type_check,
+                cast_type,
+            } => format!(
+                "CastClass{}({})",
+                modifiers!(notypecheck!(skip_type_check)),
+                cast_type.show(res)
+            ),
+            CopyObject(t) => format!("CopyObject({})", t.show(res)),
+            InitializeForObject(t) => format!("InitializeForObject({})", t.show(res)),
+            IsInstance(t) => format!("IsInstance({})", t.show(res)),
+            LoadElement {
+                skip_range_check,
+                skip_null_check,
+                element_type,
+            } => format!(
+                "LoadElement{}({})",
+                modifiers!(
+                    norangecheck!(skip_range_check),
+                    nonullcheck!(skip_null_check)
+                ),
+                element_type.show(res)
+            ),
+            LoadElementPrimitive {
+                skip_range_check,
+                skip_null_check,
+                element_type,
+            } => format!(
+                "LoadElementPrimitive{}({:?})",
+                modifiers!(
+                    norangecheck!(skip_range_check),
+                    nonullcheck!(skip_null_check)
+                ),
+                element_type
+            ),
+            LoadElementAddress {
+                skip_type_check,
+                skip_range_check,
+                skip_null_check,
+                readonly,
+                element_type,
+            } => format!(
+                "LoadElementAddress{}({})",
+                modifiers!(
+                    notypecheck!(skip_type_check),
+                    norangecheck!(skip_range_check),
+                    nonullcheck!(skip_null_check),
+                    readonly!(readonly)
+                ),
+                element_type.show(res)
+            ),
+            LoadField {
+                skip_null_check,
+                unaligned,
+                volatile,
+                field,
+            } => format!(
+                "LoadField{}({})",
+                modifiers!(
+                    nonullcheck!(skip_null_check),
+                    align!(unaligned),
+                    volatile!(volatile)
+                ),
+                field.show(res)
+            ),
+            LoadFieldAddress(f) => format!("LoadFieldAddress({})", f.show(res)),
+            LoadObject {
+                unaligned,
+                volatile,
+                object_type,
+            } => format!(
+                "LoadObject{}({})",
+                modifiers!(align!(unaligned), volatile!(volatile)),
+                object_type.show(res)
+            ),
+            LoadStaticField { volatile, field } => format!(
+                "LoadStaticField{}({})",
+                modifiers!(volatile!(volatile)),
+                field.show(res)
+            ),
+            LoadStaticFieldAddress(f) => format!("LoadStaticFieldAddress({})", f.show(res)),
+            LoadTokenField(f) => format!("LoadTokenField({})", f.show(res)),
+            LoadTokenMethod(m) => format!("LoadTokenMethod({})", m.show(res)),
+            LoadTokenType(t) => format!("LoadTokenType({})", t.show(res)),
+            LoadVirtualMethodPointer {
+                skip_null_check,
+                method,
+            } => format!(
+                "LoadVirtualMethodPointer{}({})",
+                modifiers!(nonullcheck!(skip_null_check)),
+                method.show(res)
+            ),
+            MakeTypedReference(t) => format!("MakeTypedReference({})", t.show(res)),
+            NewArray(t) => format!("NewArray({})", t.show(res)),
+            NewObject(m) => format!("NewObject({})", m.show(res)),
+            ReadTypedReferenceValue(t) => format!("ReadTypedReferenceValue({})", t.show(res)),
+            Sizeof(t) => format!("Sizeof({})", t.show(res)),
+            StoreElement {
+                skip_type_check,
+                skip_range_check,
+                skip_null_check,
+                element_type,
+            } => format!(
+                "StoreElement{}({})",
+                modifiers!(
+                    notypecheck!(skip_type_check),
+                    norangecheck!(skip_range_check),
+                    nonullcheck!(skip_null_check)
+                ),
+                element_type.show(res)
+            ),
+            StoreElementPrimitive {
+                skip_type_check,
+                skip_range_check,
+                skip_null_check,
+                element_type,
+            } => format!(
+                "StoreElementPrimitive{}({:?})",
+                modifiers!(
+                    notypecheck!(skip_type_check),
+                    norangecheck!(skip_range_check),
+                    nonullcheck!(skip_null_check)
+                ),
+                element_type
+            ),
+            StoreField {
+                skip_null_check,
+                unaligned,
+                volatile,
+                field,
+            } => format!(
+                "StoreField{}({})",
+                modifiers!(
+                    nonullcheck!(skip_null_check),
+                    align!(unaligned),
+                    volatile!(volatile)
+                ),
+                field.show(res)
+            ),
+            StoreObject {
+                unaligned,
+                volatile,
+                object_type,
+            } => format!(
+                "StoreObject{}({})",
+                modifiers!(align!(unaligned), volatile!(volatile)),
+                object_type.show(res)
+            ),
+            StoreStaticField { volatile, field } => format!(
+                "StoreStaticField{}({})",
+                modifiers!(volatile!(volatile)),
+                field.show(res)
+            ),
+            UnboxIntoAddress {
+                skip_type_check,
+                unbox_type,
+            } => format!(
+                "UnboxIntoAddress{}({})",
+                modifiers!(notypecheck!(skip_type_check)),
+                unbox_type.show(res),
+            ),
+            UnboxIntoValue(t) => format!("UnboxIntoValue({})", t.show(res)),
+            rest => format!("{:?}", rest),
+        }
+    }
 }

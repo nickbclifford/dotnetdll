@@ -53,7 +53,7 @@ element_types! {
     PINNED = 0x45
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDefOrRefOrSpec(pub index::Token);
 
 impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
@@ -119,7 +119,7 @@ impl TryFromCtx<'_> for ArrayShape {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CustomMod {
     Required(TypeDefOrRefOrSpec),
     Optional(TypeDefOrRefOrSpec),
@@ -145,7 +145,7 @@ impl TryFromCtx<'_> for CustomMod {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Boolean,
     Char,
@@ -278,7 +278,7 @@ impl TryFromCtx<'_> for Type {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 // no idea what the hell any of this means
 pub enum ParamType {
     Type(Type),
@@ -286,7 +286,7 @@ pub enum ParamType {
     TypedByRef,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Param(pub Option<CustomMod>, pub ParamType);
 
 impl TryFromCtx<'_> for Param {
@@ -315,7 +315,7 @@ impl TryFromCtx<'_> for Param {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RetTypeType {
     Type(Type),
     ByRef(Type),
@@ -323,7 +323,7 @@ pub enum RetTypeType {
     Void,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RetType(pub Option<CustomMod>, pub RetTypeType);
 
 impl TryFromCtx<'_> for RetType {

@@ -13,7 +13,7 @@ use super::{
     generic::{show_constraints, MethodGeneric},
     module::ExternalModuleReference,
     signature,
-    types::{CustomTypeModifier, MemberType, MethodType, TypeDefinition, TypeSource},
+    types::{CustomTypeModifier, MemberType, MethodType, TypeSource},
     ResolvedDebug,
 };
 
@@ -91,19 +91,41 @@ name_display!(ExternalFieldReference<'_>);
 
 #[derive(Debug)]
 pub enum FieldSource<'a> {
-    Definition {
-        parent: &'a TypeDefinition<'a>,
-        field: &'a Field<'a>,
-    },
-    Reference(&'a ExternalFieldReference<'a>),
+    Definition { parent: usize, field: usize },
+    Reference(Rc<RefCell<ExternalFieldReference<'a>>>),
 }
 impl Display for FieldSource<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use FieldSource::*;
 
-        match *self {
+        match self {
             Definition { field, .. } => write!(f, "{}", field),
-            Reference(r) => write!(f, "{}", r),
+            Reference(r) => write!(f, "{}", r.borrow()),
+        }
+    }
+}
+impl ResolvedDebug for FieldSource<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        use FieldSource::*;
+
+        match self {
+            Definition { parent, field } => {
+                let t = &res.type_definitions[*parent];
+                format!("{}.{}", t.type_name(), t.fields[*field].name)
+            }
+            Reference(rc) => {
+                use FieldReferenceParent::*;
+
+                let r = rc.borrow();
+                format!(
+                    "{}.{}",
+                    match &r.parent {
+                        Type(t) => t.show(res),
+                        Module(m) => m.borrow().name.to_string(),
+                    },
+                    r.name
+                )
+            }
         }
     }
 }
@@ -324,33 +346,53 @@ pub enum UserMethod<'a> {
 }
 impl ResolvedDebug for UserMethod<'_> {
     fn show(&self, res: &Resolution) -> String {
-        let full_method_name = |&idx: &MethodIndex| {
-            let parent_type = &res.type_definitions[idx.parent_type];
-            format!("{}.{}", parent_type, res[idx])
-        };
+        let signature;
+        let parent_name;
+        let method_name;
 
         match self {
-            UserMethod::Definition(i) => full_method_name(i),
+            UserMethod::Definition(i) => {
+                let method = &res[*i];
+                signature = method.signature.clone();
+                parent_name = res.type_definitions[i.parent_type].type_name();
+                method_name = method.name;
+            }
             UserMethod::Reference(rc) => {
                 let r = rc.borrow();
+                signature = r.signature.clone();
+                method_name = r.name;
+
                 use MethodReferenceParent::*;
-                match &r.parent {
-                    Type(t) => format!("{}.{}", t.show(res), r.name),
-                    Module(m) => format!("{}.{}", m.borrow().name, r.name),
-                    VarargMethod(i) => format!(
-                        "{} as vararg specialization for {}",
-                        r.name,
-                        full_method_name(i)
-                    ),
+                parent_name = match &r.parent {
+                    Type(t) => t.show(res),
+                    Module(m) => m.borrow().name.to_string(),
+                    VarargMethod(i) => res.type_definitions[i.parent_type].type_name(),
                 }
             }
         }
+
+        let mut buf = if signature.instance {
+            String::new()
+        } else {
+            String::from("static ")
+        };
+
+        write!(
+            buf,
+            "{} {}.{}({})",
+            signature.return_type.show(res),
+            parent_name,
+            method_name,
+            signature.show_parameters(res)
+        )
+        .unwrap();
+
+        buf
     }
 }
 
 #[derive(Debug)]
 pub struct GenericMethodInstantiation<'a> {
-    pub attributes: Vec<Attribute<'a>>,
     pub base: UserMethod<'a>,
     pub parameters: Vec<MethodType>,
 }
@@ -359,6 +401,23 @@ pub struct GenericMethodInstantiation<'a> {
 pub enum MethodSource<'a> {
     User(UserMethod<'a>),
     Generic(GenericMethodInstantiation<'a>),
+}
+impl ResolvedDebug for MethodSource<'_> {
+    fn show(&self, res: &Resolution) -> String {
+        use MethodSource::*;
+        match self {
+            User(u) => u.show(res),
+            Generic(g) => format!(
+                "({})<{}>",
+                g.base.show(res),
+                g.parameters
+                    .iter()
+                    .map(|p| p.show(res))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

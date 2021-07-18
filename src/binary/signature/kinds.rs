@@ -8,7 +8,7 @@ pub enum CallingConvention {
     Generic(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MethodDefSig {
     pub has_this: bool,
     pub explicit_this: bool,
@@ -69,7 +69,7 @@ impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MethodRefSig {
     pub method_def: MethodDefSig,
     pub varargs: Vec<Param>,
@@ -115,7 +115,7 @@ pub enum StandAloneCallingConvention {
     Fastcall,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StandAloneMethodSig {
     pub has_this: bool,
     pub explicit_this: bool,
@@ -293,21 +293,32 @@ impl TryFromCtx<'_> for LocalVarSig {
             vars.push(if var_tag == ELEMENT_TYPE_TYPEDBYREF {
                 LocalVar::TypedByRef
             } else {
+                // revert the var tag
+                *offset -= 1;
+
                 let prev_offset = *offset;
                 let opt_mod = from.gread(offset).ok();
                 if opt_mod.is_none() {
                     *offset = prev_offset;
                 }
 
-                let pinned = from.gread_with::<u8>(offset, scroll::LE)? == ELEMENT_TYPE_PINNED;
-                if !pinned {
-                    *offset -= 1;
-                }
+                // the syntax diagram for these flags in the spec is very confusing
 
-                let by_ref = from.gread_with::<u8>(offset, scroll::LE)? == ELEMENT_TYPE_BYREF;
-                if !by_ref {
-                    *offset -= 1;
-                }
+                let pinned = match from.gread_with::<u8>(offset, scroll::LE) {
+                    Ok(c) if c == ELEMENT_TYPE_PINNED => true,
+                    _ => {
+                        *offset -= 1;
+                        false
+                    }
+                };
+
+                let by_ref = match from.gread_with::<u8>(offset, scroll::LE) {
+                    Ok(r) if r == ELEMENT_TYPE_BYREF => true,
+                    _ => {
+                        *offset -= 1;
+                        false
+                    }
+                };
 
                 LocalVar::Variable {
                     custom_modifier: opt_mod,
