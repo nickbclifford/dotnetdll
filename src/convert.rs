@@ -1013,7 +1013,7 @@ pub fn instruction<'r, 'data>(
         SubOvfUn => Instruction::SubtractOverflow(NumberSign::Unsigned),
         Switch(v) => Instruction::Switch(
             v.into_iter()
-                .map(|i| convert_offset(i))
+                .map(convert_offset)
                 .collect::<Result<_>>()?,
         ),
         Throw => Instruction::Throw,

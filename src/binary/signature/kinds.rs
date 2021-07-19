@@ -59,9 +59,29 @@ impl TryFromCtx<'_> for MethodDefSig {
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         build_method_def(from, |len, offset| {
-            (0..len).map(|_| from.gread(offset)).collect::<Result<_, _>>()
+            (0..len)
+                .map(|_| from.gread(offset))
+                .collect::<Result<_, _>>()
         })
     }
+}
+
+fn build_params_with_varargs(
+    len: &mut u32,
+    from: &[u8],
+    offset: &mut usize,
+) -> scroll::Result<Vec<Param>> {
+    let mut params = vec![];
+    while *len > 0 {
+        if from[*offset] == ELEMENT_TYPE_SENTINEL {
+            *offset += 1;
+            break;
+        } else {
+            params.push(from.gread(offset)?);
+            *len -= 1;
+        }
+    }
+    Ok(params)
 }
 
 #[derive(Debug, Clone)]
@@ -76,21 +96,14 @@ impl TryFromCtx<'_> for MethodRefSig {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let mut remaining_params = 0;
         let (method_def, mut offset) = build_method_def(from, |mut len, offset| {
-            let mut params = vec![];
-            while len > 0 {
-                if from[*offset] == ELEMENT_TYPE_SENTINEL {
-                    *offset += 1;
-                    break;
-                } else {
-                    params.push(from.gread(offset)?);
-                    len -= 1;
-                }
-            }
+            let params = build_params_with_varargs(&mut len, from, offset)?;
             remaining_params = len;
             Ok(params)
         })?;
 
-        let varargs = (0..remaining_params).map(|_| from.gread(&mut offset)).collect::<Result<_, _>>()?;
+        let varargs = (0..remaining_params)
+            .map(|_| from.gread(&mut offset))
+            .collect::<Result<_, _>>()?;
 
         Ok((
             MethodRefSig {
@@ -145,31 +158,14 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
             bad => throw!("bad standalone method calling convention {:#03x}", bad),
         };
 
-        let compressed::Unsigned(param_count) = from.gread(offset)?;
-        let count = if calling_convention == Vararg {
-            param_count / 2
-        } else {
-            param_count
-        };
+        let compressed::Unsigned(mut param_count) = from.gread(offset)?;
 
         let ret_type = from.gread(offset)?;
 
-        let mut params = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            params.push(from.gread(offset)?);
-        }
-
-        let mut varargs = vec![];
-        if calling_convention == Vararg || calling_convention == C {
-            let sentinel: u8 = from.gread_with(offset, scroll::LE)?;
-            if sentinel == ELEMENT_TYPE_SENTINEL {
-                for _ in 0..count {
-                    varargs.push(from.gread(offset)?);
-                }
-            } else {
-                *offset -= 1;
-            }
-        }
+        let params = build_params_with_varargs(&mut param_count, from, offset)?;
+        let varargs = (0..param_count)
+            .map(|_| from.gread(offset))
+            .collect::<Result<_, _>>()?;
 
         Ok((
             StandAloneMethodSig {
@@ -286,13 +282,10 @@ impl TryFromCtx<'_> for LocalVarSig {
 
         let mut vars = Vec::with_capacity(var_count as usize);
         for _ in 0..var_count {
-            let var_tag: u8 = from.gread_with(offset, scroll::LE)?;
-            vars.push(if var_tag == ELEMENT_TYPE_TYPEDBYREF {
+            vars.push(if from[*offset] == ELEMENT_TYPE_TYPEDBYREF {
+                *offset += 1;
                 LocalVar::TypedByRef
             } else {
-                // revert the var tag
-                *offset -= 1;
-
                 let prev_offset = *offset;
                 let opt_mod = from.gread(offset).ok();
                 if opt_mod.is_none() {
@@ -301,21 +294,15 @@ impl TryFromCtx<'_> for LocalVarSig {
 
                 // the syntax diagram for these flags in the spec is very confusing
 
-                let pinned = match from.gread_with::<u8>(offset, scroll::LE) {
-                    Ok(c) if c == ELEMENT_TYPE_PINNED => true,
-                    _ => {
-                        *offset -= 1;
-                        false
-                    }
-                };
+                let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
+                if pinned {
+                    *offset += 1;
+                }
 
-                let by_ref = match from.gread_with::<u8>(offset, scroll::LE) {
-                    Ok(r) if r == ELEMENT_TYPE_BYREF => true,
-                    _ => {
-                        *offset -= 1;
-                        false
-                    }
-                };
+                let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
+                if by_ref {
+                    *offset += 1;
+                }
 
                 LocalVar::Variable {
                     custom_modifier: opt_mod,

@@ -245,11 +245,10 @@ impl TryFromCtx<'_> for Type {
                     *offset = prev_offset;
                 }
 
-                let next_tag: u8 = from.gread_with(offset, scroll::LE)?;
-                let type_data = if next_tag == ELEMENT_TYPE_VOID {
+                let type_data = if from[*offset] == ELEMENT_TYPE_VOID {
+                    *offset += 1;
                     None
                 } else {
-                    *offset -= 1;
                     Some(from.gread(offset)?)
                 };
 

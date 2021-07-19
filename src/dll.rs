@@ -1898,9 +1898,10 @@ impl<'a> DLL<'a> {
                                 let try_offset = get_offset!(h.try_offset, "try");
                                 let handler_offset = get_offset!(h.handler_offset, "handler");
 
+                                let filter_flag = check_bitmask!(h.flags, 0x1);
                                 Ok(Exception {
-                                    typed_exception: check_bitmask!(h.flags, 0x0),
-                                    filter: check_bitmask!(h.flags, 0x1),
+                                    typed_exception: !filter_flag,
+                                    filter: filter_flag,
                                     finally: check_bitmask!(h.flags, 0x2),
                                     fault: check_bitmask!(h.flags, 0x4),
                                     try_offset,
