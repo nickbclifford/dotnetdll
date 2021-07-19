@@ -377,14 +377,33 @@ impl ResolvedDebug for UserMethod<'_> {
             String::from("static ")
         };
 
-        write!(
-            buf,
-            "{} {}.{}({})",
-            signature.return_type.show(res),
-            parent_name,
-            method_name,
-            signature.show_parameters(res)
-        )
+        let ret_type = signature.return_type.show(res);
+
+        match signature.varargs {
+            Some(v) => write!(
+                buf,
+                "vararg {} {}.{}({})",
+                ret_type,
+                parent_name,
+                method_name,
+                signature
+                    .parameters
+                    .iter()
+                    .map(|p| p.show(res))
+                    .chain(std::iter::once("...".to_string()))
+                    .chain(v.iter().map(|p| p.show(res)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            None => write!(
+                buf,
+                "{} {}.{}({})",
+                ret_type,
+                parent_name,
+                method_name,
+                signature.show_parameters(res)
+            ),
+        }
         .unwrap();
 
         buf

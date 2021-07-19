@@ -214,7 +214,7 @@ pub struct Attribute<'a> {
 impl<'a> Attribute<'a> {
     pub fn instantiation_data(
         &'a self,
-        resolver: &impl Resolver,
+        resolver: &impl Resolver<'a>,
         resolution: &'a Resolution<'a>,
     ) -> Result<CustomAttributeData<'a>> {
         let bytes = self.value.ok_or_else(|| scroll::Error::Custom(
@@ -292,7 +292,7 @@ impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
         &self,
         resolution: &'a Resolution<'a>,
-        resolver: &impl Resolver,
+        resolver: &impl Resolver<'a>,
     ) -> Result<Vec<SecurityAttributeData<'a>>> {
         let offset = &mut 0;
 

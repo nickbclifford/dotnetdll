@@ -17,55 +17,50 @@ pub struct MethodDefSig {
     pub params: Vec<Param>,
 }
 
+fn build_method_def(
+    from: &[u8],
+    build_params: impl FnOnce(u32, &mut usize) -> scroll::Result<Vec<Param>>,
+) -> scroll::Result<(MethodDefSig, usize)> {
+    let offset = &mut 0;
+
+    let tag: u8 = from.gread_with(offset, scroll::LE)?;
+
+    let has_this = check_bitmask!(tag, 0x20);
+    let explicit_this = check_bitmask!(tag, 0x40);
+
+    let kind = match tag & 0x1f {
+        0x10 => {
+            let compressed::Unsigned(value) = from.gread(offset)?;
+            CallingConvention::Generic(value as usize)
+        }
+        0x5 => CallingConvention::Vararg,
+        0x0 => CallingConvention::Default,
+        _ => throw!("bad method def kind tag {:#04x}", tag),
+    };
+
+    let compressed::Unsigned(param_count) = from.gread(offset)?;
+
+    let ret_type = from.gread(offset)?;
+
+    Ok((
+        MethodDefSig {
+            has_this,
+            explicit_this,
+            calling_convention: kind,
+            ret_type,
+            params: build_params(param_count, offset)?,
+        },
+        *offset,
+    ))
+}
+
 impl TryFromCtx<'_> for MethodDefSig {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
-        TryFromCtx::try_from_ctx(from, false)
-    }
-}
-
-impl<'a> TryFromCtx<'a, bool> for MethodDefSig {
-    type Error = scroll::Error;
-
-    fn try_from_ctx(from: &'a [u8], is_ref: bool) -> Result<(Self, usize), Self::Error> {
-        let offset = &mut 0;
-
-        let tag: u8 = from.gread_with(offset, scroll::LE)?;
-
-        let has_this = check_bitmask!(tag, 0x20);
-        let explicit_this = check_bitmask!(tag, 0x40);
-
-        let kind = match tag & 0x1f {
-            0x10 => {
-                let compressed::Unsigned(value) = from.gread(offset)?;
-                CallingConvention::Generic(value as usize)
-            }
-            0x5 => CallingConvention::Vararg,
-            0x0 => CallingConvention::Default,
-            _ => throw!("bad method def kind tag {:#04x}", tag),
-        };
-
-        let compressed::Unsigned(param_count) = from.gread(offset)?;
-
-        let ret_type = from.gread(offset)?;
-
-        let len = if is_ref { param_count / 2 } else { param_count };
-        let mut params = Vec::with_capacity(len as usize);
-        for _ in 0..len {
-            params.push(from.gread(offset)?);
-        }
-
-        Ok((
-            MethodDefSig {
-                has_this,
-                explicit_this,
-                calling_convention: kind,
-                ret_type,
-                params,
-            },
-            *offset,
-        ))
+        build_method_def(from, |len, offset| {
+            (0..len).map(|_| from.gread(offset)).collect::<Result<_, _>>()
+        })
     }
 }
 
@@ -79,28 +74,30 @@ impl TryFromCtx<'_> for MethodRefSig {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
-        let offset = &mut 0;
-
-        let method_def = from.gread_with::<MethodDefSig>(offset, true)?;
-
-        let mut varargs = vec![];
-        if method_def.calling_convention == CallingConvention::Vararg {
-            let sentinel: u8 = from.gread_with(offset, scroll::LE)?;
-            if sentinel == ELEMENT_TYPE_SENTINEL {
-                for _ in 0..method_def.params.len() {
-                    varargs.push(from.gread(offset)?);
+        let mut remaining_params = 0;
+        let (method_def, mut offset) = build_method_def(from, |mut len, offset| {
+            let mut params = vec![];
+            while len > 0 {
+                if from[*offset] == ELEMENT_TYPE_SENTINEL {
+                    *offset += 1;
+                    break;
+                } else {
+                    params.push(from.gread(offset)?);
+                    len -= 1;
                 }
-            } else {
-                *offset -= 1;
             }
-        }
+            remaining_params = len;
+            Ok(params)
+        })?;
+
+        let varargs = (0..remaining_params).map(|_| from.gread(&mut offset)).collect::<Result<_, _>>()?;
 
         Ok((
             MethodRefSig {
                 method_def,
                 varargs,
             },
-            *offset,
+            offset,
         ))
     }
 }

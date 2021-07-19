@@ -26,7 +26,7 @@ pub mod resolved;
 mod tests {
     use scroll::Pread;
 
-    use super::{binary::*, dll::DLL, resolved::ResolvedDebug};
+    use super::{binary::*, dll::{DLL, DLLError}, resolved::ResolvedDebug};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
@@ -133,6 +133,58 @@ mod tests {
             let meth = dll.get_method(&row)?;
 
             println!("{:#?}", meth.body);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn attributes() -> Result<(), Box<dyn std::error::Error>> {
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
+        let dll = DLL::parse(&file)?;
+
+        let r = dll.resolve()?;
+
+        use crate::{resolved::types::*, resolution::Resolution};
+
+        struct SingleAssemblyResolver<'a>(&'a Resolution<'a>);
+        impl<'a> Resolver<'a> for SingleAssemblyResolver<'a> {
+            type Error = DLLError;
+
+            fn find_type(&self, name: &str) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error> {
+                println!("looking for type {}", name);
+
+                match self.0.type_definitions.iter().find(|t| t.type_name() == name) {
+                    Some(t) => Ok((t, self.0)),
+                    None => Err(DLLError::Other("couldn't find type"))
+                }
+            }
+        }
+
+        let resolver = SingleAssemblyResolver(&r);
+
+        if let Some(a) = &r.assembly {
+            for a in a.attributes.iter() {
+                println!("assembly attribute {} ({:x?})", a.constructor.show(&r), a.value.unwrap());
+                match a.instantiation_data(&resolver, &r) {
+                    Ok(d) => println!("data {:#?}", d),
+                    Err(e) => println!("failed to parse data {}", e)
+                }
+            }
+        }
+
+        for t in r.type_definitions.iter() {
+            for a in t.attributes.iter() {
+                println!("type attribute {}", a.constructor.show(&r));
+                println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
+            }
+
+            for m in t.methods.iter() {
+                for a in m.attributes.iter() {
+                    println!("method attribute {}", a.constructor.show(&r));
+                    println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
+                }
+            }
         }
 
         Ok(())

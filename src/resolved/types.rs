@@ -456,9 +456,9 @@ impl ResolvedDebug for LocalVariable {
     }
 }
 
-pub trait Resolver {
+pub trait Resolver<'a> {
     type Error: std::error::Error;
-    fn find_type<'a>(
+    fn find_type(
         &self,
         name: &str,
     ) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error>;

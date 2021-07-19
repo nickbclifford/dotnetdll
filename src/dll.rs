@@ -1317,12 +1317,7 @@ impl<'a> DLL<'a> {
                             }
                         }
                     }
-                    bad => {
-                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                            "bad parent index {:?} for field reference {}",
-                            bad, name
-                        )))))
-                    }
+                    _ => return None
                 };
 
                 match sig_blob.pread::<FieldSig>(0) {
