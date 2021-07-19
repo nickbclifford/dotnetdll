@@ -1468,9 +1468,29 @@ impl<'a> DLL<'a> {
             }
         }
 
+        use metadata::{
+            index::{Token, TokenTarget},
+            table::Kind,
+        };
+
+        let entry_token = self.cli.entry_point_token.to_le_bytes().pread::<Token>(0)?;
+        let entry_idx = entry_token.index - 1;
+
         let mut res = Resolution {
             assembly,
             assembly_references: assembly_refs,
+            entry_point: match entry_token.target {
+                TokenTarget::Table(Kind::MethodDef) => match methods.get(entry_idx) {
+                    Some(&m) => EntryPoint::Method(m),
+                    None => throw!("invalid method index {} for entry point", entry_idx),
+                },
+                TokenTarget::Table(Kind::File) => match files.get(entry_idx) {
+                    Some(f) => EntryPoint::File(Rc::clone(f)),
+                    None => throw!("invalid file index {} for entry point", entry_idx),
+                },
+                bad => throw!("invalid entry point metadata token {:?}", bad),
+            },
+            files,
             manifest_resources: resources,
             module,
             module_references: module_refs,
@@ -1712,7 +1732,7 @@ impl<'a> DLL<'a> {
                 File(i) => {
                     let f_idx = i - 1;
 
-                    match files.get(f_idx) {
+                    match res.files.get(f_idx) {
                         Some(f) => f.borrow_mut().attributes.push(attr),
                         None => throw!(
                             "invalid file index {} for parent of custom attribute {}",
@@ -1787,10 +1807,6 @@ impl<'a> DLL<'a> {
         for (idx, m) in tables.method_def.iter().enumerate() {
             use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
             use body::*;
-            use metadata::{
-                index::{Token, TokenTarget},
-                table::Kind,
-            };
             use types::LocalVariable;
 
             if m.rva == 0 {

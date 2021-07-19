@@ -35,6 +35,14 @@ mod tests {
 
         let r = dll.resolve()?;
 
+        use super::{resolution::EntryPoint, resolved::members::UserMethod};
+
+        print!("assembly entry point: ");
+        match &r.entry_point {
+            EntryPoint::Method(m) => println!("{}", UserMethod::Definition(*m).show(&r)),
+            EntryPoint::File(f) => println!("external file {}", f.borrow().name)
+        }
+
         for t in r.type_definitions.iter() {
             println!("{} {{", t.show(&r));
 

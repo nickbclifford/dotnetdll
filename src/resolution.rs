@@ -6,12 +6,20 @@ use std::rc::Rc;
 pub struct Resolution<'a> {
     pub assembly: Option<assembly::Assembly<'a>>,
     pub assembly_references: Vec<Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>>,
+    pub entry_point: EntryPoint<'a>,
+    pub files: Vec<Rc<RefCell<module::File<'a>>>>,
     pub manifest_resources: Vec<resource::ManifestResource<'a>>,
     pub module: module::Module<'a>,
     pub module_references: Vec<Rc<RefCell<module::ExternalModuleReference<'a>>>>,
     pub type_definitions: Vec<types::TypeDefinition<'a>>,
     pub type_references: Vec<types::ExternalTypeReference<'a>>,
     // TODO
+}
+
+#[derive(Debug)]
+pub enum EntryPoint<'a> {
+    Method(MethodIndex),
+    File(Rc<RefCell<module::File<'a>>>)
 }
 
 #[derive(Debug, Copy, Clone)]
