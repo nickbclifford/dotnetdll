@@ -59,6 +59,11 @@ impl From<ScrollError> for DLLError {
 
 pub type Result<T> = std::result::Result<T, DLLError>;
 
+#[derive(Debug, Default, Copy, Clone)]
+pub struct ResolveOptions {
+    pub skip_method_bodies: bool,
+}
+
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
         let dos = ImageDosHeader::parse(bytes)?;
@@ -135,7 +140,7 @@ impl<'a> DLL<'a> {
     }
 
     #[allow(clippy::nonminimal_bool)]
-    pub fn resolve(&self) -> Result<Resolution<'a>> {
+    pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
         let strings: Strings = self.get_heap("#Strings")?;
         let blobs: Blob = self.get_heap("#Blob")?;
         let guids: GUID = self.get_heap("#GUID")?;
@@ -1251,6 +1256,9 @@ impl<'a> DLL<'a> {
 
         debug!("method semantics");
 
+        // NOTE: seems to be the longest resolution step for large assemblies (i.e. System.Private.CoreLib)
+        // may be worth investigating possible speedups
+
         for s in tables.method_semantics.iter() {
             use metadata::index::HasSemantics;
 
@@ -1841,148 +1849,161 @@ impl<'a> DLL<'a> {
 
         let sig_len = tables.stand_alone_sig.len();
 
-        debug!("method bodies");
+        if !opts.skip_method_bodies {
+            debug!("method bodies");
 
-        for (idx, m) in tables.method_def.iter().enumerate() {
-            use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
-            use body::*;
-            use types::LocalVariable;
+            for (idx, m) in tables.method_def.iter().enumerate() {
+                use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
+                use body::*;
+                use types::LocalVariable;
 
-            if m.rva == 0 {
-                continue;
-            }
-
-            let name = res[methods[idx]].name;
-
-            let raw_body = self.get_method(m)?;
-
-            let header = match raw_body.header {
-                method::Header::Tiny { .. } => Header {
-                    initialize_locals: false,
-                    maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
-                    local_variables: vec![],
-                },
-                method::Header::Fat {
-                    flags,
-                    max_stack,
-                    local_var_sig_tok,
-                    ..
-                } => {
-                    let local_variables = if local_var_sig_tok == 0 {
-                        vec![]
-                    } else {
-                        let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
-                        if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
-                            && tok.index <= sig_len
-                        {
-                            let vars: LocalVarSig =
-                                heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature)
-                                    .pread(0)?;
-
-                            vars.0
-                                .into_iter()
-                                .map(|v| {
-                                    Ok(match v {
-                                        LocalVar::TypedByRef => LocalVariable::TypedReference,
-                                        LocalVar::Variable {
-                                            custom_modifiers,
-                                            pinned,
-                                            by_ref,
-                                            var_type,
-                                        } => LocalVariable::Variable {
-                                            custom_modifiers: custom_modifiers
-                                                .into_iter()
-                                                .map(|c| convert::custom_modifier(c, &ctx))
-                                                .collect::<Result<_>>()?,
-                                            pinned,
-                                            by_ref,
-                                            var_type: convert::method_type_sig(var_type, &ctx)?,
-                                        },
-                                    })
-                                })
-                                .collect::<Result<Vec<_>>>()?
-                        } else {
-                            throw!(
-                                "invalid local variable signature token {:?} for method {}",
-                                tok,
-                                name
-                            );
-                        }
-                    };
-                    Header {
-                        initialize_locals: check_bitmask!(flags, 0x10),
-                        maximum_stack_size: max_stack as usize,
-                        local_variables,
-                    }
+                if m.rva == 0 {
+                    continue;
                 }
-            };
 
-            let raw_instrs = raw_body.body;
+                let name = res[methods[idx]].name;
 
-            let instr_offsets: Vec<_> = raw_instrs.iter().map(|i| i.offset).collect();
+                let raw_body = self.get_method(m)?;
 
-            let data_sections = raw_body
-                .data_sections
-                .into_iter()
-                .map(|d| {
-                    use crate::binary::method::SectionKind;
-                    Ok(match d.section {
-                        SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
-                            e.into_iter().map(|h| {
-                                macro_rules! get_offset {
-                                    ($byte:expr, $name:literal) => {{
-                                        let max = instr_offsets.iter().max().unwrap();
+                let header = match raw_body.header {
+                    method::Header::Tiny { .. } => Header {
+                        initialize_locals: false,
+                        maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
+                        local_variables: vec![],
+                    },
+                    method::Header::Fat {
+                        flags,
+                        max_stack,
+                        local_var_sig_tok,
+                        ..
+                    } => {
+                        let local_variables = if local_var_sig_tok == 0 {
+                            vec![]
+                        } else {
+                            let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
+                            if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
+                                && tok.index <= sig_len
+                            {
+                                let vars: LocalVarSig = heap_idx!(
+                                    blobs,
+                                    tables.stand_alone_sig[tok.index - 1].signature
+                                )
+                                .pread(0)?;
 
-                                        if $byte as usize == max + 1 {
-                                            instr_offsets.len()
-                                        } else {
-                                            instr_offsets
-                                                .iter()
-                                                .position(|&i| i == $byte as usize)
-                                                .ok_or_else(|| scroll::Error::Custom(
-                                                    format!("could not find corresponding instruction for {} offset {}", $name, $byte)
-                                                ))?
-                                        }
-                                    }}
-                                }
+                                vars.0
+                                    .into_iter()
+                                    .map(|v| {
+                                        Ok(match v {
+                                            LocalVar::TypedByRef => LocalVariable::TypedReference,
+                                            LocalVar::Variable {
+                                                custom_modifiers,
+                                                pinned,
+                                                by_ref,
+                                                var_type,
+                                            } => LocalVariable::Variable {
+                                                custom_modifiers: custom_modifiers
+                                                    .into_iter()
+                                                    .map(|c| convert::custom_modifier(c, &ctx))
+                                                    .collect::<Result<_>>()?,
+                                                pinned,
+                                                by_ref,
+                                                var_type: convert::method_type_sig(var_type, &ctx)?,
+                                            },
+                                        })
+                                    })
+                                    .collect::<Result<Vec<_>>>()?
+                            } else {
+                                throw!(
+                                    "invalid local variable signature token {:?} for method {}",
+                                    tok,
+                                    name
+                                );
+                            }
+                        };
+                        Header {
+                            initialize_locals: check_bitmask!(flags, 0x10),
+                            maximum_stack_size: max_stack as usize,
+                            local_variables,
+                        }
+                    }
+                };
 
-                                let kind = match h.flags {
-                                    0 => ExceptionKind::TypedException(
-                                        convert::type_token(h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?, &ctx)?
-                                    ),
-                                    1 => ExceptionKind::Filter { offset: get_offset!(h.class_token_or_filter, "filter") },
-                                    2 => ExceptionKind::Finally,
-                                    4 => ExceptionKind::Fault,
-                                    bad => throw!("invalid exception clause type {:#06x}", bad)
-                                };
+                let raw_instrs = raw_body.body;
 
-                                let try_offset = get_offset!(h.try_offset, "try");
-                                let handler_offset = get_offset!(h.handler_offset, "handler");
+                let instr_offsets: Vec<_> = raw_instrs.iter().map(|i| i.offset).collect();
 
-                                Ok(Exception {
-                                    kind,
-                                    try_offset,
-                                    try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
-                                    handler_offset,
-                                    handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset
-                                })
-                            }).collect::<Result<_>>()?,
-                        ),
-                        SectionKind::Unrecognized => DataSection::Unrecognized,
+                let data_sections = raw_body
+                    .data_sections
+                    .into_iter()
+                    .map(|d| {
+                        use crate::binary::method::SectionKind;
+                        Ok(match d.section {
+                            SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
+                                e.into_iter().map(|h| {
+                                    macro_rules! get_offset {
+                                        ($byte:expr, $name:literal) => {{
+                                            let max = instr_offsets.iter().max().unwrap();
+
+                                            if $byte as usize == max + 1 {
+                                                instr_offsets.len()
+                                            } else {
+                                                instr_offsets
+                                                    .iter()
+                                                    .position(|&i| i == $byte as usize)
+                                                    .ok_or_else(|| scroll::Error::Custom(
+                                                        format!(
+                                                            "could not find corresponding instruction for {} offset {}",
+                                                            $name,
+                                                            $byte
+                                                        )
+                                                    ))?
+                                            }
+                                        }}
+                                    }
+
+                                    let kind = match h.flags {
+                                        0 => ExceptionKind::TypedException(
+                                            convert::type_token(
+                                                h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
+                                                &ctx
+                                            )?
+                                        ),
+                                        1 => ExceptionKind::Filter {
+                                            offset: get_offset!(h.class_token_or_filter, "filter")
+                                        },
+                                        2 => ExceptionKind::Finally,
+                                        4 => ExceptionKind::Fault,
+                                        bad => throw!("invalid exception clause type {:#06x}", bad)
+                                    };
+
+                                    let try_offset = get_offset!(h.try_offset, "try");
+                                    let handler_offset = get_offset!(h.handler_offset, "handler");
+
+                                    Ok(Exception {
+                                        kind,
+                                        try_offset,
+                                        try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
+                                        handler_offset,
+                                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset
+                                    })
+                                }).collect::<Result<_>>()?,
+                            ),
+                            SectionKind::Unrecognized => DataSection::Unrecognized,
+                        })
                     })
-                })
-                .collect::<Result<_>>()?;
+                    .collect::<Result<_>>()?;
 
-            let instrs = raw_instrs
-                .into_iter()
-                .map(|i| convert::instruction(i, &instr_offsets, &ctx, &m_ctx))
-                .collect::<Result<_>>()?;
+                let instrs = raw_instrs
+                    .into_iter()
+                    .map(|i| convert::instruction(i, &instr_offsets, &ctx, &m_ctx))
+                    .collect::<Result<_>>()?;
 
-            res[methods[idx]].body = Some(Method {
-                header,
-                body: instrs,
-                data_sections,
-            });
+                res[methods[idx]].body = Some(Method {
+                    header,
+                    body: instrs,
+                    data_sections,
+                });
+            }
         }
 
         debug!("resolved module {}", res.module.name);

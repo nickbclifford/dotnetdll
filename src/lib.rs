@@ -17,14 +17,18 @@ pub mod resolved;
 mod tests {
     use scroll::Pread;
 
-    use super::{binary::*, dll::DLL, resolved::ResolvedDebug};
+    use super::{
+        binary::*,
+        dll::{ResolveOptions, DLL},
+        resolved::ResolvedDebug,
+    };
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
-        let r = dll.resolve()?;
+        let r = dll.resolve(ResolveOptions::default())?;
 
         use super::{resolution::EntryPoint, resolved::members::UserMethod};
 
@@ -138,7 +142,11 @@ mod tests {
         let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
-        let r = dll.resolve()?;
+        let opts = ResolveOptions {
+            skip_method_bodies: true,
+        };
+
+        let r = dll.resolve(opts)?;
 
         use crate::{resolution::Resolution, resolved::types::*};
         use std::fmt;
@@ -182,7 +190,10 @@ mod tests {
             .iter()
             .map(|f| DLL::parse(&f))
             .collect::<Result<_, _>>()?;
-        let cache: Vec<_> = dlls.iter().map(DLL::resolve).collect::<Result<_, _>>()?;
+        let cache: Vec<_> = dlls
+            .iter()
+            .map(|d| d.resolve(opts))
+            .collect::<Result<_, _>>()?;
 
         let resolver = DLLCacheResolver {
             main: &r,
