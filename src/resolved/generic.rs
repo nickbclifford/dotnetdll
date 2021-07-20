@@ -21,13 +21,20 @@ impl SpecialConstraint {
 }
 
 #[derive(Debug)]
+pub struct GenericConstraint<'a, ConstraintType> {
+    pub attributes: Vec<Attribute<'a>>,
+    pub custom_modifiers: Vec<types::CustomTypeModifier>,
+    pub constraint_type: ConstraintType,
+}
+
+#[derive(Debug)]
 pub struct Generic<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
     pub sequence: usize,
     pub name: &'a str,
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,
-    pub type_constraints: (Vec<Attribute<'a>>, Vec<ConstraintType>),
+    pub type_constraints: Vec<GenericConstraint<'a, ConstraintType>>,
 }
 
 pub type TypeGeneric<'a> = Generic<'a, types::MemberType>;
@@ -60,7 +67,7 @@ pub fn show_constraints<T: ResolvedDebug>(
     res: &Resolution,
 ) -> Option<String> {
     if v.iter()
-        .any(|g| !(g.special_constraint.is_empty() && g.type_constraints.1.is_empty()))
+        .any(|g| !(g.special_constraint.is_empty() && g.type_constraints.is_empty()))
     {
         Some(
             v.iter()
@@ -75,7 +82,11 @@ pub fn show_constraints<T: ResolvedDebug>(
                     if g.special_constraint.has_default_constructor {
                         constraints.push("new()".to_string());
                     }
-                    constraints.extend(g.type_constraints.1.iter().map(|t| t.show(res)));
+                    constraints.extend(
+                        g.type_constraints
+                            .iter()
+                            .map(|t| t.constraint_type.show(res)),
+                    );
 
                     if constraints.is_empty() {
                         String::new()

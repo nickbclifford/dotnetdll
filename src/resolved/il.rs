@@ -195,7 +195,7 @@ pub enum Instruction<'a> {
         field: FieldSource<'a>,
     },
     LoadStaticFieldAddress(FieldSource<'a>),
-    LoadString(String),
+    LoadString(Vec<u16>), // not necessarily a valid UTF-16 string, just 16-bit encoded chars
     LoadTokenField(FieldSource<'a>),
     LoadTokenMethod(MethodSource<'a>),
     LoadTokenType(MethodType),
@@ -434,6 +434,7 @@ impl ResolvedDebug for Instruction<'_> {
                 modifiers!(align!(unaligned), volatile!(volatile)),
                 object_type.show(res)
             ),
+            LoadString(c) => format!("LoadString(\"{}\")", String::from_utf16_lossy(c)),
             LoadStaticField { volatile, field } => format!(
                 "LoadStaticField{}({})",
                 modifiers!(volatile!(volatile)),

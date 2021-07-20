@@ -102,25 +102,22 @@ fn base_type_sig<T>(
         String => BaseType::String,
         Array(t, shape) => BaseType::Array(enclosing(*t, ctx)?, shape),
         SzArray(cmod, t) => BaseType::Vector(
-            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
+            cmod.into_iter()
+                .map(|c| custom_modifier(c, ctx))
+                .collect::<Result<_>>()?,
             enclosing(*t, ctx)?,
         ),
         Ptr(cmod, pt) => BaseType::ValuePointer(
-            opt_map_try!(cmod, |c| custom_modifier(c, ctx)),
-            opt_map_try!(*pt, |t| enclosing(t, ctx)),
+            cmod.into_iter()
+                .map(|c| custom_modifier(c, ctx))
+                .collect::<Result<_>>()?,
+            match *pt {
+                Some(t) => Some(enclosing(t, ctx)?),
+                None => None,
+            },
         ),
         Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok, ctx)?)),
-        FnPtrDef(d) => BaseType::FunctionPointer(managed_method(*d, ctx)?),
-        FnPtrRef(r) => {
-            let mut new_sig = managed_method(r.method_def, ctx)?;
-            new_sig.varargs = Some(
-                r.varargs
-                    .into_iter()
-                    .map(|p| parameter(p, ctx))
-                    .collect::<Result<_>>()?,
-            );
-            BaseType::FunctionPointer(new_sig)
-        }
+        FnPtr(s) => BaseType::FunctionPointer(maybe_unmanaged_method(*s, ctx)?),
         GenericInstClass(tok, types) | GenericInstValueType(tok, types) => {
             BaseType::Type(TypeSource::Generic(GenericInstantiation {
                 base: user_type(tok, ctx)?,
@@ -199,6 +196,36 @@ macro_rules! def_type_idx {
 def_type_idx!(fn member_type_idx uses member_type_sig -> MemberType);
 def_type_idx!(fn method_type_idx uses method_type_sig -> MethodType);
 
+macro_rules! def_idx_with_mod {
+    (fn $name:ident uses ($idx:ident, $sig:ident) -> $t:ident) => {
+        pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<(Vec<CustomTypeModifier>, $t)> {
+            if let TypeDefOrRef::TypeSpec(i) = idx {
+                let idx = i - 1;
+                match ctx.specs.get(idx) {
+                    Some(s) => {
+                        let blob = ctx.blobs.at_index(s.signature)?;
+                        let mut offset = 0;
+                        let mods = all_custom_mods(blob, &mut offset)?;
+
+                        Ok((
+                            mods.into_iter()
+                                .map(|c| custom_modifier(c, ctx))
+                                .collect::<Result<_>>()?,
+                            $sig(blob.pread(offset)?, ctx)?,
+                        ))
+                    }
+                    None => throw!("invalid type spec index {} while parsing a type", idx),
+                }
+            } else {
+                Ok((vec![], $idx(idx, ctx)?))
+            }
+        }
+    };
+}
+
+def_idx_with_mod!(fn member_type_idx_mod uses (member_type_idx, member_type_sig) -> MemberType);
+def_idx_with_mod!(fn method_type_idx_mod uses (method_type_idx, method_type_sig) -> MethodType);
+
 macro_rules! type_source_error {
     ($bind:ident) => {
         throw!("invalid type source {:?}", $bind)
@@ -220,13 +247,15 @@ macro_rules! def_type_source {
 }
 
 def_type_source!(fn member_type_source uses member_type_idx -> MemberType);
-def_type_source!(fn method_type_source uses method_type_idx -> MethodType);
+// def_type_source!(fn method_type_source uses method_type_idx -> MethodType);
 
 pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     use signature::ParameterType::*;
 
     Ok(signature::Parameter(
-        opt_map_try!(p.0, |c| custom_modifier(c, ctx)),
+        p.0.into_iter()
+            .map(|c| custom_modifier(c, ctx))
+            .collect::<Result<_>>()?,
         match p.1 {
             ParamType::Type(t) => Value(method_type_sig(t, ctx)?),
             ParamType::ByRef(t) => Ref(method_type_sig(t, ctx)?),
@@ -249,7 +278,11 @@ macro_rules! def_method_sig {
                     .map(|p| parameter(p, ctx))
                     .collect::<Result<_>>()?,
                 return_type: ReturnType(
-                    opt_map_try!(sig.ret_type.0, |c| custom_modifier(c, ctx)),
+                    sig.ret_type
+                        .0
+                        .into_iter()
+                        .map(|c| custom_modifier(c, ctx))
+                        .collect::<Result<_>>()?,
                     match sig.ret_type.1 {
                         RetTypeType::Type(t) => {
                             Some(ParameterType::Value(method_type_sig(t, ctx)?))
@@ -371,7 +404,11 @@ fn field_source<'r, 'data>(
 }
 
 pub fn instruction<'r, 'data>(
-    InstructionUnit { offset, bytesize, instruction }: InstructionUnit,
+    InstructionUnit {
+        offset,
+        bytesize,
+        instruction,
+    }: InstructionUnit,
     all_offsets: &'r [usize],
     ctx: &Context<'r, 'data>,
     m_ctx: &MethodContext<'r, 'data>,
@@ -1011,11 +1048,7 @@ pub fn instruction<'r, 'data>(
         Sub => Instruction::Subtract,
         SubOvf => Instruction::SubtractOverflow(NumberSign::Signed),
         SubOvfUn => Instruction::SubtractOverflow(NumberSign::Unsigned),
-        Switch(v) => Instruction::Switch(
-            v.into_iter()
-                .map(convert_offset)
-                .collect::<Result<_>>()?,
-        ),
+        Switch(v) => Instruction::Switch(v.into_iter().map(convert_offset).collect::<Result<_>>()?),
         Throw => Instruction::Throw,
         Unbox(t) => unbox!(t | typecheck false),
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),

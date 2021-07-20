@@ -8,6 +8,7 @@ use super::{
     resolution::*,
     resolved,
 };
+use log::{debug, warn};
 use object::{
     endian::{LittleEndian, U32Bytes},
     pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders32, ImageNtHeaders64},
@@ -192,6 +193,19 @@ impl<'a> DLL<'a> {
                     ),
                 }
             }};
+        }
+
+        // we use filter_maps for the member refs because we distinguish between the two
+        // kinds by testing if they parse successfully or not, and filter_map makes it really
+        // easy to implement that inside an iterator. however, we need to propagate the Results
+        // through the final iterator so that they don't get turned into None and swallowed on failure
+        macro_rules! filter_map_try {
+            ($e:expr) => {
+                match $e {
+                    Ok(n) => n,
+                    Err(e) => return Some(Err(e)),
+                }
+            };
         }
 
         use resolved::*;
@@ -467,6 +481,8 @@ impl<'a> DLL<'a> {
             mvid: heap_idx!(guids, module_row.mvid),
         };
 
+        debug!("resolving module {}", module.name);
+
         let module_refs = tables
             .module_ref
             .iter()
@@ -477,6 +493,8 @@ impl<'a> DLL<'a> {
                 })))
             })
             .collect::<Result<Vec<_>>>()?;
+
+        debug!("type refs");
 
         let type_refs = tables
             .type_ref
@@ -540,6 +558,8 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        debug!("interfaces");
+
         let interface_idxs = tables
             .interface_impl
             .iter()
@@ -587,6 +607,8 @@ impl<'a> DLL<'a> {
 
         new_with_len!(fields, fields_len);
 
+        debug!("fields");
+
         for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
             use super::binary::signature::kinds::FieldSig;
             use members::*;
@@ -599,7 +621,10 @@ impl<'a> DLL<'a> {
                 parent_fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
-                    type_modifier: opt_map_try!(cmod, |c| convert::custom_modifier(c, &ctx)),
+                    type_modifiers: cmod
+                        .into_iter()
+                        .map(|c| convert::custom_modifier(c, &ctx))
+                        .collect::<Result<_>>()?,
                     return_type: convert::member_type_sig(t, &ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
@@ -625,6 +650,8 @@ impl<'a> DLL<'a> {
             }};
         }
 
+        debug!("field layout");
+
         for layout in tables.field_layout.iter() {
             let idx = layout.field.0 - 1;
             match fields.get(idx) {
@@ -638,12 +665,13 @@ impl<'a> DLL<'a> {
             }
         }
 
+        debug!("field rva");
+
         for rva in tables.field_rva.iter() {
             let idx = rva.field.0 - 1;
             match fields.get(idx) {
                 Some(&field) => {
-                    get_field!(field).start_of_initial_value =
-                        Some(&self.buffer[rva.rva as usize..])
+                    get_field!(field).start_of_initial_value = Some(self.raw_rva(rva.rva)?)
                 }
                 None => throw!("bad parent field index {} for field RVA specification", idx),
             }
@@ -652,6 +680,8 @@ impl<'a> DLL<'a> {
         let params_len = tables.param.len();
 
         new_with_len!(methods, method_len);
+
+        debug!("methods");
 
         let mut owned_params = Vec::with_capacity(params_len);
         for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
@@ -662,10 +692,7 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, m.name);
 
-                let sig = convert::managed_method(
-                    heap_idx!(blobs, m.signature).pread_with(0, ())?,
-                    &ctx,
-                )?;
+                let sig = convert::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
                 let param_len = sig.parameters.len();
 
                 parent_methods.push(Method {
@@ -741,6 +768,8 @@ impl<'a> DLL<'a> {
             }};
         }
 
+        debug!("pinvoke");
+
         for i in tables.impl_map.iter() {
             use members::*;
             use metadata::index::MemberForwarded;
@@ -811,6 +840,8 @@ impl<'a> DLL<'a> {
             }
         }
 
+        debug!("security");
+
         for (idx, s) in tables.decl_security.iter().enumerate() {
             use attribute::*;
             use metadata::index::HasDeclSecurity;
@@ -844,6 +875,10 @@ impl<'a> DLL<'a> {
             });
         }
 
+        debug!("generic parameters");
+
+        let mut constraint_map = HashMap::new();
+
         for (idx, p) in tables.generic_param.iter().enumerate() {
             use generic::*;
             use metadata::index::TypeOrMethodDef;
@@ -869,20 +904,34 @@ impl<'a> DLL<'a> {
                             value_type: check_bitmask!(p.flags, 0x08),
                             has_default_constructor: check_bitmask!(p.flags, 0x10),
                         },
-                        type_constraints: (
-                            vec![],
-                            tables
-                                .generic_param_constraint
-                                .iter()
-                                .filter_map(|c| {
-                                    if c.owner.0 - 1 == idx {
-                                        Some(convert::$convert_meth(c.constraint, &ctx))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Result<_>>()?,
-                        ),
+                        type_constraints: tables
+                            .generic_param_constraint
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(c_idx, c)| {
+                                if c.owner.0 - 1 == idx {
+                                    let (cmod, ty) =
+                                        filter_map_try!(convert::$convert_meth(c.constraint, &ctx));
+                                    Some(Ok((
+                                        c_idx,
+                                        GenericConstraint {
+                                            attributes: vec![],
+                                            custom_modifiers: cmod,
+                                            constraint_type: ty,
+                                        },
+                                    )))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Result<Vec<_>>>()?
+                            .into_iter()
+                            .enumerate()
+                            .map(|(internal, (original, c))| {
+                                constraint_map.insert(original, (idx, internal));
+                                c
+                            })
+                            .collect(),
                     }
                 };
             }
@@ -891,7 +940,9 @@ impl<'a> DLL<'a> {
                 TypeOrMethodDef::TypeDef(i) => {
                     let idx = i - 1;
                     match types.get_mut(idx) {
-                        Some(t) => t.generic_parameters.push(make_generic!(member_type_idx)),
+                        Some(t) => t
+                            .generic_parameters
+                            .push(make_generic!(member_type_idx_mod)),
                         None => throw!("invalid type index {} for generic parameter {}", idx, name),
                     }
                 }
@@ -908,7 +959,7 @@ impl<'a> DLL<'a> {
 
                     method
                         .generic_parameters
-                        .push(make_generic!(method_type_idx));
+                        .push(make_generic!(method_type_idx_mod));
                 }
                 TypeOrMethodDef::Null => {
                     throw!("invalid null owner index for generic parameter {}", name)
@@ -928,6 +979,8 @@ impl<'a> DLL<'a> {
         }
 
         new_with_len!(params, params_len);
+
+        debug!("params");
 
         for (m_idx, iter) in owned_params {
             for (p_idx, param) in iter {
@@ -950,6 +1003,8 @@ impl<'a> DLL<'a> {
                 params[p_idx] = (m_idx, meta_idx);
             }
         }
+
+        debug!("field marshal");
 
         for marshal in tables.field_marshal {
             use crate::binary::{metadata::index::HasFieldMarshal, signature::kinds::MarshalSpec};
@@ -984,6 +1039,8 @@ impl<'a> DLL<'a> {
 
         new_with_len!(properties, prop_len);
 
+        debug!("properties");
+
         for (map_idx, map) in tables.property_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
@@ -1011,10 +1068,7 @@ impl<'a> DLL<'a> {
                     getter: None,
                     setter: None,
                     other: vec![],
-                    type_modifier: opt_map_try!(sig.custom_modifier, |c| convert::custom_modifier(
-                        c, &ctx
-                    )),
-                    return_type: convert::member_type_sig(sig.ret_type, &ctx)?,
+                    property_type: convert::parameter(sig.property_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                     default: None,
@@ -1022,6 +1076,8 @@ impl<'a> DLL<'a> {
                 properties[p_idx] = (type_idx, parent_props.len() - 1);
             }
         }
+
+        debug!("constants");
 
         for (idx, c) in tables.constant.iter().enumerate() {
             use crate::binary::signature::encoded::*;
@@ -1032,17 +1088,7 @@ impl<'a> DLL<'a> {
 
             let value = Some(match c.constant_type {
                 ELEMENT_TYPE_BOOLEAN => Boolean(blob.pread_with::<u8>(0, scroll::LE)? == 1),
-                ELEMENT_TYPE_CHAR => {
-                    let char_bytes = blob.pread_with::<u16>(0, scroll::LE)?;
-                    match char::from_u32(char_bytes as u32) {
-                        Some(ch) => Char(ch),
-                        None => throw!(
-                            "invalid UTF-32 character {:#06x} for constant {}",
-                            char_bytes,
-                            idx
-                        ),
-                    }
-                }
+                ELEMENT_TYPE_CHAR => Char(blob.pread_with(0, scroll::LE)?),
                 ELEMENT_TYPE_I1 => Int8(blob.pread_with(0, scroll::LE)?),
                 ELEMENT_TYPE_U1 => UInt8(blob.pread_with(0, scroll::LE)?),
                 ELEMENT_TYPE_I2 => Int16(blob.pread_with(0, scroll::LE)?),
@@ -1059,10 +1105,7 @@ impl<'a> DLL<'a> {
                     let chars = (0..num_utf16)
                         .map(|_| blob.gread_with(&mut offset, scroll::LE))
                         .collect::<scroll::Result<Vec<_>>>()?;
-                    match std::string::String::from_utf16(&chars) {
-                        Ok(s) => String(s),
-                        Err(e) => throw!("invalid UTF-16 String ({}) for constant {}", e, idx),
-                    }
+                    String(chars)
                 }
                 ELEMENT_TYPE_CLASS => {
                     let t: u32 = blob.pread_with(0, scroll::LE)?;
@@ -1150,6 +1193,8 @@ impl<'a> DLL<'a> {
 
         new_with_len!(events, event_len);
 
+        debug!("events");
+
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
@@ -1203,6 +1248,8 @@ impl<'a> DLL<'a> {
                 events[e_idx] = (type_idx, internal_idx);
             }
         }
+
+        debug!("method semantics");
 
         for s in tables.method_semantics.iter() {
             use metadata::index::HasSemantics;
@@ -1269,18 +1316,7 @@ impl<'a> DLL<'a> {
             }
         }
 
-        // we use filter_maps for the member refs because we distinguish between the two
-        // kinds by testing if they parse successfully or not, and filter_map makes it really
-        // easy to implement that inside an iterator. however, we need to propagate the Results
-        // through the final iterator so that they don't get turned into None and swallowed on failure
-        macro_rules! filter_map_try {
-            ($e:expr) => {
-                match $e {
-                    Ok(n) => n,
-                    Err(e) => return Some(Err(e)),
-                }
-            };
-        }
+        debug!("field refs");
 
         let mut field_map = HashMap::new();
         let field_refs = tables
@@ -1295,15 +1331,20 @@ impl<'a> DLL<'a> {
                 let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
+                let field_sig: FieldSig = match sig_blob.pread(0) {
+                    Ok(s) => s,
+                    Err(_) => return None,
+                };
+
                 let parent = match r.class {
                     MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
+                        convert::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
                     )),
                     MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
+                        convert::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
                     )),
                     MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
+                        convert::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
@@ -1317,24 +1358,18 @@ impl<'a> DLL<'a> {
                             }
                         }
                     }
-                    _ => return None
+                    _ => return None,
                 };
 
-                match sig_blob.pread::<FieldSig>(0) {
-                    Ok(field_sig) => Some(Ok((
-                        idx,
-                        ExternalFieldReference {
-                            attributes: vec![],
-                            parent,
-                            name,
-                            return_type: filter_map_try!(convert::member_type_sig(
-                                field_sig.1,
-                                &ctx
-                            )),
-                        },
-                    ))),
-                    Err(_) => None,
-                }
+                Some(Ok((
+                    idx,
+                    ExternalFieldReference {
+                        attributes: vec![],
+                        parent,
+                        name,
+                        return_type: filter_map_try!(convert::member_type_sig(field_sig.1, &ctx)),
+                    },
+                )))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
@@ -1344,6 +1379,8 @@ impl<'a> DLL<'a> {
                 Rc::new(RefCell::new(r))
             })
             .collect::<Vec<_>>();
+
+        debug!("method refs");
 
         let mut method_map = HashMap::new();
         let method_refs = tables
@@ -1358,78 +1395,72 @@ impl<'a> DLL<'a> {
                 let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
-                match sig_blob.pread_with::<MethodRefSig>(0, ()) {
-                    Ok(ref_sig) => {
-                        let mut signature =
-                            filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
-                        if signature.calling_convention == CallingConvention::Vararg {
-                            signature.varargs = Some(filter_map_try!(ref_sig
-                                .varargs
-                                .into_iter()
-                                .map(|p| convert::parameter(p, &ctx))
-                                .collect::<Result<_>>()));
-                        }
+                let ref_sig: MethodRefSig = match sig_blob.pread(0) {
+                    Ok(s) => s,
+                    Err(_) => return None,
+                };
 
-                        let parent = match r.class {
-                            MemberRefParent::TypeDef(i) => {
-                                MethodReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeDef(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::TypeRef(i) => {
-                                MethodReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeRef(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::TypeSpec(i) => {
-                                MethodReferenceParent::Type(filter_map_try!(
-                                    convert::method_type_source(TypeDefOrRef::TypeSpec(i), &ctx)
-                                ))
-                            }
-                            MemberRefParent::ModuleRef(i) => {
-                                let idx = i - 1;
-                                match module_refs.get(idx) {
-                                    Some(m) => MethodReferenceParent::Module(Rc::clone(m)),
-                                    None => {
-                                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                                            "bad module ref index {} for method reference {}",
-                                            idx, name
-                                        )))))
-                                    }
-                                }
-                            }
-                            MemberRefParent::MethodDef(i) => {
-                                let idx = i - 1;
-                                match methods.get(idx) {
-                                    Some(&m) => MethodReferenceParent::VarargMethod(m),
-                                    None => {
-                                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                                            "bad method def index {} for method reference {}",
-                                            idx, name
-                                        )))))
-                                    }
-                                }
-                            }
-                            MemberRefParent::Null => {
+                let mut signature =
+                    filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
+                if signature.calling_convention == CallingConvention::Vararg {
+                    signature.varargs = Some(filter_map_try!(ref_sig
+                        .varargs
+                        .into_iter()
+                        .map(|p| convert::parameter(p, &ctx))
+                        .collect::<Result<_>>()));
+                }
+
+                let parent = match r.class {
+                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(filter_map_try!(
+                        convert::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(filter_map_try!(
+                        convert::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
+                    )),
+                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(filter_map_try!(
+                        convert::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
+                    )),
+                    MemberRefParent::ModuleRef(i) => {
+                        let idx = i - 1;
+                        match module_refs.get(idx) {
+                            Some(m) => MethodReferenceParent::Module(Rc::clone(m)),
+                            None => {
                                 return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "invalid null parent index for method reference {}",
-                                    name
+                                    "bad module ref index {} for method reference {}",
+                                    idx, name
                                 )))))
                             }
-                        };
-
-                        Some(Ok((
-                            idx,
-                            ExternalMethodReference {
-                                attributes: vec![],
-                                parent,
-                                name,
-                                signature,
-                            },
-                        )))
+                        }
                     }
-                    Err(_) => None,
-                }
+                    MemberRefParent::MethodDef(i) => {
+                        let idx = i - 1;
+                        match methods.get(idx) {
+                            Some(&m) => MethodReferenceParent::VarargMethod(m),
+                            None => {
+                                return Some(Err(CLI(scroll::Error::Custom(format!(
+                                    "bad method def index {} for method reference {}",
+                                    idx, name
+                                )))))
+                            }
+                        }
+                    }
+                    MemberRefParent::Null => {
+                        return Some(Err(CLI(scroll::Error::Custom(format!(
+                            "invalid null parent index for method reference {}",
+                            name
+                        )))))
+                    }
+                };
+
+                Some(Ok((
+                    idx,
+                    ExternalMethodReference {
+                        attributes: vec![],
+                        parent,
+                        name,
+                        signature,
+                    },
+                )))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
@@ -1450,6 +1481,8 @@ impl<'a> DLL<'a> {
             method_map: &method_map,
         };
 
+        debug!("method impl");
+
         for i in tables.method_impl.iter() {
             use types::*;
 
@@ -1469,21 +1502,25 @@ impl<'a> DLL<'a> {
         };
 
         let entry_token = self.cli.entry_point_token.to_le_bytes().pread::<Token>(0)?;
-        let entry_idx = entry_token.index - 1;
 
         let mut res = Resolution {
             assembly,
             assembly_references: assembly_refs,
-            entry_point: match entry_token.target {
-                TokenTarget::Table(Kind::MethodDef) => match methods.get(entry_idx) {
-                    Some(&m) => EntryPoint::Method(m),
-                    None => throw!("invalid method index {} for entry point", entry_idx),
-                },
-                TokenTarget::Table(Kind::File) => match files.get(entry_idx) {
-                    Some(f) => EntryPoint::File(Rc::clone(f)),
-                    None => throw!("invalid file index {} for entry point", entry_idx),
-                },
-                bad => throw!("invalid entry point metadata token {:?}", bad),
+            entry_point: if entry_token.index == 0 {
+                None
+            } else {
+                let entry_idx = entry_token.index - 1;
+                Some(match entry_token.target {
+                    TokenTarget::Table(Kind::MethodDef) => match methods.get(entry_idx) {
+                        Some(&m) => EntryPoint::Method(m),
+                        None => throw!("invalid method index {} for entry point", entry_idx),
+                    },
+                    TokenTarget::Table(Kind::File) => match files.get(entry_idx) {
+                        Some(f) => EntryPoint::File(Rc::clone(f)),
+                        None => throw!("invalid file index {} for entry point", entry_idx),
+                    },
+                    bad => throw!("invalid entry point metadata token {:?}", bad),
+                })
             },
             files,
             manifest_resources: resources,
@@ -1492,6 +1529,8 @@ impl<'a> DLL<'a> {
             type_definitions: types,
             type_references: type_refs,
         };
+
+        debug!("custom attributes");
 
         for (idx, a) in tables.custom_attribute.iter().enumerate() {
             use attribute::*;
@@ -1532,20 +1571,20 @@ impl<'a> DLL<'a> {
             // panicking indexers after the indexes from the attribute are okay here,
             // since they've already been checked during resolution
 
-            macro_rules! at_generic {
-                ($g:expr) => {{
+            macro_rules! do_at_generic {
+                ($g:expr, |$capt:ident| $do:expr) => {{
                     use metadata::index::TypeOrMethodDef;
                     let g = $g;
                     match g.owner {
                         TypeOrMethodDef::TypeDef(t) => {
-                            res.type_definitions[t - 1].generic_parameters[g.number as usize]
-                                .attributes
-                                .push(attr);
+                            let $capt = &mut res.type_definitions[t - 1].generic_parameters
+                                [g.number as usize];
+                            $do;
                         }
                         TypeOrMethodDef::MethodDef(m) => {
-                            res[methods[m - 1]].generic_parameters[g.number as usize]
-                                .attributes
-                                .push(attr);
+                            let $capt =
+                                &mut res[methods[m - 1]].generic_parameters[g.number as usize];
+                            $do;
                         }
                         TypeOrMethodDef::Null => unreachable!(),
                     }
@@ -1764,7 +1803,7 @@ impl<'a> DLL<'a> {
                     let g_idx = i - 1;
 
                     match tables.generic_param.get(g_idx) {
-                        Some(g) => at_generic!(g),
+                        Some(g) => do_at_generic!(g, |rg| rg.attributes.push(attr)),
                         None => throw!(
                             "invalid generic parameter index {} for parent of custom attribute {}",
                             g_idx,
@@ -1775,8 +1814,11 @@ impl<'a> DLL<'a> {
                 GenericParamConstraint(i) => {
                     let g_idx = i - 1;
 
-                    match tables.generic_param_constraint.get(g_idx) {
-                        Some(c) => at_generic!(tables.generic_param[c.owner.0 - 1]),
+                    match constraint_map.get(&g_idx) {
+                        Some(&(generic, internal)) => do_at_generic!(
+                            tables.generic_param[generic],
+                            |g| g.type_constraints[internal].attributes.push(attr)
+                        ),
                         None => throw!(
                             "invalid generic constraint index {} for parent of custom attribute {}",
                             g_idx,
@@ -1785,19 +1827,21 @@ impl<'a> DLL<'a> {
                     }
                 }
                 MethodSpec(_) => {
-                    eprintln!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx)
                 }
                 StandAloneSig(_) => {
-                    eprintln!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
                 }
                 TypeSpec(_) => {
-                    eprintln!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx)
                 }
                 Null => throw!("invalid null index for parent of custom attribute {}", idx)
             }
         }
 
         let sig_len = tables.stand_alone_sig.len();
+
+        debug!("method bodies");
 
         for (idx, m) in tables.method_def.iter().enumerate() {
             use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
@@ -1841,14 +1885,15 @@ impl<'a> DLL<'a> {
                                     Ok(match v {
                                         LocalVar::TypedByRef => LocalVariable::TypedReference,
                                         LocalVar::Variable {
-                                            custom_modifier,
+                                            custom_modifiers,
                                             pinned,
                                             by_ref,
                                             var_type,
                                         } => LocalVariable::Variable {
-                                            custom_modifier: opt_map_try!(custom_modifier, |c| {
-                                                convert::custom_modifier(c, &ctx)
-                                            }),
+                                            custom_modifiers: custom_modifiers
+                                                .into_iter()
+                                                .map(|c| convert::custom_modifier(c, &ctx))
+                                                .collect::<Result<_>>()?,
                                             pinned,
                                             by_ref,
                                             var_type: convert::method_type_sig(var_type, &ctx)?,
@@ -1885,31 +1930,41 @@ impl<'a> DLL<'a> {
                         SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
                             e.into_iter().map(|h| {
                                 macro_rules! get_offset {
-                                    ($byte:expr, $name:literal) => {
-                                        instr_offsets
-                                            .iter()
-                                            .position(|&i| i == $byte as usize)
-                                            .ok_or_else(|| scroll::Error::Custom(
-                                                format!("could not find corresponding instruction for {} offset {}", $name, $byte)
-                                            ))?
-                                    }
+                                    ($byte:expr, $name:literal) => {{
+                                        let max = instr_offsets.iter().max().unwrap();
+
+                                        if $byte as usize == max + 1 {
+                                            instr_offsets.len()
+                                        } else {
+                                            instr_offsets
+                                                .iter()
+                                                .position(|&i| i == $byte as usize)
+                                                .ok_or_else(|| scroll::Error::Custom(
+                                                    format!("could not find corresponding instruction for {} offset {}", $name, $byte)
+                                                ))?
+                                        }
+                                    }}
                                 }
+
+                                let kind = match h.flags {
+                                    0 => ExceptionKind::TypedException(
+                                        convert::type_token(h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?, &ctx)?
+                                    ),
+                                    1 => ExceptionKind::Filter { offset: get_offset!(h.class_token_or_filter, "filter") },
+                                    2 => ExceptionKind::Finally,
+                                    4 => ExceptionKind::Fault,
+                                    bad => throw!("invalid exception clause type {:#06x}", bad)
+                                };
 
                                 let try_offset = get_offset!(h.try_offset, "try");
                                 let handler_offset = get_offset!(h.handler_offset, "handler");
 
-                                let filter_flag = check_bitmask!(h.flags, 0x1);
                                 Ok(Exception {
-                                    typed_exception: !filter_flag,
-                                    filter: filter_flag,
-                                    finally: check_bitmask!(h.flags, 0x2),
-                                    fault: check_bitmask!(h.flags, 0x4),
+                                    kind,
                                     try_offset,
                                     try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
                                     handler_offset,
-                                    handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset,
-                                    class: convert::type_token(h.class_token.to_le_bytes().pread(0)?, &ctx)?,
-                                    filter_offset: get_offset!(h.filter_offset, "filter")
+                                    handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset
                                 })
                             }).collect::<Result<_>>()?,
                         ),
@@ -1929,6 +1984,8 @@ impl<'a> DLL<'a> {
                 data_sections,
             });
         }
+
+        debug!("resolved module {}", res.module.name);
 
         Ok(res)
     }

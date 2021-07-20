@@ -48,8 +48,7 @@ pub struct Exception {
     pub try_length: u32,
     pub handler_offset: u32,
     pub handler_length: u32,
-    pub class_token: u32,
-    pub filter_offset: u32,
+    pub class_token_or_filter: u32,
 }
 
 #[derive(Debug)]
@@ -84,27 +83,29 @@ impl TryFromCtx<'_> for DataSection {
         } as usize;
 
         let section = if is_exception {
-            let n = (length - 4) / if is_fat { 16 } else { 28 };
-
-            let mut exceptions = Vec::with_capacity(n);
-
-            for _ in 0..n {
-                let e = if is_fat {
-                    from.gread_with(offset, scroll::LE)?
-                } else {
-                    Exception {
-                        flags: from.gread_with::<u16>(offset, scroll::LE)? as u32,
-                        try_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
-                        try_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
-                        handler_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
-                        handler_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
-                        class_token: from.gread_with(offset, scroll::LE)?,
-                        filter_offset: from.gread_with(offset, scroll::LE)?,
-                    }
-                };
-
-                exceptions.push(e);
+            if !is_fat {
+                // 2 bytes of padding on small exception headers
+                *offset += 2;
             }
+
+            let n = (length - 4) / if is_fat { 24 } else { 12 };
+
+            let exceptions = (0..n)
+                .map(|_| {
+                    if is_fat {
+                        from.gread_with(offset, scroll::LE)
+                    } else {
+                        Ok(Exception {
+                            flags: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                            try_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                            try_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
+                            handler_offset: from.gread_with::<u16>(offset, scroll::LE)? as u32,
+                            handler_length: from.gread_with::<u8>(offset, scroll::LE)? as u32,
+                            class_token_or_filter: from.gread_with(offset, scroll::LE)?,
+                        })
+                    }
+                })
+                .collect::<Result<_, _>>()?;
 
             SectionKind::Exceptions(exceptions)
         } else {
@@ -157,7 +158,7 @@ impl TryFromCtx<'_> for Method {
             body.push(InstructionUnit {
                 offset: before_offset,
                 bytesize: body_offset - before_offset,
-                instruction
+                instruction,
             });
         }
 

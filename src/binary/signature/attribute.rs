@@ -66,13 +66,11 @@ impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
             ELEMENT_TYPE_SZARRAY => Vector(Box::new(from.gread(offset)?)),
             0x50 => Type,
             0x51 => Object,
-            0x55 => Enum(
-                from.gread::<SerString>(offset)?
-                    .0
-                    .ok_or_else(|| scroll::Error::Custom(
-                        "null enum name encountered when parsing custom attribute".to_string(),
-                    ))?,
-            ),
+            0x55 => Enum(from.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                scroll::Error::Custom(
+                    "null enum name encountered when parsing custom attribute".to_string(),
+                )
+            })?),
             bad => throw!("bad custom attribute type tag {:#04x}", bad),
         };
 

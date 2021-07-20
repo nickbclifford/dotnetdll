@@ -25,14 +25,17 @@ pub enum DataSection {
 
 #[derive(Debug)]
 pub struct Exception {
-    pub typed_exception: bool,
-    pub filter: bool,
-    pub finally: bool,
-    pub fault: bool,
+    pub kind: ExceptionKind,
     pub try_offset: usize,
     pub try_length: usize,
     pub handler_offset: usize,
     pub handler_length: usize,
-    pub class: MethodType, // not sure about this one
-    pub filter_offset: usize,
+}
+
+#[derive(Debug)]
+pub enum ExceptionKind {
+    TypedException(MethodType),
+    Filter { offset: usize },
+    Finally,
+    Fault,
 }

@@ -117,12 +117,13 @@ impl TryFromCtx<'_> for MethodRefSig {
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum StandAloneCallingConvention {
-    Default,
+    DefaultManaged,
     Vararg,
     C,
     Stdcall,
     Thiscall,
     Fastcall,
+    DefaultUnmanaged,
 }
 
 #[derive(Debug, Clone)]
@@ -149,12 +150,13 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         use StandAloneCallingConvention::*;
 
         let calling_convention = match tag & 0xf {
-            0 => Default,
+            0 => DefaultManaged,
             1 => C,
             2 => Stdcall,
             3 => Thiscall,
             4 => Fastcall,
             5 => Vararg,
+            9 => DefaultUnmanaged,
             bad => throw!("bad standalone method calling convention {:#03x}", bad),
         };
 
@@ -182,7 +184,7 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
 }
 
 #[derive(Debug)]
-pub struct FieldSig(pub Option<CustomMod>, pub Type);
+pub struct FieldSig(pub Vec<CustomMod>, pub Type);
 
 impl TryFromCtx<'_> for FieldSig {
     type Error = scroll::Error;
@@ -195,21 +197,16 @@ impl TryFromCtx<'_> for FieldSig {
             throw!("bad field tag {:#04x}", tag);
         }
 
-        let prev_offset = *offset;
-        let opt_mod = from.gread(offset).ok();
-        if opt_mod.is_none() {
-            *offset = prev_offset;
-        }
+        let mods = all_custom_mods(from, offset)?;
 
-        Ok((FieldSig(opt_mod, from.gread(offset)?), *offset))
+        Ok((FieldSig(mods, from.gread(offset)?), *offset))
     }
 }
 
 #[derive(Debug)]
 pub struct PropertySig {
     pub has_this: bool,
-    pub custom_modifier: Option<CustomMod>,
-    pub ret_type: Type,
+    pub property_type: Param, // properties can have ref valuetypes, which the Param type covers
     pub params: Vec<Param>,
 }
 
@@ -228,13 +225,7 @@ impl TryFromCtx<'_> for PropertySig {
 
         let compressed::Unsigned(param_count) = from.gread(offset)?;
 
-        let prev_offset = *offset;
-        let opt_mod = from.gread(offset).ok();
-        if opt_mod.is_none() {
-            *offset = prev_offset;
-        }
-
-        let ret_type = from.gread(offset)?;
+        let property_type = from.gread(offset)?;
 
         let mut params = Vec::with_capacity(param_count as usize);
         for _ in 0..param_count {
@@ -244,8 +235,7 @@ impl TryFromCtx<'_> for PropertySig {
         Ok((
             PropertySig {
                 has_this,
-                custom_modifier: opt_mod,
-                ret_type,
+                property_type,
                 params,
             },
             *offset,
@@ -257,7 +247,7 @@ impl TryFromCtx<'_> for PropertySig {
 pub enum LocalVar {
     TypedByRef,
     Variable {
-        custom_modifier: Option<CustomMod>,
+        custom_modifiers: Vec<CustomMod>,
         pinned: bool,
         by_ref: bool,
         var_type: Type,
@@ -286,11 +276,7 @@ impl TryFromCtx<'_> for LocalVarSig {
                 *offset += 1;
                 LocalVar::TypedByRef
             } else {
-                let prev_offset = *offset;
-                let opt_mod = from.gread(offset).ok();
-                if opt_mod.is_none() {
-                    *offset = prev_offset;
-                }
+                let mods = all_custom_mods(from, offset)?;
 
                 // the syntax diagram for these flags in the spec is very confusing
 
@@ -305,7 +291,7 @@ impl TryFromCtx<'_> for LocalVarSig {
                 }
 
                 LocalVar::Variable {
-                    custom_modifier: opt_mod,
+                    custom_modifiers: mods,
                     pinned,
                     by_ref,
                     var_type: from.gread(offset)?,
@@ -346,7 +332,7 @@ impl TryFromCtx<'_> for MethodSpec {
 pub enum MarshalSpec {
     Primitive(NativeIntrinsic),
     Array {
-        element_type: NativeIntrinsic,
+        element_type: Option<NativeIntrinsic>,
         length_parameter: Option<usize>,
         additional_elements: Option<usize>,
     },
@@ -360,12 +346,18 @@ impl TryFromCtx<'_> for MarshalSpec {
 
         use MarshalSpec::*;
 
-        let tag: u8 = from.gread_with(offset, scroll::LE)?;
-        if tag != NATIVE_TYPE_ARRAY {
+        if from[*offset] == NATIVE_TYPE_ARRAY {
+            *offset += 1;
+        } else {
             return Ok((Primitive(from.gread(offset)?), *offset));
         }
 
-        let element_type = from.gread(offset)?;
+        let element_type = if from[*offset] == NATIVE_TYPE_MAX {
+            *offset += 1;
+            None
+        } else {
+            Some(from.gread(offset)?)
+        };
         let length_parameter = from
             .gread::<compressed::Unsigned>(offset)
             .ok()

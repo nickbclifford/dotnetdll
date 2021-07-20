@@ -145,6 +145,23 @@ impl TryFromCtx<'_> for CustomMod {
     }
 }
 
+pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> scroll::Result<Vec<CustomMod>> {
+    let mut mods = vec![];
+
+    loop {
+        let prev_offset = *offset;
+        match from.gread::<CustomMod>(offset) {
+            Ok(m) => mods.push(m),
+            Err(_) => {
+                *offset = prev_offset;
+                break;
+            }
+        }
+    }
+
+    Ok(mods)
+}
+
 #[derive(Debug, Clone)]
 pub enum Type {
     Boolean,
@@ -163,15 +180,14 @@ pub enum Type {
     UIntPtr,
     Array(Box<Type>, ArrayShape),
     Class(TypeDefOrRefOrSpec),
-    FnPtrDef(Box<kinds::MethodDefSig>),
-    FnPtrRef(Box<kinds::MethodRefSig>),
+    FnPtr(Box<kinds::StandAloneMethodSig>),
     GenericInstClass(TypeDefOrRefOrSpec, Vec<Type>),
     GenericInstValueType(TypeDefOrRefOrSpec, Vec<Type>),
     MVar(u32),
     Object,
-    Ptr(Option<CustomMod>, Box<Option<Type>>),
+    Ptr(Vec<CustomMod>, Box<Option<Type>>),
     String,
-    SzArray(Option<CustomMod>, Box<Type>),
+    SzArray(Vec<CustomMod>, Box<Type>),
     ValueType(TypeDefOrRefOrSpec),
     Var(u32),
 }
@@ -207,16 +223,7 @@ impl TryFromCtx<'_> for Type {
                 Array(Box::new(type_data), shape)
             }
             ELEMENT_TYPE_CLASS => Class(from.gread(offset)?),
-            ELEMENT_TYPE_FNPTR => {
-                let prev_offset = *offset;
-                match from.gread_with::<kinds::MethodDefSig>(offset, ()) {
-                    Ok(m) => FnPtrDef(Box::new(m)),
-                    Err(_) => {
-                        *offset = prev_offset;
-                        FnPtrRef(Box::new(from.gread(offset)?))
-                    }
-                }
-            }
+            ELEMENT_TYPE_FNPTR => FnPtr(Box::new(from.gread(offset)?)),
             ELEMENT_TYPE_GENERICINST => {
                 let next_tag: u8 = from.gread_with(offset, scroll::LE)?;
                 let token = from.gread(offset)?;
@@ -239,11 +246,7 @@ impl TryFromCtx<'_> for Type {
             }
             ELEMENT_TYPE_OBJECT => Object,
             ELEMENT_TYPE_PTR => {
-                let prev_offset = *offset;
-                let opt_mod = from.gread(offset).ok();
-                if opt_mod.is_none() {
-                    *offset = prev_offset;
-                }
+                let mods = all_custom_mods(from, offset)?;
 
                 let type_data = if from[*offset] == ELEMENT_TYPE_VOID {
                     *offset += 1;
@@ -252,18 +255,14 @@ impl TryFromCtx<'_> for Type {
                     Some(from.gread(offset)?)
                 };
 
-                Ptr(opt_mod, Box::new(type_data))
+                Ptr(mods, Box::new(type_data))
             }
             ELEMENT_TYPE_STRING => String,
             ELEMENT_TYPE_SZARRAY => {
-                let prev_offset = *offset;
-                let opt_mod = from.gread(offset).ok();
-                if opt_mod.is_none() {
-                    *offset = prev_offset;
-                }
+                let mods = all_custom_mods(from, offset)?;
 
                 let type_data = from.gread(offset)?;
-                SzArray(opt_mod, Box::new(type_data))
+                SzArray(mods, Box::new(type_data))
             }
             ELEMENT_TYPE_VALUETYPE => ValueType(from.gread(offset)?),
             ELEMENT_TYPE_VAR => {
@@ -286,7 +285,7 @@ pub enum ParamType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Param(pub Option<CustomMod>, pub ParamType);
+pub struct Param(pub Vec<CustomMod>, pub ParamType);
 
 impl TryFromCtx<'_> for Param {
     type Error = scroll::Error;
@@ -294,11 +293,7 @@ impl TryFromCtx<'_> for Param {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let prev_offset = *offset;
-        let opt_mod = from.gread(offset).ok();
-        if opt_mod.is_none() {
-            *offset = prev_offset;
-        }
+        let mods = all_custom_mods(from, offset)?;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
@@ -310,7 +305,7 @@ impl TryFromCtx<'_> for Param {
             }
         };
 
-        Ok((Param(opt_mod, val), *offset))
+        Ok((Param(mods, val), *offset))
     }
 }
 
@@ -323,7 +318,7 @@ pub enum RetTypeType {
 }
 
 #[derive(Debug, Clone)]
-pub struct RetType(pub Option<CustomMod>, pub RetTypeType);
+pub struct RetType(pub Vec<CustomMod>, pub RetTypeType);
 
 impl TryFromCtx<'_> for RetType {
     type Error = scroll::Error;
@@ -331,11 +326,7 @@ impl TryFromCtx<'_> for RetType {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let prev_offset = *offset;
-        let opt_mod = from.gread(offset).ok();
-        if opt_mod.is_none() {
-            *offset = prev_offset;
-        }
+        let mods = all_custom_mods(from, offset)?;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
@@ -348,7 +339,7 @@ impl TryFromCtx<'_> for RetType {
             }
         };
 
-        Ok((RetType(opt_mod, val), *offset))
+        Ok((RetType(mods, val), *offset))
     }
 }
 
@@ -370,6 +361,12 @@ pub enum NativeIntrinsic {
     IntPtr,
     UIntPtr,
     Function,
+    // not in ECMA spec, but part of Microsoft unmanaged types
+    COMInterface,
+    BStr,
+    AsAny,
+    COMIUnknown,
+    LPUTF8Str,
 }
 
 macro_rules! native_types {
@@ -399,7 +396,8 @@ native_types! {
     INT = 0x1f,
     UINT = 0x20,
     FUNC = 0x26,
-    ARRAY = 0x2a
+    ARRAY = 0x2a,
+    MAX = 0x50
 }
 
 impl TryFromCtx<'_> for NativeIntrinsic {
@@ -427,6 +425,12 @@ impl TryFromCtx<'_> for NativeIntrinsic {
             NATIVE_TYPE_INT => IntPtr,
             NATIVE_TYPE_UINT => UIntPtr,
             NATIVE_TYPE_FUNC => Function,
+            // Microsoft specials
+            0x13 => BStr,
+            0x19 => COMIUnknown,
+            0x1c => COMInterface,
+            0x28 => AsAny,
+            0x30 => LPUTF8Str,
             bad => throw!("bad native instrinsic value {:#04x}", bad),
         };
 

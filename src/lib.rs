@@ -5,15 +5,6 @@ mod utils {
             $mask & $val == $val
         };
     }
-
-    macro_rules! opt_map_try {
-        ($var:expr, |$capt: ident| $res:expr) => {
-            match $var {
-                Some($capt) => Some($res?),
-                None => None,
-            }
-        };
-    }
 }
 
 pub mod binary;
@@ -26,7 +17,7 @@ pub mod resolved;
 mod tests {
     use scroll::Pread;
 
-    use super::{binary::*, dll::{DLL, DLLError}, resolved::ResolvedDebug};
+    use super::{binary::*, dll::DLL, resolved::ResolvedDebug};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,10 +28,12 @@ mod tests {
 
         use super::{resolution::EntryPoint, resolved::members::UserMethod};
 
-        print!("assembly entry point: ");
-        match &r.entry_point {
-            EntryPoint::Method(m) => println!("{}", UserMethod::Definition(*m).show(&r)),
-            EntryPoint::File(f) => println!("external file {}", f.borrow().name)
+        if let Some(e) = &r.entry_point {
+            print!("assembly entry point: ");
+            match e {
+                EntryPoint::Method(m) => println!("{}", UserMethod::Definition(*m).show(&r)),
+                EntryPoint::File(f) => println!("external file {}", f.borrow().name),
+            }
         }
 
         for t in r.type_definitions.iter() {
@@ -139,36 +132,73 @@ mod tests {
     }
 
     #[test]
-    fn attributes() -> Result<(), Box<dyn std::error::Error>> {
+    fn resolution() -> Result<(), Box<dyn std::error::Error>> {
+        env_logger::init();
+
         let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve()?;
 
-        use crate::{resolved::types::*, resolution::Resolution};
+        use crate::{resolution::Resolution, resolved::types::*};
+        use std::fmt;
 
-        struct SingleAssemblyResolver<'a>(&'a Resolution<'a>);
-        impl<'a> Resolver<'a> for SingleAssemblyResolver<'a> {
-            type Error = DLLError;
+        #[derive(Debug)]
+        struct TypeNotFoundError(String);
+        impl fmt::Display for TypeNotFoundError {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "unable to find type {}", self.0)
+            }
+        }
+        impl std::error::Error for TypeNotFoundError {}
 
-            fn find_type(&self, name: &str) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error> {
-                println!("looking for type {}", name);
+        struct DLLCacheResolver<'a> {
+            main: &'a Resolution<'a>,
+            cache: &'a [Resolution<'a>],
+        }
+        impl<'a> Resolver<'a> for DLLCacheResolver<'a> {
+            type Error = TypeNotFoundError;
 
-                match self.0.type_definitions.iter().find(|t| t.type_name() == name) {
-                    Some(t) => Ok((t, self.0)),
-                    None => Err(DLLError::Other("couldn't find type"))
-                }
+            fn find_type(
+                &self,
+                name: &str,
+            ) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error> {
+                std::iter::once(self.main)
+                    .chain(self.cache.iter())
+                    .flat_map(|r| r.type_definitions.iter().map(move |t| (t, r)))
+                    .find(|(t, _)| t.type_name() == name)
+                    .ok_or_else(|| TypeNotFoundError(name.to_string()))
             }
         }
 
-        let resolver = SingleAssemblyResolver(&r);
+        let mut files = vec![];
+        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/5.0.7")? {
+            let path = p?.path();
+            if matches!(path.extension(), Some(o) if o == "dll") {
+                files.push(std::fs::read(path)?);
+            }
+        }
+        let dlls: Vec<_> = files
+            .iter()
+            .map(|f| DLL::parse(&f))
+            .collect::<Result<_, _>>()?;
+        let cache: Vec<_> = dlls.iter().map(DLL::resolve).collect::<Result<_, _>>()?;
+
+        let resolver = DLLCacheResolver {
+            main: &r,
+            cache: &cache,
+        };
 
         if let Some(a) = &r.assembly {
             for a in a.attributes.iter() {
-                println!("assembly attribute {} ({:x?})", a.constructor.show(&r), a.value.unwrap());
+                println!(
+                    "assembly attribute {} ({:x?})",
+                    a.constructor.show(&r),
+                    a.value.unwrap()
+                );
                 match a.instantiation_data(&resolver, &r) {
                     Ok(d) => println!("data {:#?}", d),
-                    Err(e) => println!("failed to parse data {}", e)
+                    Err(e) => println!("failed to parse data {}", e),
                 }
             }
         }

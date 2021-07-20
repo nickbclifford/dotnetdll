@@ -24,11 +24,11 @@ impl ResolvedDebug for ParameterType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Parameter(pub Option<CustomTypeModifier>, pub ParameterType);
+pub struct Parameter(pub Vec<CustomTypeModifier>, pub ParameterType);
 impl ResolvedDebug for Parameter {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
-        if let Some(c) = &self.0 {
+        for c in self.0.iter() {
             write!(buf, "{} ", c.show(res)).unwrap();
         }
 
@@ -39,11 +39,11 @@ impl ResolvedDebug for Parameter {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReturnType(pub Option<CustomTypeModifier>, pub Option<ParameterType>);
+pub struct ReturnType(pub Vec<CustomTypeModifier>, pub Option<ParameterType>);
 impl ResolvedDebug for ReturnType {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
-        if let Some(c) = &self.0 {
+        for c in self.0.iter() {
             write!(buf, "{} ", c.show(res)).unwrap();
         }
 

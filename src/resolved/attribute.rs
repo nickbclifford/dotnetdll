@@ -186,12 +186,9 @@ fn parse_named<'def, 'inst>(
     for _ in 0..num_named {
         let kind: u8 = src.gread_with(offset, scroll::LE)?;
         let f_type: FieldOrPropType = src.gread(offset)?;
-        let name = src
-            .gread::<SerString>(offset)?
-            .0
-            .ok_or_else(|| scroll::Error::Custom(
-                "null string name found when parsing".to_string(),
-            ))?;
+        let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
+            scroll::Error::Custom("null string name found when parsing".to_string())
+        })?;
 
         let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
 
@@ -214,12 +211,12 @@ pub struct Attribute<'a> {
 impl<'a> Attribute<'a> {
     pub fn instantiation_data(
         &'a self,
-        resolver: &impl Resolver<'a>,
+        resolver: &'a impl Resolver<'a>,
         resolution: &'a Resolution<'a>,
     ) -> Result<CustomAttributeData<'a>> {
-        let bytes = self.value.ok_or_else(|| scroll::Error::Custom(
-            "null data for custom attribute".to_string(),
-        ))?;
+        let bytes = self
+            .value
+            .ok_or_else(|| scroll::Error::Custom("null data for custom attribute".to_string()))?;
 
         let offset = &mut 0;
 
@@ -292,7 +289,7 @@ impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
         &self,
         resolution: &'a Resolution<'a>,
-        resolver: &impl Resolver<'a>,
+        resolver: &'a impl Resolver<'a>,
     ) -> Result<Vec<SecurityAttributeData<'a>>> {
         let offset = &mut 0;
 
@@ -306,13 +303,11 @@ impl<'a> SecurityDeclaration<'a> {
         let mut attrs = Vec::with_capacity(num_attributes as usize);
 
         for _ in 0..num_attributes {
-            let type_name =
-                self.value
-                    .gread::<SerString>(offset)?
-                    .0
-                    .ok_or_else(|| scroll::Error::Custom(
-                        "null attribute type name found when parsing security".to_string(),
-                    ))?;
+            let type_name = self.value.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                scroll::Error::Custom(
+                    "null attribute type name found when parsing security".to_string(),
+                )
+            })?;
 
             let fields = parse_named(self.value, offset, resolution, &|s| {
                 resolver

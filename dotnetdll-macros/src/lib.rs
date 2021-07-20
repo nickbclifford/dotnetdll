@@ -198,11 +198,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         );
 
         // put match arm in correct bucket
-        (if v
-            .attrs
-            .iter()
-            .any(|a| a.path.is_ident("extended"))
-        {
+        (if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
             &mut extended_parses
         } else {
             &mut parses

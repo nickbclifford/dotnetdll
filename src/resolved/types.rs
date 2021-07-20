@@ -282,7 +282,7 @@ impl ResolvedDebug for CustomTypeModifier {
         use CustomTypeModifier::*;
         match self {
             Optional(t) => format!("[opt {}]", t.type_name(res)),
-            Required(t) => format!("[req {}]", t.type_name(res))
+            Required(t) => format!("[req {}]", t.type_name(res)),
         }
     }
 }
@@ -337,10 +337,10 @@ pub enum BaseType<EnclosingType> {
     UIntPtr,
     Object,
     String,
-    Vector(Option<CustomTypeModifier>, EnclosingType),
+    Vector(Vec<CustomTypeModifier>, EnclosingType),
     Array(EnclosingType, ArrayShape),
-    ValuePointer(Option<CustomTypeModifier>, Option<EnclosingType>),
-    FunctionPointer(signature::ManagedMethod),
+    ValuePointer(Vec<CustomTypeModifier>, Option<EnclosingType>),
+    FunctionPointer(signature::MaybeUnmanagedMethod),
 }
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     fn show(&self, res: &Resolution) -> String {
@@ -421,7 +421,7 @@ impl ResolvedDebug for MethodType {
 pub enum LocalVariable {
     TypedReference,
     Variable {
-        custom_modifier: Option<CustomTypeModifier>,
+        custom_modifiers: Vec<CustomTypeModifier>,
         pinned: bool,
         by_ref: bool,
         var_type: MethodType,
@@ -433,10 +433,15 @@ impl ResolvedDebug for LocalVariable {
 
         match self {
             TypedReference => "System.TypedReference".to_string(),
-            Variable { custom_modifier, pinned, by_ref, var_type } => {
+            Variable {
+                custom_modifiers,
+                pinned,
+                by_ref,
+                var_type,
+            } => {
                 let mut buf = String::new();
 
-                if let Some(m) = custom_modifier {
+                for m in custom_modifiers.iter() {
                     write!(buf, "{} ", m.show(res)).unwrap();
                 }
 
@@ -458,8 +463,5 @@ impl ResolvedDebug for LocalVariable {
 
 pub trait Resolver<'a> {
     type Error: std::error::Error;
-    fn find_type(
-        &self,
-        name: &str,
-    ) -> Result<(&'a TypeDefinition<'a>, &'a Resolution<'a>), Self::Error>;
+    fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error>;
 }

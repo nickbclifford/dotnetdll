@@ -13,7 +13,7 @@ use super::{
     generic::{show_constraints, MethodGeneric},
     module::ExternalModuleReference,
     signature,
-    types::{CustomTypeModifier, MemberType, MethodType, TypeSource},
+    types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
 };
 
@@ -46,7 +46,7 @@ impl Display for Accessibility {
 pub struct Field<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
-    pub type_modifier: Option<CustomTypeModifier>,
+    pub type_modifiers: Vec<CustomTypeModifier>,
     pub return_type: MemberType,
     pub accessibility: Accessibility,
     pub static_member: bool,
@@ -76,7 +76,7 @@ impl ResolvedDebug for Field<'_> {
 
 #[derive(Debug)]
 pub enum FieldReferenceParent<'a> {
-    Type(TypeSource<MethodType>),
+    Type(MethodType),
     Module(Rc<RefCell<ExternalModuleReference<'a>>>),
 }
 
@@ -137,8 +137,7 @@ pub struct Property<'a> {
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
     pub other: Vec<Method<'a>>,
-    pub type_modifier: Option<CustomTypeModifier>,
-    pub return_type: MemberType,
+    pub property_type: signature::Parameter, // properties can be ref as well
     pub special_name: bool,
     pub runtime_special_name: bool,
     pub default: Option<Constant>,
@@ -169,7 +168,7 @@ impl ResolvedDebug for Property<'_> {
             buf.push_str("virtual ");
         }
 
-        write!(buf, "{} {} {{ ", self.return_type.show(res), self.name).unwrap();
+        write!(buf, "{} {} {{ ", self.property_type.show(res), self.name).unwrap();
 
         if let Some(method) = &self.getter {
             if matches!(least_restrictive, Some(a) if method.accessibility < a) {
@@ -325,7 +324,7 @@ pub struct PInvoke<'a> {
 
 #[derive(Debug)]
 pub enum MethodReferenceParent<'a> {
-    Type(TypeSource<MethodType>),
+    Type(MethodType),
     Module(Rc<RefCell<ExternalModuleReference<'a>>>),
     VarargMethod(MethodIndex),
 }
@@ -442,7 +441,7 @@ impl ResolvedDebug for MethodSource<'_> {
 #[derive(Debug, Clone)]
 pub enum Constant {
     Boolean(bool),
-    Char(char),
+    Char(u16), // not necessarily valid UTF-16
     Int8(i8),
     UInt8(u8),
     Int16(i16),
@@ -453,7 +452,7 @@ pub enum Constant {
     UInt64(u64),
     Float32(f32),
     Float64(f64),
-    String(String), // UTF16, which we parse into an owned String
+    String(Vec<u16>), // ditto
     Null,
 }
 

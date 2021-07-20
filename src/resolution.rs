@@ -6,7 +6,7 @@ use std::rc::Rc;
 pub struct Resolution<'a> {
     pub assembly: Option<assembly::Assembly<'a>>,
     pub assembly_references: Vec<Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>>,
-    pub entry_point: EntryPoint<'a>,
+    pub entry_point: Option<EntryPoint<'a>>,
     pub files: Vec<Rc<RefCell<module::File<'a>>>>,
     pub manifest_resources: Vec<resource::ManifestResource<'a>>,
     pub module: module::Module<'a>,
@@ -19,7 +19,7 @@ pub struct Resolution<'a> {
 #[derive(Debug)]
 pub enum EntryPoint<'a> {
     Method(MethodIndex),
-    File(Rc<RefCell<module::File<'a>>>)
+    File(Rc<RefCell<module::File<'a>>>),
 }
 
 #[derive(Debug, Copy, Clone)]

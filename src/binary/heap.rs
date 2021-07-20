@@ -65,18 +65,17 @@ heap_struct!(GUID, {
 });
 heap_struct!(UserString, {
     type Index = usize;
-    type Value = String;
+    type Value = Vec<u16>;
 
     fn at_index(&self, idx: Self::Index) -> Result<Self::Value> {
         let bytes = read_bytes(self.bytes, idx)?;
 
         let num_utf16 = (bytes.len() - 1) / 2;
         let offset = &mut 0;
-        let mut chars = Vec::with_capacity(num_utf16);
-        for _ in 0..num_utf16 {
-            chars.push(bytes.gread_with::<u16>(offset, scroll::LE)?);
-        }
+        let chars = (0..num_utf16)
+            .map(|_| bytes.gread_with::<u16>(offset, scroll::LE))
+            .collect::<Result<_>>()?;
 
-        String::from_utf16(&chars).map_err(|e| scroll::Error::Custom(e.to_string()))
+        Ok(chars)
     }
 });
