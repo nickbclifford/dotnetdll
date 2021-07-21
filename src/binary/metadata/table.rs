@@ -1,13 +1,13 @@
 use super::index;
-use num_derive::FromPrimitive;
-use scroll::{ctx::TryFromCtx, Pread};
+use num_derive::{FromPrimitive, ToPrimitive};
+use scroll::{ctx::{TryFromCtx, TryIntoCtx}, Pread, Pwrite};
 
 // paste!
 use paste::paste;
 
 macro_rules! tables {
     ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ }),+) => {
-        #[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq)]
+        #[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive)]
         pub enum Kind {
             $(
                 $name = $val,
@@ -15,7 +15,7 @@ macro_rules! tables {
         }
 
         $(
-            #[derive(Clone, Copy, Debug)]
+            #[derive(Clone, Copy, Debug, Eq, PartialEq)]
             pub struct $name {
                 $(pub $fname: $ty,)*
             }
@@ -37,10 +37,24 @@ macro_rules! tables {
                     }, *offset))
                 }
             }
+
+            impl<'a> TryIntoCtx<index::Sizes<'a>> for $name {
+                type Error = scroll::Error;
+
+                fn try_into_ctx(self, into: &mut [u8], ctx: index::Sizes<'a>) -> Result<usize, Self::Error> {
+                    let offset = &mut 0;
+
+                    $(
+                        into.gwrite_with(self.$fname, offset, ctx)?;
+                    )*
+
+                    Ok(*offset)
+                }
+            }
         )*
 
         paste! {
-            #[derive(Debug)]
+            #[derive(Debug, Clone, Eq, PartialEq)]
             pub struct Tables {
                 $(
                     pub [<$name:snake>]: Vec<$name>,
@@ -70,6 +84,27 @@ macro_rules! tables {
                             Kind::$name => $tables.[<$name:snake>].push($add),
                         )*
                     }
+                }
+            }
+
+            macro_rules! for_each_row {
+                ($tables:expr, |$capt:ident, $kind:ident| $do:expr) => {
+                    $(
+                        for $capt in $tables.[<$name:snake>] {
+                            let $kind = Kind::$name;
+                            $do;
+                        }
+                    )*
+                }
+            }
+
+            macro_rules! for_each_table {
+                ($tables:expr, |$capt:ident, $kind:ident| $do:expr) => {
+                    $(
+                        let $capt = &$tables.[<$name:snake>];
+                        let $kind = Kind::$name;
+                        $do;
+                    )*
                 }
             }
         }

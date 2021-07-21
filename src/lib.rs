@@ -15,7 +15,7 @@ pub mod resolved;
 
 #[cfg(test)]
 mod tests {
-    use scroll::Pread;
+    use scroll::{Pread, Pwrite};
 
     use super::{
         binary::*,
@@ -230,4 +230,23 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn headers_write() -> Result<(), Box<dyn std::error::Error>> {
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
+        let dll = DLL::parse(&file)?;
+        let meta = dll.get_logical_metadata()?;
+
+        let mut buffer = vec![0u8; dll.cli.metadata.size as usize];
+        buffer.pwrite(meta, 0)?;
+
+        let _parsed: metadata::header::Header = buffer.pread(0)?;
+
+        // these two are equal if you ignore sorting
+        // for some reason, the input tables appear to not be ECMA-compliantly sorted
+        // assert_eq!(meta, parsed);
+
+        Ok(())
+    }
 }
+

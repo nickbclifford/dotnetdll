@@ -366,11 +366,19 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
 
     // the Unused ident is used to pad out meaningful variants to a certain index
     // so use enumerate to build the match arms
-    let match_arms = tables.iter().enumerate().filter_map(|(idx, n)| {
+    let from_match_arms = tables.iter().enumerate().filter_map(|(idx, n)| {
         if n == "Unused" {
             None
         } else {
             Some(quote! { #idx => #name::#n(index) })
+        }
+    });
+
+    let into_match_arms = tables.iter().enumerate().filter_map(|(idx, n)| {
+        if n == "Unused" {
+            None
+        } else {
+            Some(quote! { #name::#n(i) => (*i, #idx) })
         }
     });
 
@@ -404,7 +412,7 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
                 let index = (coded >> #log) as usize;
 
                 let val = match (coded & mask) as usize {
-                    #(#match_arms,)*
+                    #(#from_match_arms,)*
                     bad_tag => throw!("bad {} coded index tag {}", stringify!(#name), bad_tag)
                 };
 
@@ -412,9 +420,48 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
             }
         }
 
+        impl<'a> TryIntoCtx<Sizes<'a>> for #name {
+            type Error = scroll::Error;
+
+            // same page
+            fn try_into_ctx(self, into: &mut [u8], sizes: Sizes<'a>) -> Result<usize, Self::Error> {
+                let offset = &mut 0;
+
+                let max_size = [#(Kind::#variants),*].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
+
+                let (index, tag) = self.build_indices();
+
+                if *max_size < (1 << (16 - #log)) {
+                    into.gwrite_with(((index as u16) << #log) | tag as u16, offset, scroll::LE)?;
+                } else {
+                    into.gwrite_with(((index as u32) << #log) | tag as u32, offset, scroll::LE)?;
+                }
+
+                Ok(*offset)
+            }
+        }
+
+        impl PartialOrd for #name {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for #name {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.build_indices().cmp(&other.build_indices())
+            }
+        }
+
         impl #name {
             pub fn is_null(&self) -> bool {
                 *self == #name::Null
+            }
+
+            fn build_indices(&self) -> (usize, usize) {
+                match self {
+                    #(#into_match_arms,)*
+                    #name::Null => (0, 0)
+                }
             }
         }
     })

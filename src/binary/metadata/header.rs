@@ -1,13 +1,16 @@
 use super::{
     index::Sizes,
-    table::*, // structs required to be in scope for build_match!
+    table::{Kind, Tables},
 };
 use bitvec::{order::Lsb0, view::BitView};
-use num_traits::FromPrimitive;
-use scroll::{ctx::TryFromCtx, Pread};
+use num_traits::{FromPrimitive, ToPrimitive};
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
+};
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {
     pub reserved0: u32,
     pub major_version: u8,
@@ -19,7 +22,7 @@ pub struct Header {
     pub tables: Tables,
 }
 
-impl TryFromCtx<'_, ()> for Header {
+impl TryFromCtx<'_> for Header {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
@@ -70,5 +73,85 @@ impl TryFromCtx<'_, ()> for Header {
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for Header {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(mut self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(self.reserved0, offset, scroll::LE)?;
+        into.gwrite_with(self.major_version, offset, scroll::LE)?;
+        into.gwrite_with(self.minor_version, offset, scroll::LE)?;
+        into.gwrite_with(self.heap_sizes, offset, scroll::LE)?;
+        into.gwrite_with(self.reserved1, offset, scroll::LE)?;
+        into.gwrite_with(self.valid, offset, scroll::LE)?;
+        into.gwrite_with(self.sorted, offset, scroll::LE)?;
+
+        let mut sizes_map = HashMap::new();
+
+        for_each_table!(self.tables, |t, k| {
+            sizes_map.insert(k, t.len() as u32);
+        });
+
+        let ctx = Sizes {
+            heap: self.heap_sizes.view_bits::<Lsb0>(),
+            tables: &sizes_map,
+        };
+
+        let mut tables_map = HashMap::new();
+
+        // ECMA-335, II.22 (page 210)
+        self.tables.class_layout.sort_by_key(|r| r.parent);
+        self.tables.constant.sort_by_key(|r| r.parent);
+        self.tables.custom_attribute.sort_by_key(|r| r.parent);
+        self.tables.decl_security.sort_by_key(|r| r.parent);
+        self.tables.field_layout.sort_by_key(|r| r.field);
+        self.tables.field_marshal.sort_by_key(|r| r.parent);
+        self.tables.field_rva.sort_by_key(|r| r.field);
+        self.tables
+            .generic_param
+            .sort_by_key(|r| (r.owner, r.number));
+        self.tables
+            .generic_param_constraint
+            .sort_by_key(|r| r.owner);
+        self.tables.impl_map.sort_by_key(|r| r.member_forwarded);
+        self.tables
+            .interface_impl
+            .sort_by_key(|r| (r.class, r.interface));
+        self.tables.method_impl.sort_by_key(|r| r.class);
+        self.tables.method_semantics.sort_by_key(|r| r.association);
+        self.tables.nested_class.sort_by_key(|r| r.nested_class);
+
+        // callers must make sure that TypeDefs that enclose any types
+        // precede their nested types (ECMA-335, II.22, page 210)
+
+        for_each_row!(self.tables, |r, k| {
+            let mut buf = [0u8; 64];
+            let mut offset = 0;
+            buf.gwrite_with(r, &mut offset, ctx)?;
+            tables_map
+                .entry(k.to_u8().unwrap())
+                .or_insert(vec![])
+                .extend(&buf[..offset]);
+        });
+
+        let mut sizes: Vec<_> = sizes_map.into_iter().collect();
+        sizes.sort_by_key(|&(k, _)| k.to_u8());
+        for (_, size) in sizes {
+            if size != 0 {
+                into.gwrite_with(size, offset, scroll::LE)?;
+            }
+        }
+
+
+        let mut all_tables: Vec<_> = tables_map.into_iter().collect();
+        all_tables.sort_by_key(|&(k, _)| k);
+        for (_, buffer) in all_tables {
+            into.gwrite(&*buffer, offset)?;
+        }
+
+        Ok(*offset)
     }
 }
