@@ -1,5 +1,8 @@
 use super::{compressed, encoded::*};
-use scroll::{ctx::TryFromCtx, Pread};
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
+};
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum CallingConvention {
@@ -54,6 +57,44 @@ fn build_method_def(
     ))
 }
 
+fn write_method_def(
+    into: &mut [u8],
+    def: MethodDefSig,
+    num_params: usize,
+) -> scroll::Result<usize> {
+    let offset = &mut 0;
+
+    use CallingConvention::*;
+
+    let mut tag: u8 = match def.calling_convention {
+        Default => 0x0,
+        Vararg => 0x5,
+        Generic(_) => 0x10,
+    };
+    if def.has_this {
+        tag |= 0x20;
+    }
+    if def.explicit_this {
+        tag |= 0x40;
+    }
+
+    into.gwrite_with(tag, offset, scroll::LE)?;
+
+    if let Generic(n) = def.calling_convention {
+        into.gwrite(compressed::Unsigned(n as u32), offset)?;
+    }
+
+    into.gwrite(compressed::Unsigned(num_params as u32), offset)?;
+
+    into.gwrite(def.ret_type, offset)?;
+
+    for p in def.params {
+        into.gwrite(p, offset)?;
+    }
+
+    Ok(*offset)
+}
+
 impl TryFromCtx<'_> for MethodDefSig {
     type Error = scroll::Error;
 
@@ -63,6 +104,14 @@ impl TryFromCtx<'_> for MethodDefSig {
                 .map(|_| from.gread(offset))
                 .collect::<Result<_, _>>()
         })
+    }
+}
+impl TryIntoCtx for MethodDefSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let len = self.params.len();
+        write_method_def(into, self, len)
     }
 }
 
@@ -112,6 +161,27 @@ impl TryFromCtx<'_> for MethodRefSig {
             },
             offset,
         ))
+    }
+}
+impl TryIntoCtx for MethodRefSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let total_len = self.method_def.params.len() + self.varargs.len();
+
+        let conv = self.method_def.calling_convention;
+
+        let offset = &mut write_method_def(into, self.method_def, total_len)?;
+
+        if conv == CallingConvention::Vararg {
+            into.gwrite_with(ELEMENT_TYPE_SENTINEL, offset, scroll::LE)?;
+
+            for v in self.varargs {
+                into.gwrite(v, offset)?;
+            }
+        }
+
+        Ok(*offset)
     }
 }
 
@@ -182,6 +252,52 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         ))
     }
 }
+impl TryIntoCtx for StandAloneMethodSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        let mut tag: u8 = 0;
+        if self.has_this {
+            tag |= 0x20;
+        }
+        if self.explicit_this {
+            tag |= 0x40;
+        }
+        use StandAloneCallingConvention::*;
+        tag |= match self.calling_convention {
+            DefaultManaged => 0,
+            C => 1,
+            Stdcall => 2,
+            Thiscall => 3,
+            Fastcall => 4,
+            Vararg => 5,
+            DefaultUnmanaged => 9,
+        };
+        into.gwrite_with(tag, offset, scroll::LE)?;
+
+        into.gwrite(
+            compressed::Unsigned((self.params.len() + self.varargs.len()) as u32),
+            offset,
+        )?;
+
+        into.gwrite(self.ret_type, offset)?;
+
+        for p in self.params {
+            into.gwrite(p, offset)?;
+        }
+
+        if self.calling_convention == Vararg && !self.varargs.is_empty() {
+            into.gwrite_with(0x41u8, offset, scroll::LE)?;
+            for v in self.varargs {
+                into.gwrite(v, offset)?;
+            }
+        }
+
+        Ok(*offset)
+    }
+}
 
 #[derive(Debug)]
 pub struct FieldSig(pub Vec<CustomMod>, pub Type);
@@ -197,9 +313,26 @@ impl TryFromCtx<'_> for FieldSig {
             throw!("bad field tag {:#04x}", tag);
         }
 
-        let mods = all_custom_mods(from, offset)?;
+        let mods = all_custom_mods(from, offset);
 
         Ok((FieldSig(mods, from.gread(offset)?), *offset))
+    }
+}
+impl TryIntoCtx for FieldSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(0x6u8, offset, scroll::LE)?;
+
+        for m in self.0 {
+            into.gwrite(m, offset)?;
+        }
+
+        into.gwrite(self.1, offset)?;
+
+        Ok(*offset)
     }
 }
 
@@ -227,10 +360,9 @@ impl TryFromCtx<'_> for PropertySig {
 
         let property_type = from.gread(offset)?;
 
-        let mut params = Vec::with_capacity(param_count as usize);
-        for _ in 0..param_count {
-            params.push(from.gread(offset)?);
-        }
+        let params = (0..param_count)
+            .map(|_| from.gread(offset))
+            .collect::<scroll::Result<_>>()?;
 
         Ok((
             PropertySig {
@@ -240,6 +372,30 @@ impl TryFromCtx<'_> for PropertySig {
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for PropertySig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(
+            if self.has_this { 0x28u8 } else { 0x8u8 },
+            offset,
+            scroll::LE,
+        )?;
+
+        into.gwrite(compressed::Unsigned(self.params.len() as u32), offset)?;
+
+        // includes mods and type
+        into.gwrite(self.property_type, offset)?;
+
+        for p in self.params {
+            into.gwrite(p, offset)?;
+        }
+
+        Ok(*offset)
     }
 }
 
@@ -276,9 +432,9 @@ impl TryFromCtx<'_> for LocalVarSig {
                 *offset += 1;
                 LocalVar::TypedByRef
             } else {
-                let mods = all_custom_mods(from, offset)?;
+                // the syntax diagram for mods and these flags in the spec is very confusing
 
-                // the syntax diagram for these flags in the spec is very confusing
+                let mods = all_custom_mods(from, offset);
 
                 let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
                 if pinned {
@@ -302,6 +458,47 @@ impl TryFromCtx<'_> for LocalVarSig {
         Ok((LocalVarSig(vars), *offset))
     }
 }
+impl TryIntoCtx for LocalVarSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        // tag
+        into.gwrite_with(0x7, offset, scroll::LE)?;
+
+        into.gwrite(compressed::Unsigned(self.0.len() as u32), offset)?;
+
+        for var in self.0 {
+            match var {
+                LocalVar::TypedByRef => {
+                    into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?;
+                }
+                LocalVar::Variable {
+                    custom_modifiers,
+                    pinned,
+                    by_ref,
+                    var_type,
+                } => {
+                    for m in custom_modifiers {
+                        into.gwrite(m, offset)?;
+                    }
+
+                    if pinned {
+                        into.gwrite_with(ELEMENT_TYPE_PINNED, offset, scroll::LE)?;
+                    }
+                    if by_ref {
+                        into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
+                    }
+
+                    into.gwrite(var_type, offset)?;
+                }
+            }
+        }
+
+        Ok(*offset)
+    }
+}
 
 #[derive(Debug)]
 pub struct MethodSpec(pub Vec<Type>);
@@ -319,12 +516,27 @@ impl TryFromCtx<'_> for MethodSpec {
 
         let compressed::Unsigned(type_count) = from.gread(offset)?;
 
-        let mut types = Vec::with_capacity(type_count as usize);
-        for _ in 0..type_count {
-            types.push(from.gread(offset)?);
-        }
+        let types = (0..type_count)
+            .map(|_| from.gread(offset))
+            .collect::<scroll::Result<_>>()?;
 
         Ok((MethodSpec(types), *offset))
+    }
+}
+impl TryIntoCtx for MethodSpec {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(0x0a, offset, scroll::LE)?;
+
+        into.gwrite(compressed::Unsigned(self.0.len() as u32), offset)?;
+        for t in self.0 {
+            into.gwrite(t, offset)?;
+        }
+
+        Ok(*offset)
     }
 }
 
@@ -375,5 +587,44 @@ impl TryFromCtx<'_> for MarshalSpec {
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for MarshalSpec {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        match self {
+            MarshalSpec::Primitive(n) => {
+                into.gwrite(n, offset)?;
+            }
+            MarshalSpec::Array {
+                element_type,
+                length_parameter,
+                additional_elements,
+            } => {
+                match element_type {
+                    Some(t) => into.gwrite(t, offset)?,
+                    None => into.gwrite_with(NATIVE_TYPE_MAX, offset, scroll::LE)?,
+                };
+
+                if additional_elements.is_some() && length_parameter.is_none() {
+                    throw!(
+                        "length parameter must be specified if additional elements is specified"
+                    );
+                }
+
+                if let Some(p) = length_parameter {
+                    into.gwrite(compressed::Unsigned(p as u32), offset)?;
+                }
+
+                if let Some(n) = additional_elements {
+                    into.gwrite(compressed::Unsigned(n as u32), offset)?;
+                }
+            }
+        }
+
+        Ok(*offset)
     }
 }

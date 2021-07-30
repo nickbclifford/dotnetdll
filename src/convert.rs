@@ -205,7 +205,7 @@ macro_rules! def_idx_with_mod {
                     Some(s) => {
                         let blob = ctx.blobs.at_index(s.signature)?;
                         let mut offset = 0;
-                        let mods = all_custom_mods(blob, &mut offset)?;
+                        let mods = all_custom_mods(blob, &mut offset);
 
                         Ok((
                             mods.into_iter()

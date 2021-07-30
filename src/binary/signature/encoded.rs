@@ -3,7 +3,10 @@ use super::{
     compressed, kinds,
 };
 use paste::paste;
-use scroll::{ctx::TryFromCtx, Pread};
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
+};
 
 macro_rules! element_types {
     ($($name:ident = $val:literal),+) => {
@@ -78,6 +81,26 @@ impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
         ))
     }
 }
+impl TryIntoCtx for TypeDefOrRefOrSpec {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        let table = match self.0.target {
+            index::TokenTarget::Table(table::Kind::TypeDef) => 0,
+            index::TokenTarget::Table(table::Kind::TypeRef) => 1,
+            index::TokenTarget::Table(table::Kind::TypeSpec) => 2,
+            other => throw!("invalid token {:?}, only TypeDef/Ref/Spec allowed", other),
+        };
+
+        let value = (self.0.index << 2) | table;
+
+        into.gwrite(compressed::Unsigned(value as u32), offset)?;
+
+        Ok(*offset)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ArrayShape {
@@ -95,18 +118,20 @@ impl TryFromCtx<'_> for ArrayShape {
         let compressed::Unsigned(rank) = from.gread(offset)?;
 
         let compressed::Unsigned(num_sizes) = from.gread(offset)?;
-        let mut sizes = Vec::with_capacity(num_sizes as usize);
-        for _ in 0..num_sizes {
-            let compressed::Unsigned(size) = from.gread(offset)?;
-            sizes.push(size as usize);
-        }
+        let sizes: Vec<_> = (0..num_sizes)
+            .map(|_| {
+                let compressed::Unsigned(size) = from.gread(offset)?;
+                Ok(size as usize)
+            })
+            .collect::<scroll::Result<_>>()?;
 
         let compressed::Unsigned(num_bounds) = from.gread(offset)?;
-        let mut lower_bounds = Vec::with_capacity(num_bounds as usize);
-        for _ in 0..num_bounds {
-            let compressed::Signed(bound) = from.gread(offset)?;
-            lower_bounds.push(bound as isize);
-        }
+        let lower_bounds = (0..num_bounds)
+            .map(|_| {
+                let compressed::Signed(bound) = from.gread(offset)?;
+                Ok(bound as isize)
+            })
+            .collect::<scroll::Result<_>>()?;
 
         Ok((
             ArrayShape {
@@ -116,6 +141,25 @@ impl TryFromCtx<'_> for ArrayShape {
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for ArrayShape {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite(compressed::Unsigned(self.rank as u32), offset)?;
+        into.gwrite(compressed::Unsigned(self.sizes.len() as u32), offset)?;
+        for s in self.sizes {
+            into.gwrite(compressed::Unsigned(s as u32), offset)?;
+        }
+        into.gwrite(compressed::Unsigned(self.lower_bounds.len() as u32), offset)?;
+        for b in self.lower_bounds {
+            into.gwrite(compressed::Signed(b as i32), offset)?;
+        }
+
+        Ok(*offset)
     }
 }
 
@@ -144,22 +188,33 @@ impl TryFromCtx<'_> for CustomMod {
         ))
     }
 }
+impl TryIntoCtx for CustomMod {
+    type Error = scroll::Error;
 
-pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> scroll::Result<Vec<CustomMod>> {
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        let (tag, token) = match self {
+            CustomMod::Required(t) => (ELEMENT_TYPE_CMOD_REQD, t),
+            CustomMod::Optional(t) => (ELEMENT_TYPE_CMOD_OPT, t),
+        };
+
+        into.gwrite(compressed::Unsigned(tag as u32), offset)?;
+        into.gwrite(token, offset)?;
+
+        Ok(*offset)
+    }
+}
+
+pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> Vec<CustomMod> {
     let mut mods = vec![];
 
     loop {
-        let prev_offset = *offset;
         match from.gread::<CustomMod>(offset) {
             Ok(m) => mods.push(m),
-            Err(_) => {
-                *offset = prev_offset;
-                break;
-            }
+            Err(_) => return mods,
         }
     }
-
-    Ok(mods)
 }
 
 #[derive(Debug, Clone)]
@@ -246,7 +301,7 @@ impl TryFromCtx<'_> for Type {
             }
             ELEMENT_TYPE_OBJECT => Object,
             ELEMENT_TYPE_PTR => {
-                let mods = all_custom_mods(from, offset)?;
+                let mods = all_custom_mods(from, offset);
 
                 let type_data = if from[*offset] == ELEMENT_TYPE_VOID {
                     *offset += 1;
@@ -259,7 +314,7 @@ impl TryFromCtx<'_> for Type {
             }
             ELEMENT_TYPE_STRING => String,
             ELEMENT_TYPE_SZARRAY => {
-                let mods = all_custom_mods(from, offset)?;
+                let mods = all_custom_mods(from, offset);
 
                 let type_data = from.gread(offset)?;
                 SzArray(mods, Box::new(type_data))
@@ -275,9 +330,130 @@ impl TryFromCtx<'_> for Type {
         Ok((val, *offset))
     }
 }
+impl TryIntoCtx for Type {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        use Type::*;
+
+        match self {
+            Boolean => {
+                into.gwrite_with(ELEMENT_TYPE_BOOLEAN, offset, scroll::LE)?;
+            }
+            Char => {
+                into.gwrite_with(ELEMENT_TYPE_CHAR, offset, scroll::LE)?;
+            }
+            Int8 => {
+                into.gwrite_with(ELEMENT_TYPE_I1, offset, scroll::LE)?;
+            }
+            UInt8 => {
+                into.gwrite_with(ELEMENT_TYPE_U1, offset, scroll::LE)?;
+            }
+            Int16 => {
+                into.gwrite_with(ELEMENT_TYPE_I2, offset, scroll::LE)?;
+            }
+            UInt16 => {
+                into.gwrite_with(ELEMENT_TYPE_U2, offset, scroll::LE)?;
+            }
+            Int32 => {
+                into.gwrite_with(ELEMENT_TYPE_I4, offset, scroll::LE)?;
+            }
+            UInt32 => {
+                into.gwrite_with(ELEMENT_TYPE_U4, offset, scroll::LE)?;
+            }
+            Int64 => {
+                into.gwrite_with(ELEMENT_TYPE_I8, offset, scroll::LE)?;
+            }
+            UInt64 => {
+                into.gwrite_with(ELEMENT_TYPE_U8, offset, scroll::LE)?;
+            }
+            Float32 => {
+                into.gwrite_with(ELEMENT_TYPE_R4, offset, scroll::LE)?;
+            }
+            Float64 => {
+                into.gwrite_with(ELEMENT_TYPE_R8, offset, scroll::LE)?;
+            }
+            IntPtr => {
+                into.gwrite_with(ELEMENT_TYPE_I, offset, scroll::LE)?;
+            }
+            UIntPtr => {
+                into.gwrite_with(ELEMENT_TYPE_U, offset, scroll::LE)?;
+            }
+            Array(t, shape) => {
+                into.gwrite_with(ELEMENT_TYPE_ARRAY, offset, scroll::LE)?;
+                into.gwrite(*t, offset)?;
+                into.gwrite(shape, offset)?;
+            }
+            Class(t) => {
+                into.gwrite_with(ELEMENT_TYPE_CLASS, offset, scroll::LE)?;
+                into.gwrite(t, offset)?;
+            }
+            FnPtr(s) => {
+                into.gwrite_with(ELEMENT_TYPE_FNPTR, offset, scroll::LE)?;
+                into.gwrite(*s, offset)?;
+            }
+            GenericInstClass(src, ts) => {
+                into.gwrite_with(ELEMENT_TYPE_GENERICINST, offset, scroll::LE)?;
+                into.gwrite_with(ELEMENT_TYPE_CLASS, offset, scroll::LE)?;
+                into.gwrite(src, offset)?;
+                into.gwrite(compressed::Unsigned(ts.len() as u32), offset)?;
+                for t in ts {
+                    into.gwrite(t, offset)?;
+                }
+            }
+            GenericInstValueType(src, ts) => {
+                into.gwrite_with(ELEMENT_TYPE_GENERICINST, offset, scroll::LE)?;
+                into.gwrite_with(ELEMENT_TYPE_VALUETYPE, offset, scroll::LE)?;
+                into.gwrite(src, offset)?;
+                into.gwrite(compressed::Unsigned(ts.len() as u32), offset)?;
+                for t in ts {
+                    into.gwrite(t, offset)?;
+                }
+            }
+            MVar(n) => {
+                into.gwrite_with(ELEMENT_TYPE_MVAR, offset, scroll::LE)?;
+                into.gwrite(compressed::Unsigned(n), offset)?;
+            }
+            Object => {
+                into.gwrite_with(ELEMENT_TYPE_OBJECT, offset, scroll::LE)?;
+            }
+            Ptr(mods, opt) => {
+                into.gwrite_with(ELEMENT_TYPE_PTR, offset, scroll::LE)?;
+                for m in mods {
+                    into.gwrite(m, offset)?;
+                }
+                match *opt {
+                    Some(t) => into.gwrite(t, offset)?,
+                    None => into.gwrite_with(ELEMENT_TYPE_VOID, offset, scroll::LE)?,
+                };
+            }
+            String => {
+                into.gwrite_with(ELEMENT_TYPE_STRING, offset, scroll::LE)?;
+            }
+            SzArray(mods, t) => {
+                into.gwrite_with(ELEMENT_TYPE_SZARRAY, offset, scroll::LE)?;
+                for m in mods {
+                    into.gwrite(m, offset)?;
+                }
+                into.gwrite(*t, offset)?;
+            }
+            ValueType(t) => {
+                into.gwrite_with(ELEMENT_TYPE_VALUETYPE, offset, scroll::LE)?;
+                into.gwrite(t, offset)?;
+            }
+            Var(n) => {
+                into.gwrite_with(ELEMENT_TYPE_VAR, offset, scroll::LE)?;
+                into.gwrite(compressed::Unsigned(n), offset)?;
+            }
+        }
+
+        Ok(*offset)
+    }
+}
 
 #[derive(Debug, Clone)]
-// no idea what the hell any of this means
 pub enum ParamType {
     Type(Type),
     ByRef(Type),
@@ -293,7 +469,7 @@ impl TryFromCtx<'_> for Param {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let mods = all_custom_mods(from, offset)?;
+        let mods = all_custom_mods(from, offset);
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
@@ -306,6 +482,30 @@ impl TryFromCtx<'_> for Param {
         };
 
         Ok((Param(mods, val), *offset))
+    }
+}
+impl TryIntoCtx for Param {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        for m in self.0 {
+            into.gwrite(m, offset)?;
+        }
+
+        match self.1 {
+            ParamType::Type(t) => into.gwrite(t, offset)?,
+            ParamType::ByRef(t) => {
+                into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
+                into.gwrite(t, offset)?
+            }
+            ParamType::TypedByRef => {
+                into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?
+            }
+        };
+
+        Ok(*offset)
     }
 }
 
@@ -326,7 +526,7 @@ impl TryFromCtx<'_> for RetType {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let mods = all_custom_mods(from, offset)?;
+        let mods = all_custom_mods(from, offset);
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
@@ -340,6 +540,31 @@ impl TryFromCtx<'_> for RetType {
         };
 
         Ok((RetType(mods, val), *offset))
+    }
+}
+impl TryIntoCtx for RetType {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        for m in self.0 {
+            into.gwrite(m, offset)?;
+        }
+
+        match self.1 {
+            RetTypeType::Type(t) => into.gwrite(t, offset)?,
+            RetTypeType::ByRef(t) => {
+                into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
+                into.gwrite(t, offset)?
+            }
+            RetTypeType::TypedByRef => {
+                into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?
+            }
+            RetTypeType::Void => into.gwrite_with(ELEMENT_TYPE_VOID, offset, scroll::LE)?,
+        };
+
+        Ok(*offset)
     }
 }
 
@@ -435,5 +660,43 @@ impl TryFromCtx<'_> for NativeIntrinsic {
         };
 
         Ok((val, *offset))
+    }
+}
+impl TryIntoCtx for NativeIntrinsic {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        use NativeIntrinsic::*;
+        into.gwrite_with(
+            match self {
+                Boolean => NATIVE_TYPE_BOOLEAN,
+                Int8 => NATIVE_TYPE_I1,
+                UInt8 => NATIVE_TYPE_U1,
+                Int16 => NATIVE_TYPE_I2,
+                UInt16 => NATIVE_TYPE_U2,
+                Int32 => NATIVE_TYPE_I4,
+                UInt32 => NATIVE_TYPE_U4,
+                Int64 => NATIVE_TYPE_I8,
+                UInt64 => NATIVE_TYPE_U8,
+                Float32 => NATIVE_TYPE_R4,
+                Float64 => NATIVE_TYPE_R8,
+                LPStr => NATIVE_TYPE_LPSTR,
+                LPWStr => NATIVE_TYPE_LPWSTR,
+                IntPtr => NATIVE_TYPE_INT,
+                UIntPtr => NATIVE_TYPE_UINT,
+                Function => NATIVE_TYPE_FUNC,
+                BStr => 0x13,
+                COMIUnknown => 0x19,
+                COMInterface => 0x1c,
+                AsAny => 0x28,
+                LPUTF8Str => 0x30,
+            },
+            offset,
+            scroll::LE,
+        )?;
+
+        Ok(*offset)
     }
 }

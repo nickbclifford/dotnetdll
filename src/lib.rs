@@ -85,74 +85,31 @@ mod tests {
     }
 
     #[test]
-    fn decompress() {
+    fn compression() {
         use signature::compressed::*;
 
-        const U1: [u8; 1] = [0x03];
-        const U2: [u8; 2] = [0xBF, 0xFF];
-        const U4: [u8; 4] = [0xC0, 0x00, 0x40, 0x00];
+        macro_rules! test_case {
+            ($ty:ident($val:expr) => [$($byte:literal),+]) => {
+                let $ty(val) = [$($byte),+].pread(0).unwrap();
+                assert_eq!(val, $val);
 
-        const I1: [u8; 1] = [0x06];
-        const I1_NEG: [u8; 1] = [0x7B];
-        const I2: [u8; 2] = [0x80, 0x80];
-        const I2_NEG: [u8; 2] = [0x80, 0x01];
-        const I4: [u8; 4] = [0xDF, 0xFF, 0xFF, 0xFE];
-        const I4_NEG: [u8; 4] = [0xC0, 0x00, 0x00, 0x01];
+                // we need to include the variable for repetition, so discard its value
+                let mut buf = [$({ $byte; 0 }),+];
+                buf.pwrite($ty($val), 0).unwrap();
+                assert_eq!(buf, [$($byte),+]);
+            }
+        }
 
-        let Unsigned(u1) = U1.pread(0).unwrap();
-        assert_eq!(u1, 0x03);
-        let Unsigned(u2) = U2.pread(0).unwrap();
-        assert_eq!(u2, 0x3FFF);
-        let Unsigned(u4) = U4.pread(0).unwrap();
-        assert_eq!(u4, 0x4000);
-        let Signed(sp1) = I1.pread(0).unwrap();
-        assert_eq!(sp1, 3);
-        let Signed(sn1) = I1_NEG.pread(0).unwrap();
-        assert_eq!(sn1, -3);
-        let Signed(sp2) = I2.pread(0).unwrap();
-        assert_eq!(sp2, 64);
-        let Signed(sn2) = I2_NEG.pread(0).unwrap();
-        assert_eq!(sn2, -8192);
-        let Signed(sp4) = I4.pread(0).unwrap();
-        assert_eq!(sp4, 268435455);
-        let Signed(sn4) = I4_NEG.pread(0).unwrap();
-        assert_eq!(sn4, -268435456);
+        test_case!(Unsigned(0x03) => [0x03]);
+        test_case!(Unsigned(0x3FFF) => [0xBF, 0xFF]);
+        test_case!(Unsigned(0x4000) => [0xC0, 0x00, 0x40, 0x00]);
 
-        let mut u1buf = [0u8; 1];
-        u1buf.pwrite(Unsigned(3), 0).unwrap();
-        assert_eq!(u1buf, U1);
-
-        let mut u2buf = [0u8; 2];
-        u2buf.pwrite(Unsigned(0x3FFF), 0).unwrap();
-        assert_eq!(u2buf, U2);
-
-        let mut u4buf = [0u8; 4];
-        u4buf.pwrite(Unsigned(0x4000), 0).unwrap();
-        assert_eq!(u4buf, U4);
-
-        let mut i1buf = [0u8; 1];
-        i1buf.pwrite(Signed(3), 0).unwrap();
-        assert_eq!(i1buf, I1);
-
-        let mut i1nbuf = [0u8; 1];
-        i1nbuf.pwrite(Signed(-3), 0).unwrap();
-        assert_eq!(i1nbuf, I1_NEG);
-
-        let mut i2buf = [0u8; 2];
-        i2buf.pwrite(Signed(64), 0).unwrap();
-        assert_eq!(i2buf, I2);
-
-        let mut i2nbuf = [0u8; 2];
-        i2nbuf.pwrite(Signed(-8192), 0).unwrap();
-        assert_eq!(i2nbuf, I2_NEG);
-
-        let mut i4buf = [0u8; 4];
-        i4buf.pwrite(Signed(268435455), 0).unwrap();
-        assert_eq!(i4buf, I4);
-
-        let mut i4nbuf = [0u8; 4];
-        i4nbuf.pwrite(Signed(-268435456), 0).unwrap();
-        assert_eq!(i4nbuf, I4_NEG);
+        test_case!(Signed(3) => [0x06]);
+        test_case!(Signed(-3) => [0x7B]);
+        test_case!(Signed(64) => [0x80, 0x80]);
+        test_case!(Signed(-8192) => [0x80, 0x01]);
+        test_case!(Signed(268435455) => [0xDF, 0xFF, 0xFF, 0xFE]);
+        test_case!(Signed(-268435456) => [0xC0, 0x00, 0x00, 0x01]);
     }
 
     #[test]
@@ -162,11 +119,15 @@ mod tests {
         let TypeDefOrRefOrSpec(t) = [0x49].pread(0).unwrap();
         assert_eq!(t.target, metadata::index::TokenTarget::Table(Kind::TypeRef));
         assert_eq!(t.index, 0x12);
+
+        let mut buf = [0u8; 1];
+        buf.pwrite(TypeDefOrRefOrSpec(t), 0).unwrap();
+        assert_eq!(buf, [0x49]);
     }
 
     #[test]
     fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.205/System.Text.Json.dll")?;
         let dll = DLL::parse(&file)?;
         let meta = dll.get_logical_metadata()?;
 
@@ -227,7 +188,7 @@ mod tests {
         }
 
         let mut files = vec![];
-        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/5.0.7")? {
+        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/5.0.8")? {
             let path = p?.path();
             if matches!(path.extension(), Some(o) if o == "dll") {
                 files.push(std::fs::read(path)?);
@@ -280,7 +241,7 @@ mod tests {
 
     #[test]
     fn headers_write() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.204/System.Text.Json.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.205/System.Text.Json.dll")?;
         let dll = DLL::parse(&file)?;
         let meta = dll.get_logical_metadata()?;
 
@@ -296,4 +257,3 @@ mod tests {
         Ok(())
     }
 }
-
