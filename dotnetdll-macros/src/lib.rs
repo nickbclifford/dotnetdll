@@ -168,6 +168,11 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         }
     }
 
+    // build parameters with simple indexes
+    fn build_ident(c: char) -> impl FnMut(usize) -> Ident {
+        move |i| Ident::new(&format!("{}{}", c, i), Span::call_site())
+    }
+
     // builds a sorted iterator of variants
     // they look much better in docs when sorted
     fn build_sorted_variants(
@@ -185,25 +190,47 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     let mut parses = vec![];
     let mut extended_parses = vec![];
 
+    let mut base_sizes = HashMap::new();
+
+    let mut writes = HashMap::new();
+
     for v in normal.iter() {
         let (_, byte) = v.discriminant.as_ref().unwrap();
         let id = &v.ident;
 
-        // construct variant with IntoInstr trait impl
+        let fields = &normal_map[id];
+        let num_fields = fields.len();
+
+        // construct variant with InstructionField trait impl
         let parse = make_variant(
             id,
-            normal_map[id]
+            fields
                 .iter()
-                .map(|_| quote! { IntoInstr::parse(from, offset)? }),
+                .map(|_| quote! { InstructionField::parse(from, offset)? }),
         );
 
+        let byte_writer = quote! { (#byte as u8) };
+
         // put match arm in correct bucket
-        (if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
-            &mut extended_parses
+        let (size, bucket, mut to_write) = if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
+            (
+                2usize,
+                &mut extended_parses,
+                vec![quote! { 0xFEu8 }, byte_writer],
+            )
         } else {
-            &mut parses
-        })
-        .push(quote! { #byte => Instruction::#parse });
+            (1usize, &mut parses, vec![byte_writer])
+        };
+
+        // build identifiers for the variant's fields
+        let field_idents: Vec<_> = (0..num_fields).map(build_ident('n')).collect();
+        to_write.extend(field_idents.iter().map(|i| quote! { #i }));
+
+        writes.insert(id.clone(), (field_idents, to_write));
+
+        bucket.push(quote! { #byte => Instruction::#parse });
+
+        base_sizes.insert(id.clone(), (size, num_fields));
     }
 
     // constructing prefix variants is a lot more complicated
@@ -211,17 +238,12 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         let (_, byte) = v.discriminant.as_ref().unwrap();
         let prefix_name = v.ident.to_string();
 
-        // build parameters with simple indexes
-        fn build_ident(c: char) -> impl FnMut(usize) -> Ident {
-            move |i| Ident::new(&format!("{}{}", c, i), Span::call_site())
-        }
-
         let prefix_bindings: Vec<_> = (0..fields(&v).len()).map(build_ident('p')).collect();
 
         // builds match arms for each valid suffix
         // the Vec construction is necessary to avoid lifetime problems
         let build_suffixes = |input_map: &FieldsMap, suffix_lookup: &FieldsMap| -> Vec<_> {
-            input_map.iter().filter_map(|(id, _)| {
+            input_map.keys().filter_map(|id| {
                 let variant_name = id.to_string();
                 // only build for the current prefix
                 if variant_name.starts_with(&prefix_name) {
@@ -251,7 +273,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             #byte => {
                 // if it has any parameters, parse them here
                 #(
-                    let #prefix_bindings = IntoInstr::parse(from, offset)?;
+                    let #prefix_bindings = InstructionField::parse(from, offset)?;
                 )*
                 // parse a full instruction
                 match from.gread(offset)? {
@@ -264,7 +286,85 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         }
     });
 
-    // builds type names for IntoInstr impls
+    let mut build_sizes = |prefix_name: &str, input_map: &FieldsMap| {
+        // same logic for ident matching as parse building
+        for (id, fields) in input_map.iter() {
+            let variant_name = id.to_string();
+            if variant_name.starts_with(prefix_name) {
+                let bare_ident = Ident::new(&variant_name[prefix_name.len()..], Span::call_site());
+
+                let (suffix_size, _) = base_sizes[&bare_ident];
+                base_sizes.insert(id.clone(), (2 + suffix_size, fields.len()));
+            }
+        }
+    };
+
+    // single prefix sizes
+    for v in prefixes.iter() {
+        build_sizes(&v.ident.to_string(), &prefixes_map);
+    }
+    // composed prefix sizes (requires single prefixes)
+    for v in prefixes.iter() {
+        build_sizes(&v.ident.to_string(), &composed_map);
+    }
+
+    let bytesize = base_sizes.into_iter().map(|(id, (base_size, num_fields))| {
+        let fields: Vec<_> = (0..num_fields).map(build_ident('f')).collect();
+        let var = make_variant(&id, fields.iter());
+
+        // include the base instruction size, then the bytesize of each field
+        let sizes = std::iter::once(quote! { #base_size })
+            .chain(fields.into_iter().map(|f| quote! { #f.bytesize() }));
+        // join with pluses to add
+        quote! { Instruction::#var => #(#sizes)+* }
+    });
+
+    let mut build_writes = |prefix: &Variant, input_map: &FieldsMap| {
+        let prefix_name = &prefix.ident.to_string();
+        let (_, byte) = prefix.discriminant.as_ref().unwrap();
+        let num_fields = fields(prefix).len();
+
+        // ditto
+        for (id, _) in input_map.iter() {
+            let variant_name = id.to_string();
+            if variant_name.starts_with(prefix_name) {
+                let bare_ident = Ident::new(&variant_name[prefix_name.len()..], Span::call_site());
+
+                let (suffix_fields, suffix_to_write) = &writes[&bare_ident];
+
+                let prefix_fields: Vec<_> = (0..num_fields).map(build_ident('p')).collect();
+
+                let mut to_write = vec![quote! { 0xFEu8 }, quote! { (#byte as u8) }];
+                to_write.extend(prefix_fields.iter().map(|i| quote! { #i }));
+                // clone because we want to repeat what's in the suffix
+                to_write.extend(suffix_to_write.iter().map(Clone::clone));
+
+                let all_fields = prefix_fields
+                    .into_iter()
+                    // clone because we want the same idents
+                    .chain(suffix_fields.iter().map(Clone::clone))
+                    .collect();
+
+                writes.insert(id.clone(), (all_fields, to_write));
+            }
+        }
+    };
+
+    // single prefix writes
+    for v in prefixes.iter() {
+        build_writes(&v, &prefixes_map);
+    }
+    // composed prefix writes (requires single prefixes)
+    for v in prefixes.iter() {
+        build_writes(&v, &composed_map);
+    }
+
+    let write_matches = writes.into_iter().map(|(id, (fields, to_write))| {
+        let var = make_variant(&id, fields);
+        quote! { Instruction::#var => { #( #to_write.write(into, offset)?; )* } }
+    });
+
+    // builds type names for InstructionField impls
     let nums = [
         "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     ]
@@ -272,35 +372,69 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     .map(|n| Ident::new(n, Span::call_site()));
 
     TokenStream::from(quote! {
-        use scroll::Pread;
+        use scroll::{Pread, Pwrite};
+        use std::mem::size_of;
 
         // types are really hard to deal with in macros
         // it's easiest to just use a private trait instead for this kind of dispatch
-        trait IntoInstr: Sized {
-            fn parse(from: &[u8], offset: &mut usize) -> Result<Self, scroll::Error>;
+
+        trait InstructionField: Sized {
+            fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self>;
+            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()>;
+            fn bytesize(&self) -> usize;
         }
 
         #(
-            impl IntoInstr for #nums {
-                fn parse(from: &[u8], offset: &mut usize) -> Result<Self, scroll::Error> {
+            impl InstructionField for #nums {
+                fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self> {
                     from.gread_with(offset, scroll::LE)
+                }
+
+                fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+                    into.gwrite_with(self, offset, scroll::LE)?;
+                    Ok(())
+                }
+
+                fn bytesize(&self) -> usize {
+                    size_of::<Self>()
                 }
             }
         )*
 
-        impl IntoInstr for Token {
-            fn parse(from: &[u8], offset: &mut usize) -> Result<Self, scroll::Error> {
+        impl InstructionField for Token {
+            fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self> {
                 from.gread(offset)
+            }
+
+            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+                into.gwrite(self, offset)?;
+                Ok(())
+            }
+
+            fn bytesize(&self) -> usize {
+                4
             }
         }
 
         // the Switch instruction is the only usage of this
-        impl IntoInstr for Vec<i32> {
-            fn parse(from: &[u8], offset: &mut usize) -> Result<Self, scroll::Error> {
-                let num: i32 = from.gread_with(offset, scroll::LE)?;
+        impl InstructionField for Vec<i32> {
+            fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self> {
+                let num: u32 = from.gread_with(offset, scroll::LE)?;
                 let mut result = vec![0i32; num as usize];
                 from.gread_inout_with(offset, &mut result, scroll::LE)?;
                 Ok(result)
+            }
+
+            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+                into.gwrite_with(self.len() as u32, offset, scroll::LE)?;
+                for i in self {
+                    into.gwrite_with(i, offset, scroll::LE)?;
+                }
+                Ok(())
+            }
+
+            fn bytesize(&self) -> usize {
+                size_of::<u32>() + (self.len() * size_of::<i32>())
             }
         }
 
@@ -309,6 +443,14 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             #(#normal_variants,)*
             #(#prefix_variants,)*
             #(#compose_variants),*
+        }
+
+        impl Instruction {
+            pub fn bytesize(&self) -> usize {
+                match self {
+                    #(#bytesize),*
+                }
+            }
         }
 
         impl scroll::ctx::TryFromCtx<'_> for Instruction {
@@ -331,6 +473,19 @@ pub fn instructions(input: TokenStream) -> TokenStream {
                 };
 
                 Ok((val, *offset))
+            }
+        }
+        impl scroll::ctx::TryIntoCtx for Instruction {
+            type Error = scroll::Error;
+
+            fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+                let offset = &mut 0;
+
+                match self {
+                    #(#write_matches),*
+                }
+
+                Ok(*offset)
             }
         }
     })

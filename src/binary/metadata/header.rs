@@ -145,7 +145,6 @@ impl TryIntoCtx for Header {
             }
         }
 
-
         let mut all_tables: Vec<_> = tables_map.into_iter().collect();
         all_tables.sort_by_key(|&(k, _)| k);
         for (_, buffer) in all_tables {

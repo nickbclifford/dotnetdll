@@ -1,6 +1,9 @@
 use super::index;
 use num_derive::{FromPrimitive, ToPrimitive};
-use scroll::{ctx::{TryFromCtx, TryIntoCtx}, Pread, Pwrite};
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
+};
 
 // paste!
 use paste::paste;

@@ -1,6 +1,6 @@
 use scroll::{
-    ctx::{StrCtx, TryFromCtx},
-    Pread,
+    ctx::{StrCtx, TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
 };
 
 #[derive(Debug)]
@@ -31,5 +31,29 @@ impl<'a> TryFromCtx<'a> for Header<'a> {
             name,
         };
         Ok((obj, *offset))
+    }
+}
+impl TryIntoCtx for Header<'_> {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(self.offset, offset, scroll::LE)?;
+        into.gwrite_with(self.size, offset, scroll::LE)?;
+
+        // name is null-terminated
+        into.gwrite(self.name, offset)?;
+        into.gwrite_with(0u8, offset, scroll::LE)?;
+
+        // after initial null-termination, align to 4 bytes with nulls
+        let rem = self.name.len() % 4;
+        if rem != 0 {
+            for _ in 0..(4 - rem) {
+                into.gwrite_with(0u8, offset, scroll::LE)?;
+            }
+        }
+
+        Ok(*offset)
     }
 }

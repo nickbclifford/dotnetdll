@@ -6,7 +6,6 @@ use super::{
             index::{MethodDefOrRef, Token, TokenTarget, TypeDefOrRef},
             table::{Kind, MethodSpec, StandAloneSig, TypeSpec},
         },
-        method::InstructionUnit,
         signature::{
             encoded::*,
             kinds::{
@@ -404,11 +403,8 @@ fn field_source<'r, 'data>(
 }
 
 pub fn instruction<'r, 'data>(
-    InstructionUnit {
-        offset,
-        bytesize,
-        instruction,
-    }: InstructionUnit,
+    instruction: il::Instruction,
+    index: usize,
     all_offsets: &'r [usize],
     ctx: &Context<'r, 'data>,
     m_ctx: &MethodContext<'r, 'data>,
@@ -675,6 +671,9 @@ pub fn instruction<'r, 'data>(
             }
         };
     }
+
+    let offset = all_offsets[index];
+    let bytesize = instruction.bytesize();
 
     let convert_offset = |i: i32| -> Result<usize> {
         use std::convert::TryInto;

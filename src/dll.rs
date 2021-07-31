@@ -1930,7 +1930,15 @@ impl<'a> DLL<'a> {
 
                 let raw_instrs = raw_body.body;
 
-                let instr_offsets: Vec<_> = raw_instrs.iter().map(|i| i.offset).collect();
+                let mut init_offset = 0;
+                let instr_offsets: Vec<_> = raw_instrs
+                    .iter()
+                    .map(|i| {
+                        let offset = init_offset;
+                        init_offset += i.bytesize();
+                        offset
+                    })
+                    .collect();
 
                 let data_sections = raw_body
                     .data_sections
@@ -1988,14 +1996,17 @@ impl<'a> DLL<'a> {
                                     })
                                 }).collect::<Result<_>>()?,
                             ),
-                            SectionKind::Unrecognized => DataSection::Unrecognized,
+                            SectionKind::Unrecognized {
+                                is_fat, length
+                            } => DataSection::Unrecognized { fat: is_fat, size: length },
                         })
                     })
                     .collect::<Result<_>>()?;
 
                 let instrs = raw_instrs
                     .into_iter()
-                    .map(|i| convert::instruction(i, &instr_offsets, &ctx, &m_ctx))
+                    .enumerate()
+                    .map(|(idx, i)| convert::instruction(i, idx, &instr_offsets, &ctx, &m_ctx))
                     .collect::<Result<_>>()?;
 
                 res[methods[idx]].body = Some(Method {

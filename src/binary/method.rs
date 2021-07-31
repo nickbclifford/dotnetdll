@@ -1,5 +1,8 @@
 use super::il;
-use scroll::{ctx::TryFromCtx, Pread};
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
+};
 
 #[derive(Debug)]
 pub enum Header {
@@ -40,8 +43,35 @@ impl TryFromCtx<'_> for Header {
         ))
     }
 }
+impl TryIntoCtx for Header {
+    type Error = scroll::Error;
 
-#[derive(Debug, Pread)]
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        use Header::*;
+        match self {
+            Tiny { size } => {
+                into.gwrite_with(((size as u8) << 2) | 0x2, offset, scroll::LE)?;
+            }
+            Fat {
+                flags,
+                max_stack,
+                size,
+                local_var_sig_tok,
+            } => {
+                into.gwrite_with(flags | 0x3 | (3 << 12), offset, scroll::LE)?;
+                into.gwrite_with(max_stack, offset, scroll::LE)?;
+                into.gwrite_with(size, offset, scroll::LE)?;
+                into.gwrite_with(local_var_sig_tok, offset, scroll::LE)?;
+            }
+        }
+
+        Ok(*offset)
+    }
+}
+
+#[derive(Debug, Pread, Pwrite)]
 pub struct Exception {
     pub flags: u32,
     pub try_offset: u32,
@@ -54,7 +84,7 @@ pub struct Exception {
 #[derive(Debug)]
 pub enum SectionKind {
     Exceptions(Vec<Exception>),
-    Unrecognized,
+    Unrecognized { is_fat: bool, length: usize },
 }
 
 #[derive(Debug)]
@@ -110,7 +140,7 @@ impl TryFromCtx<'_> for DataSection {
             SectionKind::Exceptions(exceptions)
         } else {
             *offset += length;
-            SectionKind::Unrecognized
+            SectionKind::Unrecognized { is_fat, length }
         };
 
         Ok((
@@ -122,18 +152,83 @@ impl TryFromCtx<'_> for DataSection {
         ))
     }
 }
+impl TryIntoCtx for DataSection {
+    type Error = scroll::Error;
 
-#[derive(Debug)]
-pub struct InstructionUnit {
-    pub offset: usize,
-    pub bytesize: usize,
-    pub instruction: il::Instruction,
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        use SectionKind::*;
+
+        let mut flags: u8 = if self.more_sections { 0x80 } else { 0x0 };
+
+        let (is_fat, length) = match &self.section {
+            Exceptions(es) => {
+                flags |= 0x1;
+
+                let should_be_fat = !es.iter().all(|e| {
+                    e.try_length < 256
+                        && e.handler_length < 256
+                        && e.try_offset < 65536
+                        && e.handler_offset < 65536
+                });
+
+                (
+                    should_be_fat,
+                    if should_be_fat { 24 } else { 12 } * es.len(),
+                )
+            }
+            Unrecognized { is_fat, length } => (*is_fat, *length),
+        };
+
+        if is_fat {
+            flags |= 0x40;
+        }
+
+        into.gwrite_with(flags, offset, scroll::LE)?;
+
+        if is_fat {
+            into.gwrite_with(length as u8, offset, scroll::LE)?;
+        } else {
+            let bytes = (length as u32).to_le_bytes();
+            for b in &bytes[..3] {
+                into.gwrite_with(b, offset, scroll::LE)?;
+            }
+        }
+
+        match self.section {
+            Exceptions(e) => {
+                // small exception table requires 2 bytes padding
+                if !is_fat {
+                    into.gwrite_with(0u16, offset, scroll::LE)?;
+                }
+
+                for clause in e {
+                    if is_fat {
+                        into.gwrite_with(clause, offset, scroll::LE)?;
+                    } else {
+                        into.gwrite_with(clause.flags as u16, offset, scroll::LE)?;
+                        into.gwrite_with(clause.try_offset as u16, offset, scroll::LE)?;
+                        into.gwrite_with(clause.try_length as u8, offset, scroll::LE)?;
+                        into.gwrite_with(clause.handler_offset as u16, offset, scroll::LE)?;
+                        into.gwrite_with(clause.handler_length as u8, offset, scroll::LE)?;
+                        into.gwrite_with(clause.class_token_or_filter, offset, scroll::LE)?;
+                    }
+                }
+            }
+            Unrecognized { length, .. } => {
+                *offset += length;
+            }
+        }
+
+        Ok(*offset)
+    }
 }
 
 #[derive(Debug)]
 pub struct Method {
     pub header: Header,
-    pub body: Vec<InstructionUnit>,
+    pub body: Vec<il::Instruction>,
     pub data_sections: Vec<DataSection>,
 }
 
@@ -153,13 +248,7 @@ impl TryFromCtx<'_> for Method {
         let mut body = vec![];
         let mut body_offset = 0;
         while body_offset < body_size {
-            let before_offset = body_offset;
-            let instruction = body_bytes.gread(&mut body_offset)?;
-            body.push(InstructionUnit {
-                offset: before_offset,
-                bytesize: body_offset - before_offset,
-                instruction,
-            });
+            body.push(body_bytes.gread(&mut body_offset)?);
         }
 
         let mut data_sections = vec![];
@@ -188,5 +277,30 @@ impl TryFromCtx<'_> for Method {
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for Method {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite(self.header, offset)?;
+
+        for i in self.body {
+            into.gwrite(i, offset)?;
+        }
+
+        // align to next 4-byte boundary
+        let rem = *offset % 4;
+        if rem != 0 {
+            *offset += 4 - rem;
+        }
+
+        for d in self.data_sections {
+            into.gwrite(d, offset)?;
+        }
+
+        Ok(*offset)
     }
 }

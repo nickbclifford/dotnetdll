@@ -19,7 +19,7 @@ pub struct Method<'a> {
 
 #[derive(Debug)]
 pub enum DataSection {
-    Unrecognized,
+    Unrecognized { fat: bool, size: usize },
     ExceptionHandlers(Vec<Exception>),
 }
 
