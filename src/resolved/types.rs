@@ -105,10 +105,10 @@ impl TypeFlags {
                 0x00000 => StringFormatting::ANSI,
                 0x10000 => StringFormatting::Unicode,
                 0x20000 => StringFormatting::Automatic,
-                0x30000 => StringFormatting::Custom(bitmask & 0xC00000),
+                0x30000 => StringFormatting::Custom(bitmask & 0x00C0_0000),
                 _ => unreachable!(),
             },
-            before_field_init: check_bitmask!(bitmask, 0x1000000),
+            before_field_init: check_bitmask!(bitmask, 0x0100_0000),
             runtime_special_name: check_bitmask!(bitmask, 0x800),
         }
     }

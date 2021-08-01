@@ -199,8 +199,8 @@ macro_rules! def_idx_with_mod {
     (fn $name:ident uses ($idx:ident, $sig:ident) -> $t:ident) => {
         pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<(Vec<CustomTypeModifier>, $t)> {
             if let TypeDefOrRef::TypeSpec(i) = idx {
-                let idx = i - 1;
-                match ctx.specs.get(idx) {
+                let t_idx = i - 1;
+                match ctx.specs.get(t_idx) {
                     Some(s) => {
                         let blob = ctx.blobs.at_index(s.signature)?;
                         let mut offset = 0;
@@ -213,7 +213,7 @@ macro_rules! def_idx_with_mod {
                             $sig(blob.pread(offset)?, ctx)?,
                         ))
                     }
-                    None => throw!("invalid type spec index {} while parsing a type", idx),
+                    None => throw!("invalid type spec index {} while parsing a type", t_idx),
                 }
             } else {
                 Ok((vec![], $idx(idx, ctx)?))
@@ -974,10 +974,10 @@ pub fn instruction<'r, 'data>(
             use TokenTarget::*;
             let idx = t.index - 1;
             match t.target {
-                Table(Kind::MethodDef) | Table(Kind::MethodSpec) => {
+                Table(Kind::MethodDef | Kind::MethodSpec) => {
                     Instruction::LoadTokenMethod(method_source(t, ctx, m_ctx)?)
                 }
-                Table(Kind::TypeDef) | Table(Kind::TypeRef) | Table(Kind::TypeSpec) => {
+                Table(Kind::TypeDef | Kind::TypeRef | Kind::TypeSpec) => {
                     Instruction::LoadTokenType(type_token(t, ctx)?)
                 }
                 Table(Kind::Field) => Instruction::LoadTokenField(field_source(t, m_ctx)?),
@@ -1165,139 +1165,80 @@ pub fn instruction<'r, 'data>(
         VolatileStindRef => store_indirect!(Object | unaligned None, volatile true),
         VolatileStobj(t) => stobj!(t | unaligned None, volatile true),
         VolatileStsfld(t) => stsfld!(t | volatile true),
-        UnalignedVolatileCpblk(a) => cpblk!(unaligned alignment!(a), volatile true),
-        UnalignedVolatileInitblk(a) => initblk!(unaligned alignment!(a), volatile true),
-        UnalignedVolatileLdfld(a, t) => {
+        UnalignedVolatileCpblk(a) | VolatileUnalignedCpblk(a) => {
+            cpblk!(unaligned alignment!(a), volatile true)
+        }
+        UnalignedVolatileInitblk(a) | VolatileUnalignedInitblk(a) => {
+            initblk!(unaligned alignment!(a), volatile true)
+        }
+        UnalignedVolatileLdfld(a, t) | VolatileUnalignedLdfld(a, t) => {
             ldfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindI(a) => {
+        UnalignedVolatileLdindI(a) | VolatileUnalignedLdindI(a) => {
             load_indirect!(IntPtr | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindI1(a) => {
+        UnalignedVolatileLdindI1(a) | VolatileUnalignedLdindI1(a) => {
             load_indirect!(Int8 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindI2(a) => {
+        UnalignedVolatileLdindI2(a) | VolatileUnalignedLdindI2(a) => {
             load_indirect!(Int16 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindI4(a) => {
+        UnalignedVolatileLdindI4(a) | VolatileUnalignedLdindI4(a) => {
             load_indirect!(Int32 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindI8(a) => {
+        UnalignedVolatileLdindI8(a) | VolatileUnalignedLdindI8(a) => {
             load_indirect!(Int64 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindR4(a) => {
+        UnalignedVolatileLdindR4(a) | VolatileUnalignedLdindR4(a) => {
             load_indirect!(Float32 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindR8(a) => {
+        UnalignedVolatileLdindR8(a) | VolatileUnalignedLdindR8(a) => {
             load_indirect!(Float64 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindRef(a) => {
+        UnalignedVolatileLdindRef(a) | VolatileUnalignedLdindRef(a) => {
             load_indirect!(Object | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindU1(a) => {
+        UnalignedVolatileLdindU1(a) | VolatileUnalignedLdindU1(a) => {
             load_indirect!(UInt8 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindU2(a) => {
+        UnalignedVolatileLdindU2(a) | VolatileUnalignedLdindU2(a) => {
             load_indirect!(UInt16 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdindU4(a) => {
+        UnalignedVolatileLdindU4(a) | VolatileUnalignedLdindU4(a) => {
             load_indirect!(UInt32 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileLdobj(a, t) => ldobj!(t | unaligned alignment!(a), volatile true),
-        UnalignedVolatileStfld(a, t) => {
+        UnalignedVolatileLdobj(a, t) | VolatileUnalignedLdobj(a, t) => {
+            ldobj!(t | unaligned alignment!(a), volatile true)
+        }
+        UnalignedVolatileStfld(a, t) | VolatileUnalignedStfld(a, t) => {
             stfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindI(a) => {
+        UnalignedVolatileStindI(a) | VolatileUnalignedStindI(a) => {
             store_indirect!(IntPtr | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindI1(a) => {
+        UnalignedVolatileStindI1(a) | VolatileUnalignedStindI1(a) => {
             store_indirect!(Int8 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindI2(a) => {
+        UnalignedVolatileStindI2(a) | VolatileUnalignedStindI2(a) => {
             store_indirect!(Int16 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindI4(a) => {
+        UnalignedVolatileStindI4(a) | VolatileUnalignedStindI4(a) => {
             store_indirect!(Int32 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindI8(a) => {
+        UnalignedVolatileStindI8(a) | VolatileUnalignedStindI8(a) => {
             store_indirect!(Int64 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindR4(a) => {
+        UnalignedVolatileStindR4(a) | VolatileUnalignedStindR4(a) => {
             store_indirect!(Float32 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindR8(a) => {
+        UnalignedVolatileStindR8(a) | VolatileUnalignedStindR8(a) => {
             store_indirect!(Float64 | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStindRef(a) => {
+        UnalignedVolatileStindRef(a) | VolatileUnalignedStindRef(a) => {
             store_indirect!(Object | unaligned alignment!(a), volatile true)
         }
-        UnalignedVolatileStobj(a, t) => stobj!(t | unaligned alignment!(a), volatile true),
-        VolatileUnalignedCpblk(a) => cpblk!(unaligned alignment!(a), volatile true),
-        VolatileUnalignedInitblk(a) => initblk!(unaligned alignment!(a), volatile true),
-        VolatileUnalignedLdfld(a, t) => {
-            ldfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
+        UnalignedVolatileStobj(a, t) | VolatileUnalignedStobj(a, t) => {
+            stobj!(t | unaligned alignment!(a), volatile true)
         }
-        VolatileUnalignedLdindI(a) => {
-            load_indirect!(IntPtr | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindI1(a) => {
-            load_indirect!(Int8 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindI2(a) => {
-            load_indirect!(Int16 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindI4(a) => {
-            load_indirect!(Int32 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindI8(a) => {
-            load_indirect!(Int64 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindR4(a) => {
-            load_indirect!(Float32 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindR8(a) => {
-            load_indirect!(Float64 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindRef(a) => {
-            load_indirect!(Object | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindU1(a) => {
-            load_indirect!(UInt8 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindU2(a) => {
-            load_indirect!(UInt16 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdindU4(a) => {
-            load_indirect!(UInt32 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedLdobj(a, t) => ldobj!(t | unaligned alignment!(a), volatile true),
-        VolatileUnalignedStfld(a, t) => {
-            stfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindI(a) => {
-            store_indirect!(IntPtr | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindI1(a) => {
-            store_indirect!(Int8 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindI2(a) => {
-            store_indirect!(Int16 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindI4(a) => {
-            store_indirect!(Int32 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindI8(a) => {
-            store_indirect!(Int64 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindR4(a) => {
-            store_indirect!(Float32 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindR8(a) => {
-            store_indirect!(Float64 | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStindRef(a) => {
-            store_indirect!(Object | unaligned alignment!(a), volatile true)
-        }
-        VolatileUnalignedStobj(a, t) => stobj!(t | unaligned alignment!(a), volatile true),
     })
 }

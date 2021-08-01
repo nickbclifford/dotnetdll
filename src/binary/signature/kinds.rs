@@ -125,10 +125,10 @@ fn build_params_with_varargs(
         if from[*offset] == ELEMENT_TYPE_SENTINEL {
             *offset += 1;
             break;
-        } else {
-            params.push(from.gread(offset)?);
-            *len -= 1;
         }
+
+        params.push(from.gread(offset)?);
+        *len -= 1;
     }
     Ok(params)
 }
@@ -289,7 +289,7 @@ impl TryIntoCtx for StandAloneMethodSig {
         }
 
         if self.calling_convention == Vararg && !self.varargs.is_empty() {
-            into.gwrite_with(0x41u8, offset, scroll::LE)?;
+            into.gwrite_with(0x41_u8, offset, scroll::LE)?;
             for v in self.varargs {
                 into.gwrite(v, offset)?;
             }
@@ -324,7 +324,7 @@ impl TryIntoCtx for FieldSig {
     fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        into.gwrite_with(0x6u8, offset, scroll::LE)?;
+        into.gwrite_with(0x6_u8, offset, scroll::LE)?;
 
         for m in self.0 {
             into.gwrite(m, offset)?;
@@ -381,7 +381,7 @@ impl TryIntoCtx for PropertySig {
         let offset = &mut 0;
 
         into.gwrite_with(
-            if self.has_this { 0x28u8 } else { 0x8u8 },
+            if self.has_this { 0x28_u8 } else { 0x8_u8 },
             offset,
             scroll::LE,
         )?;

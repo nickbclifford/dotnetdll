@@ -44,13 +44,13 @@ impl TryIntoCtx for Header<'_> {
 
         // name is null-terminated
         into.gwrite(self.name, offset)?;
-        into.gwrite_with(0u8, offset, scroll::LE)?;
+        into.gwrite_with(0_u8, offset, scroll::LE)?;
 
         // after initial null-termination, align to 4 bytes with nulls
         let rem = self.name.len() % 4;
         if rem != 0 {
             for _ in 0..(4 - rem) {
-                into.gwrite_with(0u8, offset, scroll::LE)?;
+                into.gwrite_with(0_u8, offset, scroll::LE)?;
             }
         }
 

@@ -181,9 +181,8 @@ fn parse_named<'def, 'inst>(
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<Vec<NamedArg<'inst>>> {
     let num_named: u16 = src.gread_with(offset, scroll::LE)?;
-    let mut named = Vec::with_capacity(num_named as usize);
 
-    for _ in 0..num_named {
+    (0..num_named).map(|_| {
         let kind: u8 = src.gread_with(offset, scroll::LE)?;
         let f_type: FieldOrPropType = src.gread(offset)?;
         let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
@@ -192,14 +191,12 @@ fn parse_named<'def, 'inst>(
 
         let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
 
-        named.push(match kind {
+        Ok(match kind {
             0x53 => NamedArg::Field(name, value),
             0x54 => NamedArg::Property(name, value),
             bad => throw!("bad named argument tag {:#04x}", bad),
         })
-    }
-
-    Ok(named)
+    }).collect()
 }
 
 #[derive(Debug, Clone)]
@@ -240,7 +237,7 @@ impl<'a> Attribute<'a> {
                 .map_err(|e| scroll::Error::Custom(e.to_string()))
         };
 
-        for Parameter(_, param) in params.into_iter() {
+        for Parameter(_, param) in params {
             match param {
                 ParameterType::Value(p_type) => {
                     fixed.push(parse_from_type(
@@ -315,7 +312,7 @@ impl<'a> SecurityDeclaration<'a> {
                     .map_err(|e| scroll::Error::Custom(e.to_string()))
             })?;
 
-            attrs.push(SecurityAttributeData { type_name, fields })
+            attrs.push(SecurityAttributeData { type_name, fields });
         }
 
         Ok(attrs)

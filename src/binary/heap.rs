@@ -42,11 +42,11 @@ fn read_bytes(bytes: &[u8], idx: usize) -> Result<&[u8]> {
 fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     let len = bytes.len();
 
-    let mut buf = vec![0u8; len];
+    let mut buf = vec![0_u8; len];
 
     let len_size = buf.pwrite(compressed::Unsigned(len as u32), 0)?;
 
-    buf.extend(vec![0u8; len_size]);
+    buf.extend(vec![0_u8; len_size]);
 
     buf.pwrite(bytes, len_size)?;
 
@@ -62,7 +62,7 @@ heap_struct!(Strings, {
     }
 
     fn write(value: Self::Value) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; value.len() + 1];
+        let mut buf = vec![0_u8; value.len() + 1];
 
         buf.pwrite(value.as_bytes(), 0)?;
 
@@ -88,7 +88,7 @@ heap_struct!(GUID, {
     type Value = [u8; 16];
 
     fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value> {
-        let mut buf = [0u8; 16];
+        let mut buf = [0_u8; 16];
         self.bytes
             .gread_inout_with(&mut ((idx - 1) * 16), &mut buf, scroll::LE)?;
         Ok(buf)
@@ -127,7 +127,7 @@ heap_struct!(UserString, {
         write_bytes(
             &value
                 .into_iter()
-                .flat_map(|u| u.to_le_bytes())
+                .flat_map(u16::to_le_bytes)
                 .chain(std::iter::once(final_byte))
                 .collect::<Vec<_>>(),
         )

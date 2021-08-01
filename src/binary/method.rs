@@ -105,7 +105,7 @@ impl TryFromCtx<'_> for DataSection {
         let more_sections = check_bitmask!(kind, 0x80);
 
         let length = if is_fat {
-            let mut bytes = [0u8; 3];
+            let mut bytes = [0_u8; 3];
             from.gread_inout_with(offset, &mut bytes, scroll::LE)?;
             u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0])
         } else {
@@ -200,7 +200,7 @@ impl TryIntoCtx for DataSection {
             Exceptions(e) => {
                 // small exception table requires 2 bytes padding
                 if !is_fat {
-                    into.gwrite_with(0u16, offset, scroll::LE)?;
+                    into.gwrite_with(0_u16, offset, scroll::LE)?;
                 }
 
                 for clause in e {
@@ -216,8 +216,9 @@ impl TryIntoCtx for DataSection {
                     }
                 }
             }
-            Unrecognized { length, .. } => {
-                *offset += length;
+            Unrecognized { length: section_length, .. } => {
+                // just skip any unknown sections
+                *offset += section_length;
             }
         }
 
@@ -240,8 +241,7 @@ impl TryFromCtx<'_> for Method {
         let header = from.gread(offset)?;
 
         let body_size = match header {
-            Header::Tiny { size } => size,
-            Header::Fat { size, .. } => size,
+            Header::Tiny { size } | Header::Fat { size, .. } => size,
         };
 
         let body_bytes: &[u8] = from.gread_with(offset, body_size)?;

@@ -67,26 +67,22 @@ pub struct ResolveOptions {
 impl<'a> DLL<'a> {
     pub fn parse(bytes: &[u8]) -> Result<DLL> {
         let dos = ImageDosHeader::parse(bytes)?;
-        let dirs: &[ImageDataDirectory];
-        let sections: SectionTable;
 
         // PE vs PE32+ format detection
         let original_offset = dos.nt_headers_offset() as u64;
         let mut offset = original_offset;
-        match ImageNtHeaders32::parse(bytes, &mut offset) {
-            Ok((nt, dirs32)) => {
-                sections = nt.sections(bytes, offset)?;
-                dirs = dirs32;
-            }
-            Err(_) => {
-                offset = original_offset;
 
-                let (nt, dirs64) = ImageNtHeaders64::parse(bytes, &mut offset)?;
+        let (sections, dirs) = if let Ok((nt, dirs32)) = ImageNtHeaders32::parse(bytes, &mut offset)
+        {
+            (nt.sections(bytes, offset)?, dirs32)
+        } else {
+            offset = original_offset;
 
-                sections = nt.sections(bytes, offset)?;
-                dirs = dirs64;
-            }
-        }
+            let (nt, dirs64) = ImageNtHeaders64::parse(bytes, &mut offset)?;
+
+            (nt.sections(bytes, offset)?, dirs64)
+        };
+
         let cli_b = dirs
             .get(14)
             .ok_or(Other("missing CLI metadata data directory in PE image"))?
@@ -316,7 +312,7 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        for n in tables.nested_class.iter() {
+        for n in &tables.nested_class {
             let nest_idx = n.nested_class.0 - 1;
             match types.get_mut(nest_idx) {
                 Some(t) => {
@@ -657,7 +653,7 @@ impl<'a> DLL<'a> {
 
         debug!("field layout");
 
-        for layout in tables.field_layout.iter() {
+        for layout in &tables.field_layout {
             let idx = layout.field.0 - 1;
             match fields.get(idx) {
                 Some(&field) => {
@@ -672,11 +668,11 @@ impl<'a> DLL<'a> {
 
         debug!("field rva");
 
-        for rva in tables.field_rva.iter() {
+        for rva in &tables.field_rva {
             let idx = rva.field.0 - 1;
             match fields.get(idx) {
                 Some(&field) => {
-                    get_field!(field).start_of_initial_value = Some(self.raw_rva(rva.rva)?)
+                    get_field!(field).start_of_initial_value = Some(self.raw_rva(rva.rva)?);
                 }
                 None => throw!("bad parent field index {} for field RVA specification", idx),
             }
@@ -698,7 +694,7 @@ impl<'a> DLL<'a> {
                 let name = heap_idx!(strings, m.name);
 
                 let sig = convert::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
-                let param_len = sig.parameters.len();
+                let num_method_params = sig.parameters.len();
 
                 parent_methods.push(Method {
                     attributes: vec![],
@@ -707,7 +703,7 @@ impl<'a> DLL<'a> {
                     signature: sig,
                     accessibility: member_accessibility(m.flags)?,
                     generic_parameters: vec![],
-                    parameter_metadata: vec![None; param_len + 1],
+                    parameter_metadata: vec![None; num_method_params + 1],
                     static_member: check_bitmask!(m.flags, 0x10),
                     sealed: check_bitmask!(m.flags, 0x20),
                     virtual_member: check_bitmask!(m.flags, 0x40),
@@ -775,7 +771,7 @@ impl<'a> DLL<'a> {
 
         debug!("pinvoke");
 
-        for i in tables.impl_map.iter() {
+        for i in &tables.impl_map {
             use members::*;
             use metadata::index::MemberForwarded;
 
@@ -975,10 +971,10 @@ impl<'a> DLL<'a> {
         // this doesn't really matter that much, just to make the sequences nicer
         // I originally tried to do this with uninitialized Vecs and no sequence field,
         // but for reasons I don't understand, that broke
-        for t in types.iter_mut() {
+        for t in &mut types {
             t.generic_parameters.sort_by_key(|p| p.sequence);
 
-            for m in t.methods.iter_mut() {
+            for m in &mut t.methods {
                 m.generic_parameters.sort_by_key(|p| p.sequence);
             }
         }
@@ -1144,7 +1140,7 @@ impl<'a> DLL<'a> {
                             get_method!(methods[parent]).parameter_metadata[internal]
                                 .as_mut()
                                 .unwrap()
-                                .default = value
+                                .default = value;
                         }
                         None => throw!(
                             "invalid parameter parent index {} for constant {}",
@@ -1158,7 +1154,7 @@ impl<'a> DLL<'a> {
 
                     match properties.get(f_idx) {
                         Some(&(parent, internal)) => {
-                            types[parent].properties[internal].default = value
+                            types[parent].properties[internal].default = value;
                         }
                         None => throw!(
                             "invalid property parent index {} for constant {}",
@@ -1259,7 +1255,7 @@ impl<'a> DLL<'a> {
         // NOTE: seems to be the longest resolution step for large assemblies (i.e. System.Private.CoreLib)
         // may be worth investigating possible speedups
 
-        for s in tables.method_semantics.iter() {
+        for s in &tables.method_semantics {
             use metadata::index::HasSemantics;
 
             let raw_idx = s.method.0 - 1;
@@ -1491,7 +1487,7 @@ impl<'a> DLL<'a> {
 
         debug!("method impl");
 
-        for i in tables.method_impl.iter() {
+        for i in &tables.method_impl {
             use types::*;
 
             let idx = i.class.0 - 1;
@@ -1835,13 +1831,13 @@ impl<'a> DLL<'a> {
                     }
                 }
                 MethodSpec(_) => {
-                    warn!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx);
                 }
                 StandAloneSig(_) => {
-                    warn!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx);
                 }
                 TypeSpec(_) => {
-                    warn!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx)
+                    warn!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx);
                 }
                 Null => throw!("invalid null index for parent of custom attribute {}", idx)
             }

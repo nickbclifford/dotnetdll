@@ -30,7 +30,7 @@ impl TryFromCtx<'_> for Token {
 
         let tag = (num >> 24) as u8;
 
-        let index = (num & 0xFFFFFF) as usize;
+        let index = (num & 0x00FF_FFFF) as usize;
 
         Ok((
             Token {

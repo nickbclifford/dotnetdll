@@ -28,7 +28,7 @@ pub struct Parameter(pub Vec<CustomTypeModifier>, pub ParameterType);
 impl ResolvedDebug for Parameter {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
-        for c in self.0.iter() {
+        for c in &self.0 {
             write!(buf, "{} ", c.show(res)).unwrap();
         }
 
@@ -43,7 +43,7 @@ pub struct ReturnType(pub Vec<CustomTypeModifier>, pub Option<ParameterType>);
 impl ResolvedDebug for ReturnType {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
-        for c in self.0.iter() {
+        for c in &self.0 {
             write!(buf, "{} ", c.show(res)).unwrap();
         }
 

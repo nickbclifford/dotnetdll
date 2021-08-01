@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(t.target, metadata::index::TokenTarget::Table(Kind::TypeRef));
         assert_eq!(t.index, 0x12);
 
-        let mut buf = [0u8; 1];
+        let mut buf = [0_u8; 1];
         buf.pwrite(TypeDefOrRefOrSpec(t), 0).unwrap();
         assert_eq!(buf, [0x49]);
     }
@@ -245,7 +245,7 @@ mod tests {
         let dll = DLL::parse(&file)?;
         let meta = dll.get_logical_metadata()?;
 
-        let mut buffer = vec![0u8; dll.cli.metadata.size as usize];
+        let mut buffer = vec![0_u8; dll.cli.metadata.size as usize];
         buffer.pwrite(meta, 0)?;
 
         let _parsed: metadata::header::Header = buffer.pread(0)?;

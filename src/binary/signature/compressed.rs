@@ -21,11 +21,11 @@ impl TryFromCtx<'_> for Unsigned {
             } else {
                 let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
-                    u16::from_be_bytes([b1 & 0b111111, b2]) as u32
+                    u16::from_be_bytes([b1 & 0b0011_1111, b2]) as u32
                 } else {
                     let b3: u8 = from.gread_with(offset, scroll::LE)?;
                     let b4: u8 = from.gread_with(offset, scroll::LE)?;
-                    u32::from_be_bytes([b1 & 0b11111, b2, b3, b4])
+                    u32::from_be_bytes([b1 & 0b0001_1111, b2, b3, b4])
                 }
             }),
             *offset,
@@ -42,7 +42,7 @@ impl TryIntoCtx for Unsigned {
             into.gwrite_with(self.0 as u8, offset, scroll::BE)?;
         } else if 0x80 <= self.0 && self.0 <= 0x3FFF {
             into.gwrite_with(self.0 as u16 | (1 << 15), offset, scroll::BE)?;
-        } else if self.0 > 0x1FFFFFFF {
+        } else if self.0 > 0x1FFF_FFFF {
             throw!(
                 "invalid unsigned compressed integer {:#010x}, range is 0..=0x1FFFFFFF",
                 self.0
@@ -80,17 +80,17 @@ impl TryFromCtx<'_> for Signed {
 
         Ok((
             Signed(if b1 >> 7 == 0 {
-                let value = (b1 & 0b1111111) as u32;
+                let value = (b1 & 0b0111_1111) as u32;
                 from_twos_complement(7, (value >> 1) | (value << 6))
             } else {
                 let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
-                    let value = u16::from_be_bytes([b1 & 0b111111, b2]) as u32;
+                    let value = u16::from_be_bytes([b1 & 0b0011_1111, b2]) as u32;
                     from_twos_complement(14, (value >> 1) | (value << 13))
                 } else {
                     let b3: u8 = from.gread_with(offset, scroll::LE)?;
                     let b4: u8 = from.gread_with(offset, scroll::LE)?;
-                    let value = u32::from_be_bytes([b1 & 0b11111, b2, b3, b4]);
+                    let value = u32::from_be_bytes([b1 & 0b0001_1111, b2, b3, b4]);
                     from_twos_complement(29, (value >> 1) | (value << 28))
                 }
             }),
@@ -100,7 +100,7 @@ impl TryFromCtx<'_> for Signed {
 }
 
 fn into_twos_complement(bits: usize, mut source: i32) -> u32 {
-    let mut result = 0u32;
+    let mut result = 0_u32;
     if source < 0 {
         let neg = 1 << (bits - 1);
         result |= neg;

@@ -103,11 +103,11 @@ macro_rules! tables {
 
             macro_rules! for_each_table {
                 ($tables:expr, |$capt:ident, $kind:ident| $do:expr) => {
-                    $(
+                    $({
                         let $capt = &$tables.[<$name:snake>];
                         let $kind = Kind::$name;
                         $do;
-                    )*
+                    })*
                 }
             }
         }

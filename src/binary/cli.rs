@@ -90,7 +90,7 @@ impl TryIntoCtx for Metadata<'_> {
         into.gwrite_with(len as u32, offset, scroll::LE)?;
 
         into.gwrite(self.version, offset)?;
-        into.gwrite_with(0u8, offset, scroll::LE)?;
+        into.gwrite_with(0_u8, offset, scroll::LE)?;
 
         // pad out to 4 bytes
         *offset += rem;

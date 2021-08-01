@@ -35,7 +35,7 @@ impl TryFromCtx<'_> for Header {
         let valid: u64 = from.gread_with(offset, scroll::LE)?;
         let sorted = from.gread_with(offset, scroll::LE)?;
 
-        let mut rows = vec![0u32; valid.count_ones() as usize];
+        let mut rows = vec![0_u32; valid.count_ones() as usize];
         from.gread_inout_with(offset, &mut rows, scroll::LE)?;
 
         let mut kinds = vec![];
@@ -128,7 +128,7 @@ impl TryIntoCtx for Header {
         // precede their nested types (ECMA-335, II.22, page 210)
 
         for_each_row!(self.tables, |r, k| {
-            let mut buf = [0u8; 64];
+            let mut buf = [0_u8; 64];
             let mut offset = 0;
             buf.gwrite_with(r, &mut offset, ctx)?;
             tables_map

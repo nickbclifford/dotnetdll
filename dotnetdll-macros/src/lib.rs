@@ -129,7 +129,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
 
     let mut prefixes_map = FieldsMap::new();
 
-    for v in prefixes.iter() {
+    for v in &prefixes {
         let t_attr = v.attrs.iter().find(|a| a.path.is_ident("target")).unwrap();
         let TargetAttribute(targets) = t_attr.parse_args().unwrap();
 
@@ -139,7 +139,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     // must be done after first pass of prefixing is complete
     let mut composed_map = FieldsMap::new();
 
-    for v in prefixes.iter() {
+    for v in &prefixes {
         if let Some(c_attr) = v.attrs.iter().find(|a| a.path.is_ident("compose")) {
             let id: Ident = c_attr.parse_args().unwrap();
 
@@ -194,7 +194,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
 
     let mut writes = HashMap::new();
 
-    for v in normal.iter() {
+    for v in &normal {
         let (_, byte) = v.discriminant.as_ref().unwrap();
         let id = &v.ident;
 
@@ -214,12 +214,12 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         // put match arm in correct bucket
         let (size, bucket, mut to_write) = if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
             (
-                2usize,
+                2_usize,
                 &mut extended_parses,
-                vec![quote! { 0xFEu8 }, byte_writer],
+                vec![quote! { 0xFE_u8 }, byte_writer],
             )
         } else {
-            (1usize, &mut parses, vec![byte_writer])
+            (1_usize, &mut parses, vec![byte_writer])
         };
 
         // build identifiers for the variant's fields
@@ -300,11 +300,11 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     };
 
     // single prefix sizes
-    for v in prefixes.iter() {
+    for v in &prefixes {
         build_sizes(&v.ident.to_string(), &prefixes_map);
     }
     // composed prefix sizes (requires single prefixes)
-    for v in prefixes.iter() {
+    for v in &prefixes {
         build_sizes(&v.ident.to_string(), &composed_map);
     }
 
@@ -351,11 +351,11 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     };
 
     // single prefix writes
-    for v in prefixes.iter() {
+    for v in &prefixes {
         build_writes(v, &prefixes_map);
     }
     // composed prefix writes (requires single prefixes)
-    for v in prefixes.iter() {
+    for v in &prefixes {
         build_writes(v, &composed_map);
     }
 
