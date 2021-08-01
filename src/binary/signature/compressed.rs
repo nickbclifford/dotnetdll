@@ -13,19 +13,19 @@ impl TryFromCtx<'_> for Unsigned {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let b1 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
+        let b1: u8 = from.gread_with(offset, scroll::LE)?;
 
         Ok((
             Unsigned(if b1 >> 7 == 0 {
-                b1
+                b1 as u32
             } else {
-                let b2 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
+                let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
-                    ((b1 & 0b111111) << 8) | b2
+                    u16::from_be_bytes([b1 & 0b111111, b2]) as u32
                 } else {
-                    let b3 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
-                    let b4 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
-                    ((b1 & 0b11111) << 24) | (b2 << 16) | (b3 << 8) | b4
+                    let b3: u8 = from.gread_with(offset, scroll::LE)?;
+                    let b4: u8 = from.gread_with(offset, scroll::LE)?;
+                    u32::from_be_bytes([b1 & 0b11111, b2, b3, b4])
                 }
             }),
             *offset,
@@ -76,21 +76,21 @@ impl TryFromCtx<'_> for Signed {
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let b1 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
+        let b1: u8 = from.gread_with(offset, scroll::LE)?;
 
         Ok((
             Signed(if b1 >> 7 == 0 {
-                let value = b1 & 0b1111111;
+                let value = (b1 & 0b1111111) as u32;
                 from_twos_complement(7, (value >> 1) | (value << 6))
             } else {
-                let b2 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
+                let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
-                    let value = ((b1 & 0b111111) << 8) | b2;
+                    let value = u16::from_be_bytes([b1 & 0b111111, b2]) as u32;
                     from_twos_complement(14, (value >> 1) | (value << 13))
                 } else {
-                    let b3 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
-                    let b4 = from.gread_with::<u8>(offset, scroll::LE)? as u32;
-                    let value = ((b1 & 0b11111) << 24) | (b2 << 16) | (b3 << 8) | b4;
+                    let b3: u8 = from.gread_with(offset, scroll::LE)?;
+                    let b4: u8 = from.gread_with(offset, scroll::LE)?;
+                    let value = u32::from_be_bytes([b1 & 0b11111, b2, b3, b4]);
                     from_twos_complement(29, (value >> 1) | (value << 28))
                 }
             }),

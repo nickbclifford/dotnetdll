@@ -1,16 +1,16 @@
 use super::stream;
 use scroll::{
-    ctx::{StrCtx, TryFromCtx},
-    Pread,
+    ctx::{StrCtx, TryFromCtx, TryIntoCtx},
+    Pread, Pwrite,
 };
 
-#[derive(Debug, Pread)]
+#[derive(Debug, Pread, Pwrite)]
 pub struct RVASize {
     pub rva: u32,
     pub size: u32,
 }
 
-#[derive(Debug, Pread)]
+#[derive(Debug, Pread, Pwrite)]
 pub struct Header {
     pub cb: u32,
     pub major_runtime_version: u16,
@@ -32,10 +32,8 @@ pub struct Metadata<'a> {
     pub major_version: u16,
     pub minor_version: u16,
     pub reserved: u32,
-    pub length: u32,
     pub version: &'a str,
     pub flags: u16,
-    pub streams: u16,
     pub stream_headers: Vec<stream::Header<'a>>,
 }
 
@@ -54,11 +52,10 @@ impl<'a> TryFromCtx<'a> for Metadata<'a> {
 
         let flags = from.gread_with(offset, scroll::LE)?;
         let n_streams: u16 = from.gread_with(offset, scroll::LE)?;
-        let mut headers = Vec::with_capacity(n_streams as usize);
-        for _ in 0..n_streams {
-            let header = from.gread(offset)?;
-            headers.push(header);
-        }
+
+        let headers = (0..n_streams)
+            .map(|_| from.gread(offset))
+            .collect::<Result<_, _>>()?;
 
         Ok((
             Metadata {
@@ -66,13 +63,45 @@ impl<'a> TryFromCtx<'a> for Metadata<'a> {
                 major_version: maj,
                 minor_version: min,
                 reserved: res,
-                length: len,
                 version: version.trim_matches('\0'),
                 flags,
-                streams: n_streams,
                 stream_headers: headers,
             },
             *offset,
         ))
+    }
+}
+impl TryIntoCtx for Metadata<'_> {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(self.signature, offset, scroll::LE)?;
+        into.gwrite_with(self.major_version, offset, scroll::LE)?;
+        into.gwrite_with(self.minor_version, offset, scroll::LE)?;
+        into.gwrite_with(self.reserved, offset, scroll::LE)?;
+
+        let mut len = self.version.len() + 1;
+        let rem = len % 4;
+        if rem != 0 {
+            len += 4 - rem;
+        }
+        into.gwrite_with(len as u32, offset, scroll::LE)?;
+
+        into.gwrite(self.version, offset)?;
+        into.gwrite_with(0u8, offset, scroll::LE)?;
+
+        // pad out to 4 bytes
+        *offset += rem;
+
+        into.gwrite_with(self.flags, offset, scroll::LE)?;
+
+        into.gwrite_with(self.stream_headers.len() as u16, offset, scroll::LE)?;
+        for h in self.stream_headers {
+            into.gwrite(h, offset)?;
+        }
+
+        Ok(*offset)
     }
 }

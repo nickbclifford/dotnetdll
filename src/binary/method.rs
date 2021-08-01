@@ -33,7 +33,7 @@ impl TryFromCtx<'_> for Header {
                 let b2: u8 = from.gread_with(offset, scroll::LE)?;
 
                 Header::Fat {
-                    flags: ((b2 as u16 & 0b1111) << 8) | b1 as u16,
+                    flags: u16::from_le_bytes([b1, b2 & 0b1111]),
                     max_stack: from.gread_with(offset, scroll::LE)?,
                     size: from.gread_with::<u32>(offset, scroll::LE)? as usize,
                     local_var_sig_tok: from.gread_with(offset, scroll::LE)?,
