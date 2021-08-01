@@ -133,7 +133,7 @@ impl TryIntoCtx for Header {
             buf.gwrite_with(r, &mut offset, ctx)?;
             tables_map
                 .entry(k.to_u8().unwrap())
-                .or_insert(vec![])
+                .or_insert_with(Vec::new)
                 .extend(&buf[..offset]);
         });
 

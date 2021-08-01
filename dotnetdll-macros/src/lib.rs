@@ -116,7 +116,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             }
 
             let new_name = Ident::new(&format!("{}{}", prefix.ident, t_str), Span::call_site());
-            let mut new_fields = fields(&prefix);
+            let mut new_fields = fields(prefix);
             new_fields.extend(src_map[&t].clone());
             dest_map.insert(new_name, new_fields);
         }
@@ -238,7 +238,7 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         let (_, byte) = v.discriminant.as_ref().unwrap();
         let prefix_name = v.ident.to_string();
 
-        let prefix_bindings: Vec<_> = (0..fields(&v).len()).map(build_ident('p')).collect();
+        let prefix_bindings: Vec<_> = (0..fields(v).len()).map(build_ident('p')).collect();
 
         // builds match arms for each valid suffix
         // the Vec construction is necessary to avoid lifetime problems
@@ -246,16 +246,16 @@ pub fn instructions(input: TokenStream) -> TokenStream {
             input_map.keys().filter_map(|id| {
                 let variant_name = id.to_string();
                 // only build for the current prefix
-                if variant_name.starts_with(&prefix_name) {
+                if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
                     // remove the prefix name from the full variant to get the suffix name
-                    let bare_ident = Ident::new(&variant_name[prefix_name.len()..], Span::call_site());
+                    let bare_ident = Ident::new(bare, Span::call_site());
 
                     // lookup number of fields on the suffix, build bindings for them
                     let field_bindings: Vec<_> = (0..suffix_lookup[&bare_ident].len()).map(build_ident('f')).collect();
 
                     let left = make_variant(&bare_ident, field_bindings.iter());
                     // concat all the bindings together to build the final instruction
-                    let right = make_variant(&id, prefix_bindings.iter().chain(field_bindings.iter()));
+                    let right = make_variant(id, prefix_bindings.iter().chain(field_bindings.iter()));
                     Some(quote! {
                         Instruction::#left => Instruction::#right
                     })
@@ -290,8 +290,8 @@ pub fn instructions(input: TokenStream) -> TokenStream {
         // same logic for ident matching as parse building
         for (id, fields) in input_map.iter() {
             let variant_name = id.to_string();
-            if variant_name.starts_with(prefix_name) {
-                let bare_ident = Ident::new(&variant_name[prefix_name.len()..], Span::call_site());
+            if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
+                let bare_ident = Ident::new(bare, Span::call_site());
 
                 let (suffix_size, _) = base_sizes[&bare_ident];
                 base_sizes.insert(id.clone(), (2 + suffix_size, fields.len()));
@@ -320,15 +320,15 @@ pub fn instructions(input: TokenStream) -> TokenStream {
     });
 
     let mut build_writes = |prefix: &Variant, input_map: &FieldsMap| {
-        let prefix_name = &prefix.ident.to_string();
+        let prefix_name = prefix.ident.to_string();
         let (_, byte) = prefix.discriminant.as_ref().unwrap();
         let num_fields = fields(prefix).len();
 
         // ditto
         for (id, _) in input_map.iter() {
             let variant_name = id.to_string();
-            if variant_name.starts_with(prefix_name) {
-                let bare_ident = Ident::new(&variant_name[prefix_name.len()..], Span::call_site());
+            if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
+                let bare_ident = Ident::new(bare, Span::call_site());
 
                 let (suffix_fields, suffix_to_write) = &writes[&bare_ident];
 
@@ -352,11 +352,11 @@ pub fn instructions(input: TokenStream) -> TokenStream {
 
     // single prefix writes
     for v in prefixes.iter() {
-        build_writes(&v, &prefixes_map);
+        build_writes(v, &prefixes_map);
     }
     // composed prefix writes (requires single prefixes)
     for v in prefixes.iter() {
-        build_writes(&v, &composed_map);
+        build_writes(v, &composed_map);
     }
 
     let write_matches = writes.into_iter().map(|(id, (fields, to_write))| {
