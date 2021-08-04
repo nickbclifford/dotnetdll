@@ -40,10 +40,10 @@ mod tests {
             }
         }
 
-        for t in r.type_definitions.iter() {
+        for t in &r.type_definitions {
             println!("{} {{", t.show(&r));
 
-            for m in t.methods.iter() {
+            for m in &t.methods {
                 print!("\t{}", m.show(&r));
 
                 if let Some(b) = &m.body {
@@ -126,24 +126,6 @@ mod tests {
     }
 
     #[test]
-    fn disassemble() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.205/System.Text.Json.dll")?;
-        let dll = DLL::parse(&file)?;
-        let meta = dll.get_logical_metadata()?;
-
-        for row in meta.tables.method_def.iter() {
-            if row.rva == 0 {
-                continue;
-            }
-            let meth = dll.get_method(&row)?;
-
-            println!("{:#?}", meth.body);
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn resolution() -> Result<(), Box<dyn std::error::Error>> {
         env_logger::init();
 
@@ -209,7 +191,7 @@ mod tests {
         };
 
         if let Some(a) = &r.assembly {
-            for a in a.attributes.iter() {
+            for a in &a.attributes {
                 println!(
                     "assembly attribute {} ({:x?})",
                     a.constructor.show(&r),
@@ -222,14 +204,14 @@ mod tests {
             }
         }
 
-        for t in r.type_definitions.iter() {
-            for a in t.attributes.iter() {
+        for t in &r.type_definitions {
+            for a in &t.attributes {
                 println!("type attribute {}", a.constructor.show(&r));
                 println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
             }
 
-            for m in t.methods.iter() {
-                for a in m.attributes.iter() {
+            for m in &t.methods {
+                for a in &m.attributes {
                     println!("method attribute {}", a.constructor.show(&r));
                     println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
                 }
@@ -253,6 +235,70 @@ mod tests {
         // these two are equal if you ignore sorting
         // for some reason, the input tables appear to not be ECMA-compliantly sorted
         // assert_eq!(meta, parsed);
+
+        Ok(())
+    }
+
+    #[test]
+    fn attr_args_write() -> Result<(), Box<dyn std::error::Error>> {
+        const SIZE: usize = 119;
+        // retrieved from ildasm
+        const DATA: [u8; SIZE] = [
+            0x01, 0x00, 0x01, 0x61, 0x00, 0x04, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x00, 0x00,
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x08,
+            0x09, 0x00, 0x00, 0x00, 0x1D, 0x51, 0x04, 0x00, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x08, 0x05, 0x00, 0x00, 0x00, 0x1D, 0x51, 0x01, 0x00, 0x00, 0x00, 0x08, 0x02,
+            0x00, 0x00, 0x00, 0x0E, 0xFF, 0x03, 0x00, 0x00, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00,
+            0x55, 0x09, 0x74, 0x65, 0x73, 0x74, 0x2E, 0x41, 0x73, 0x64, 0x66, 0x04, 0x00, 0x0E,
+            0x04, 0x6F, 0x6F, 0x70, 0x73, 0x02, 0x00, 0x53, 0x08, 0x03, 0x59, 0x65, 0x73, 0x03,
+            0x00, 0x00, 0x00, 0x53, 0x51, 0x02, 0x4E, 0x6F, 0x55, 0x09, 0x74, 0x65, 0x73, 0x74,
+            0x2E, 0x41, 0x73, 0x64, 0x66, 0x04, 0x00,
+        ];
+
+        use signature::attribute::*;
+        use FixedArg::*;
+        use IntegralParam::*;
+        use NamedArg::*;
+
+        let mut buf = [0u8; SIZE];
+        buf.pwrite(
+            // Into<Box<_>> is a little less noisy here
+            CustomAttributeData {
+                constructor_args: vec![
+                    Boolean(true),
+                    Char('a'),
+                    Integral(UInt16(4)),
+                    Array(None),
+                    Array(Some(vec![
+                        Integral(Int32(2)),
+                        Integral(Int32(4)),
+                        Integral(Int32(5)),
+                    ])),
+                    Object(Integral(Int32(9)).into()),
+                    Object(
+                        Array(Some(vec![
+                            Object(Integral(Int32(2)).into()),
+                            Object(Integral(Int32(5)).into()),
+                            Object(Array(Some(vec![Object(Integral(Int32(2)).into())])).into()),
+                            Object(String(None).into()),
+                        ]))
+                        .into(),
+                    ),
+                    Array(Some(vec![
+                        Object(Integral(Int32(3)).into()),
+                        Object(Enum("test.Asdf", UInt16(4)).into()),
+                        Object(String(Some("oops")).into()),
+                    ])),
+                ],
+                named_args: vec![
+                    Field("Yes", Integral(Int32(3))),
+                    Field("No", Object(Enum("test.Asdf", UInt16(4)).into())),
+                ],
+            },
+            0,
+        )?;
+
+        assert_eq!(buf, DATA);
 
         Ok(())
     }

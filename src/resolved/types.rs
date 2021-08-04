@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::binary::signature::encoded::ArrayShape;
+use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
 use crate::resolution::Resolution;
 
 use super::{
@@ -345,6 +345,7 @@ pub enum BaseType<EnclosingType> {
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     fn show(&self, res: &Resolution) -> String {
         use BaseType::*;
+        use StandAloneCallingConvention::*;
         match self {
             Type(t) => t.show(res),
             Boolean => "bool".to_string(),
@@ -370,7 +371,12 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
                 None => "void*".to_string(),
             },
             FunctionPointer(sig) => format!(
-                "delegate*<{}>",
+                "delegate*{}<{}>",
+                match sig.calling_convention {
+                    DefaultManaged => "".to_string(),
+                    DefaultUnmanaged => " unmanaged".to_string(),
+                    other => format!(" unmanaged[{:?}]", other),
+                },
                 sig.parameters
                     .iter()
                     .map(|p| p.1.show(res))
@@ -441,7 +447,7 @@ impl ResolvedDebug for LocalVariable {
             } => {
                 let mut buf = String::new();
 
-                for m in custom_modifiers.iter() {
+                for m in custom_modifiers {
                     write!(buf, "{} ", m.show(res)).unwrap();
                 }
 

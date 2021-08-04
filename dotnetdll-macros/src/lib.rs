@@ -1,12 +1,11 @@
+use proc_macro::{self, TokenStream};
 use std::collections::HashMap;
 
-use proc_macro::{self, TokenStream};
-
-use proc_macro2::Span;
+use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, parse_macro_input, Field, Fields, Ident, Result, Token, Variant};
+use syn::{braced, parse_macro_input, Field, Fields, Result, Token, Variant};
 
 // separate prefix and normal instruction declarations
 struct Instructions {

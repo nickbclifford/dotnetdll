@@ -189,7 +189,7 @@ impl TryIntoCtx for MethodRefSig {
 pub enum StandAloneCallingConvention {
     DefaultManaged,
     Vararg,
-    C,
+    Cdecl,
     Stdcall,
     Thiscall,
     Fastcall,
@@ -221,7 +221,7 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
 
         let calling_convention = match tag & 0xf {
             0 => DefaultManaged,
-            1 => C,
+            1 => Cdecl,
             2 => Stdcall,
             3 => Thiscall,
             4 => Fastcall,
@@ -268,7 +268,7 @@ impl TryIntoCtx for StandAloneMethodSig {
         use StandAloneCallingConvention::*;
         tag |= match self.calling_convention {
             DefaultManaged => 0,
-            C => 1,
+            Cdecl => 1,
             Stdcall => 2,
             Thiscall => 3,
             Fastcall => 4,
@@ -426,34 +426,35 @@ impl TryFromCtx<'_> for LocalVarSig {
 
         let compressed::Unsigned(var_count) = from.gread(offset)?;
 
-        let mut vars = Vec::with_capacity(var_count as usize);
-        for _ in 0..var_count {
-            vars.push(if from[*offset] == ELEMENT_TYPE_TYPEDBYREF {
-                *offset += 1;
-                LocalVar::TypedByRef
-            } else {
-                // the syntax diagram for mods and these flags in the spec is very confusing
-
-                let mods = all_custom_mods(from, offset);
-
-                let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
-                if pinned {
+        let vars = (0..var_count)
+            .map(|_| {
+                Ok(if from[*offset] == ELEMENT_TYPE_TYPEDBYREF {
                     *offset += 1;
-                }
+                    LocalVar::TypedByRef
+                } else {
+                    // the syntax diagram for mods and these flags in the spec is very confusing
 
-                let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
-                if by_ref {
-                    *offset += 1;
-                }
+                    let mods = all_custom_mods(from, offset);
 
-                LocalVar::Variable {
-                    custom_modifiers: mods,
-                    pinned,
-                    by_ref,
-                    var_type: from.gread(offset)?,
-                }
-            });
-        }
+                    let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
+                    if pinned {
+                        *offset += 1;
+                    }
+
+                    let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
+                    if by_ref {
+                        *offset += 1;
+                    }
+
+                    LocalVar::Variable {
+                        custom_modifiers: mods,
+                        pinned,
+                        by_ref,
+                        var_type: from.gread(offset)?,
+                    }
+                })
+            })
+            .collect::<scroll::Result<_>>()?;
 
         Ok((LocalVarSig(vars), *offset))
     }

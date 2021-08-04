@@ -216,7 +216,10 @@ impl TryIntoCtx for DataSection {
                     }
                 }
             }
-            Unrecognized { length: section_length, .. } => {
+            Unrecognized {
+                length: section_length,
+                ..
+            } => {
                 // just skip any unknown sections
                 *offset += section_length;
             }

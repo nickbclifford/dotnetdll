@@ -684,6 +684,7 @@ impl<'a> DLL<'a> {
 
         debug!("methods");
 
+        // easier to read than a complicated iterator chain
         let mut owned_params = Vec::with_capacity(params_len);
         for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
             let parent_methods = &mut types[type_idx].methods;

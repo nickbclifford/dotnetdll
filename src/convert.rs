@@ -445,7 +445,7 @@ pub fn instruction<'r, 'data>(
                             if matches!(
                                 sig.calling_convention,
                                 StandAloneCallingConvention::Vararg
-                                    | StandAloneCallingConvention::C
+                                    | StandAloneCallingConvention::Cdecl
                             ) {
                                 parsed.varargs = Some(
                                     sig.varargs

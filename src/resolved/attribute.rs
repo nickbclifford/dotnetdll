@@ -59,17 +59,11 @@ fn parse_from_type<'def, 'inst>(
             FixedArg::Array(if num_elem == u32::MAX {
                 None
             } else {
-                let mut elems = Vec::with_capacity(num_elem as usize);
-                for _ in 0..num_elem {
-                    elems.push(parse_from_type(
-                        *t.clone(),
-                        src,
-                        offset,
-                        resolution,
-                        resolve,
-                    )?);
-                }
-                Some(elems)
+                Some(
+                    (0..num_elem)
+                        .map(|_| parse_from_type(*t.clone(), src, offset, resolution, resolve))
+                        .collect::<Result<_>>()?,
+                )
             })
         }
         Enum(name) => {
@@ -182,21 +176,23 @@ fn parse_named<'def, 'inst>(
 ) -> Result<Vec<NamedArg<'inst>>> {
     let num_named: u16 = src.gread_with(offset, scroll::LE)?;
 
-    (0..num_named).map(|_| {
-        let kind: u8 = src.gread_with(offset, scroll::LE)?;
-        let f_type: FieldOrPropType = src.gread(offset)?;
-        let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
-            scroll::Error::Custom("null string name found when parsing".to_string())
-        })?;
+    (0..num_named)
+        .map(|_| {
+            let kind: u8 = src.gread_with(offset, scroll::LE)?;
+            let f_type: FieldOrPropType = src.gread(offset)?;
+            let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                scroll::Error::Custom("null string name found when parsing".to_string())
+            })?;
 
-        let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
+            let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
 
-        Ok(match kind {
-            0x53 => NamedArg::Field(name, value),
-            0x54 => NamedArg::Property(name, value),
-            bad => throw!("bad named argument tag {:#04x}", bad),
+            Ok(match kind {
+                0x53 => NamedArg::Field(name, value),
+                0x54 => NamedArg::Property(name, value),
+                bad => throw!("bad named argument tag {:#04x}", bad),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -229,33 +225,30 @@ impl<'a> Attribute<'a> {
             UserMethod::Reference(r) => r.borrow().signature.parameters.clone(),
         };
 
-        let mut fixed = Vec::with_capacity(params.len());
-
         let resolve = |s: &str| {
             resolver
                 .find_type(s)
                 .map_err(|e| scroll::Error::Custom(e.to_string()))
         };
 
-        for Parameter(_, param) in params {
-            match param {
-                ParameterType::Value(p_type) => {
-                    fixed.push(parse_from_type(
-                        method_to_type(p_type, resolution, &resolve)?,
-                        bytes,
-                        offset,
-                        resolution,
-                        &resolve,
-                    )?);
-                }
+        let fixed = params
+            .into_iter()
+            .map(|Parameter(_, param)| match param {
+                ParameterType::Value(p_type) => parse_from_type(
+                    method_to_type(p_type, resolution, &resolve)?,
+                    bytes,
+                    offset,
+                    resolution,
+                    &resolve,
+                ),
                 ParameterType::Ref(_) => {
                     throw!("ref parameters are not allowed in custom attributes")
                 }
                 ParameterType::TypedReference => {
                     throw!("TypedReference parameters are not allowed in custom attributes",)
                 }
-            }
-        }
+            })
+            .collect::<Result<_>>()?;
 
         let named = parse_named(bytes, offset, resolution, &resolve)?;
 
@@ -297,24 +290,22 @@ impl<'a> SecurityDeclaration<'a> {
 
         let Unsigned(num_attributes) = self.value.gread(offset)?;
 
-        let mut attrs = Vec::with_capacity(num_attributes as usize);
+        (0..num_attributes)
+            .map(|_| {
+                let type_name = self.value.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                    scroll::Error::Custom(
+                        "null attribute type name found when parsing security".to_string(),
+                    )
+                })?;
 
-        for _ in 0..num_attributes {
-            let type_name = self.value.gread::<SerString>(offset)?.0.ok_or_else(|| {
-                scroll::Error::Custom(
-                    "null attribute type name found when parsing security".to_string(),
-                )
-            })?;
+                let fields = parse_named(self.value, offset, resolution, &|s| {
+                    resolver
+                        .find_type(s)
+                        .map_err(|e| scroll::Error::Custom(e.to_string()))
+                })?;
 
-            let fields = parse_named(self.value, offset, resolution, &|s| {
-                resolver
-                    .find_type(s)
-                    .map_err(|e| scroll::Error::Custom(e.to_string()))
-            })?;
-
-            attrs.push(SecurityAttributeData { type_name, fields });
-        }
-
-        Ok(attrs)
+                Ok(SecurityAttributeData { type_name, fields })
+            })
+            .collect()
     }
 }
