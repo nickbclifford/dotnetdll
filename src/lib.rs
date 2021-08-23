@@ -302,4 +302,9 @@ mod tests {
 
         Ok(())
     }
+
+    // #[test]
+    // fn write_all() {
+    //     DLL::write();
+    // }
 }

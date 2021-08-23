@@ -10,12 +10,13 @@ use super::{
 };
 use log::{debug, warn};
 use object::{
-    endian::{LittleEndian, U32Bytes},
-    pe::{ImageDataDirectory, ImageDosHeader, ImageNtHeaders32, ImageNtHeaders64},
+    endian::{LittleEndian, U16Bytes, U32Bytes, U64Bytes},
+    pe::{self, ImageDataDirectory},
     read::{
-        pe::{ImageNtHeaders, SectionTable},
-        Error as ObjectError,
+        pe::{PeFile32, PeFile64, SectionTable},
+        Error as ObjectError, FileKind,
     },
+    write::WritableBuffer,
 };
 use scroll::{Error as ScrollError, Pread};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -65,26 +66,20 @@ pub struct ResolveOptions {
 }
 
 impl<'a> DLL<'a> {
-    pub fn parse(bytes: &[u8]) -> Result<DLL> {
-        let dos = ImageDosHeader::parse(bytes)?;
-
-        // PE vs PE32+ format detection
-        let original_offset = dos.nt_headers_offset() as u64;
-        let mut offset = original_offset;
-
-        let (sections, dirs) = if let Ok((nt, dirs32)) = ImageNtHeaders32::parse(bytes, &mut offset)
-        {
-            (nt.sections(bytes, offset)?, dirs32)
-        } else {
-            offset = original_offset;
-
-            let (nt, dirs64) = ImageNtHeaders64::parse(bytes, &mut offset)?;
-
-            (nt.sections(bytes, offset)?, dirs64)
+    pub fn parse(bytes: &'a [u8]) -> Result<DLL<'a>> {
+        let (sections, dir) = match FileKind::parse(bytes)? {
+            FileKind::Pe32 => {
+                let file = PeFile32::parse(bytes)?;
+                (file.section_table(), file.data_directory(14))
+            }
+            FileKind::Pe64 => {
+                let file = PeFile64::parse(bytes)?;
+                (file.section_table(), file.data_directory(14))
+            }
+            _ => return Err(Other("invalid object type, must be PE32 or PE64")),
         };
 
-        let cli_b = dirs
-            .get(14)
+        let cli_b = dir
             .ok_or(Other("missing CLI metadata data directory in PE image"))?
             .data(bytes, &sections)?;
         Ok(DLL {
@@ -94,7 +89,7 @@ impl<'a> DLL<'a> {
         })
     }
 
-    pub fn at_rva(&self, rva: &RVASize) -> Result<&[u8]> {
+    pub fn at_rva(&self, rva: &RVASize) -> Result<&'a [u8]> {
         let dir = ImageDataDirectory {
             virtual_address: U32Bytes::new(LittleEndian, rva.rva),
             size: U32Bytes::new(LittleEndian, rva.size),
@@ -123,7 +118,7 @@ impl<'a> DLL<'a> {
         Ok(T::new(self.get_stream(name)?))
     }
 
-    pub fn get_cli_metadata(&self) -> Result<Metadata> {
+    pub fn get_cli_metadata(&self) -> Result<Metadata<'a>> {
         self.at_rva(&self.cli.metadata)?.pread(0).map_err(CLI)
     }
 
@@ -2017,5 +2012,205 @@ impl<'a> DLL<'a> {
         debug!("resolved module {}", res.module.name);
 
         Ok(res)
+    }
+
+    // TODO
+    pub fn write() {
+        macro_rules! u16 {
+            ($e:expr) => {
+                U16Bytes::new(LittleEndian, $e as u16)
+            };
+        }
+        macro_rules! u32 {
+            ($e:expr) => {
+                U32Bytes::new(LittleEndian, $e as u32)
+            };
+        }
+        macro_rules! u64 {
+            ($e:expr) => {
+                U64Bytes::new(LittleEndian, $e as u64)
+            };
+        }
+
+        // TODO
+        let is_32_bit = false;
+        let is_executable = false;
+
+        #[rustfmt::skip]
+        let mut buffer = vec![
+            0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
+            0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00,
+            0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // lfanew = 0x80: directly after the DOS header
+            0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd,
+            0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
+            0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72,
+            0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
+            0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e,
+            0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
+            0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a,
+            0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
+
+        let signature = u32!(u32::from_le_bytes(*b"PE\0\0"));
+
+        let file_header = pe::ImageFileHeader {
+            machine: u16!(pe::IMAGE_FILE_MACHINE_UNKNOWN),
+            number_of_sections: u16!(0), // TODO
+            time_date_stamp: u32!(match std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+            {
+                Ok(d) => d.as_secs(),
+                _ => 0,
+            }),
+            pointer_to_symbol_table: u32!(0),
+            number_of_symbols: u32!(0),
+            size_of_optional_header: todo!(),
+            characteristics: u16!({
+                let mut flags = pe::IMAGE_FILE_EXECUTABLE_IMAGE;
+                if !is_executable {
+                    flags |= pe::IMAGE_FILE_DLL;
+                }
+                flags
+            }),
+        };
+
+        let mut text_section: Vec<u8> = vec![];
+
+        // TODO
+        let subsystem = pe::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+
+        let major_linker_version = 6;
+        let minor_linker_version = 0;
+        let size_of_code = todo!();
+        let size_of_initialized_data = todo!(); // wtf?
+        let size_of_uninitialized_data = todo!();
+        let address_of_entry_point = u32!(if is_executable { todo!() } else { 0 });
+        let base_of_code = todo!();
+        let base_of_data = todo!();
+        let image_base = 0x0040_0000; // TODO
+        let section_alignment = todo!();
+        let file_alignment = u32!(0x200);
+        let major_operating_system_version = u16!(5);
+        let minor_operating_system_version = u16!(0);
+        let major_image_version = u16!(0);
+        let minor_image_version = u16!(0);
+        let major_subsystem_version = u16!(5);
+        let minor_subsystem_version = u16!(0);
+        let win32_version_value = u32!(0);
+        let size_of_image = todo!();
+        let size_of_headers = todo!();
+        let check_sum = u32!(0);
+        let subsystem = u16!(subsystem);
+        let dll_characteristics = u16!(0);
+        let size_of_stack_reserve = 0x0010_0000;
+        let size_of_stack_commit = 0x1000;
+        let size_of_heap_reserve = 0x0010_0000;
+        let size_of_heap_commit = 0x1000;
+        let loader_flags = u32!(0);
+        let number_of_rva_and_sizes = u32!(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
+
+        if is_32_bit {
+            buffer.write_pod(&pe::ImageNtHeaders32 {
+                signature,
+                file_header,
+                optional_header: pe::ImageOptionalHeader32 {
+                    magic: u16!(pe::IMAGE_NT_OPTIONAL_HDR32_MAGIC),
+                    major_linker_version,
+                    minor_linker_version,
+                    size_of_code,
+                    size_of_initialized_data,
+                    size_of_uninitialized_data,
+                    address_of_entry_point,
+                    base_of_code,
+                    base_of_data,
+                    image_base: u32!(image_base),
+                    section_alignment,
+                    file_alignment,
+                    major_operating_system_version,
+                    minor_operating_system_version,
+                    major_image_version,
+                    minor_image_version,
+                    major_subsystem_version,
+                    minor_subsystem_version,
+                    win32_version_value,
+                    size_of_image,
+                    size_of_headers,
+                    check_sum,
+                    subsystem,
+                    dll_characteristics,
+                    size_of_stack_reserve: u32!(size_of_stack_reserve),
+                    size_of_stack_commit: u32!(size_of_stack_commit),
+                    size_of_heap_reserve: u32!(size_of_heap_reserve),
+                    size_of_heap_commit: u32!(size_of_heap_commit),
+                    loader_flags,
+                    number_of_rva_and_sizes,
+                },
+            });
+        } else {
+            buffer.write_pod(&pe::ImageNtHeaders64 {
+                signature,
+                file_header,
+                optional_header: pe::ImageOptionalHeader64 {
+                    magic: u16!(pe::IMAGE_NT_OPTIONAL_HDR64_MAGIC),
+                    major_linker_version,
+                    minor_linker_version,
+                    size_of_code,
+                    size_of_initialized_data,
+                    size_of_uninitialized_data,
+                    address_of_entry_point,
+                    base_of_code,
+                    image_base: u64!(image_base),
+                    section_alignment,
+                    file_alignment,
+                    major_operating_system_version,
+                    minor_operating_system_version,
+                    major_image_version,
+                    minor_image_version,
+                    major_subsystem_version,
+                    minor_subsystem_version,
+                    win32_version_value,
+                    size_of_image,
+                    size_of_headers,
+                    check_sum,
+                    subsystem,
+                    dll_characteristics,
+                    size_of_stack_reserve: u64!(size_of_stack_reserve),
+                    size_of_stack_commit: u64!(size_of_stack_commit),
+                    size_of_heap_reserve: u64!(size_of_heap_reserve),
+                    size_of_heap_commit: u64!(size_of_heap_commit),
+                    loader_flags,
+                    number_of_rva_and_sizes,
+                },
+            });
+        }
+
+        let empty_datadir = pe::ImageDataDirectory {
+            virtual_address: u32!(0),
+            size: u32!(0),
+        };
+
+        buffer.write_pod_slice(&[
+            empty_datadir, // export table
+            todo!(),       // import table
+            empty_datadir, // resource table
+            empty_datadir, // exception table
+            empty_datadir, // certificate table
+            todo!(),       // base relocation table
+            empty_datadir, // debug
+            empty_datadir, // copyright
+            empty_datadir, // global ptr
+            empty_datadir, // TLS table
+            empty_datadir, // load config table
+            empty_datadir, // bound import
+            todo!(),       // IAT
+            empty_datadir, // delay import descriptor
+            todo!(),       // CLI header (the important one)
+            empty_datadir, // reserved
+        ]);
     }
 }

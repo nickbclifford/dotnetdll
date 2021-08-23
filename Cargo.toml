@@ -14,7 +14,7 @@ dotnetdll-macros = { path = "dotnetdll-macros" }
 log = "0.4.14"
 num-traits = "0.2"
 num-derive = "0.3"
-object = "0.24.0"
+object = { version = "0.26.0", features = ['write'] }
 paste = "1.0.5"
 scroll = { version = "0.10.2", features = ['derive'] }
 
