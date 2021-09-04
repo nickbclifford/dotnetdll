@@ -1,17 +1,12 @@
-use std::{
-    cell::RefCell,
-    fmt::{Display, Formatter, Write},
-    rc::Rc,
-};
+use std::fmt::{Display, Formatter, Write};
 
 use crate::binary::signature::kinds::MarshalSpec;
-use crate::resolution::{MethodIndex, Resolution};
+use crate::resolution::*;
 
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
     generic::{show_constraints, MethodGeneric},
-    module::ExternalModuleReference,
     signature,
     types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
@@ -75,55 +70,44 @@ impl ResolvedDebug for Field<'_> {
 }
 
 #[derive(Debug)]
-pub enum FieldReferenceParent<'a> {
+pub enum FieldReferenceParent {
     Type(MethodType),
-    Module(Rc<RefCell<ExternalModuleReference<'a>>>),
+    Module(ModuleRefIndex),
 }
 
 #[derive(Debug)]
 pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub parent: FieldReferenceParent<'a>,
+    pub parent: FieldReferenceParent,
     pub name: &'a str,
     pub return_type: MemberType,
 }
 name_display!(ExternalFieldReference<'_>);
 
 #[derive(Debug)]
-pub enum FieldSource<'a> {
-    Definition { parent: usize, field: usize },
-    Reference(Rc<RefCell<ExternalFieldReference<'a>>>),
+pub enum FieldSource {
+    Definition(FieldIndex),
+    Reference(FieldRefIndex),
 }
-impl Display for FieldSource<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use FieldSource::*;
-
-        match self {
-            Definition { field, .. } => write!(f, "{}", field),
-            Reference(r) => write!(f, "{}", r.borrow()),
-        }
-    }
-}
-impl ResolvedDebug for FieldSource<'_> {
+impl ResolvedDebug for FieldSource {
     fn show(&self, res: &Resolution) -> String {
         use FieldSource::*;
 
         match self {
-            Definition { parent, field } => {
-                let t = &res.type_definitions[*parent];
-                format!("{}.{}", t.type_name(), t.fields[*field].name)
+            Definition(i) => {
+                format!("{}.{}", res[i.parent_type].type_name(), res[*i].name)
             }
-            Reference(rc) => {
+            Reference(i) => {
                 use FieldReferenceParent::*;
 
-                let r = rc.borrow();
+                let f = &res[*i];
                 format!(
                     "{}.{}",
-                    match &r.parent {
+                    match &f.parent {
                         Type(t) => t.show(res),
-                        Module(m) => m.borrow().name.to_string(),
+                        Module(m) => res[*m].name.to_string(),
                     },
-                    r.name
+                    f.name
                 )
             }
         }
@@ -224,7 +208,7 @@ pub enum BodyManagement {
 pub struct Method<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
-    pub body: Option<body::Method<'a>>,
+    pub body: Option<body::Method>,
     pub signature: signature::ManagedMethod,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,
@@ -319,31 +303,31 @@ pub struct PInvoke<'a> {
     pub supports_last_error: bool,
     pub calling_convention: UnmanagedCallingConvention,
     pub import_name: &'a str,
-    pub import_scope: Rc<RefCell<ExternalModuleReference<'a>>>,
+    pub import_scope: ModuleRefIndex,
 }
 
 #[derive(Debug)]
-pub enum MethodReferenceParent<'a> {
+pub enum MethodReferenceParent {
     Type(MethodType),
-    Module(Rc<RefCell<ExternalModuleReference<'a>>>),
+    Module(ModuleRefIndex),
     VarargMethod(MethodIndex),
 }
 
 #[derive(Debug)]
 pub struct ExternalMethodReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub parent: MethodReferenceParent<'a>,
+    pub parent: MethodReferenceParent,
     pub name: &'a str,
     pub signature: signature::ManagedMethod,
 }
 name_display!(ExternalMethodReference<'_>);
 
 #[derive(Debug, Clone)]
-pub enum UserMethod<'a> {
+pub enum UserMethod {
     Definition(MethodIndex),
-    Reference(Rc<RefCell<ExternalMethodReference<'a>>>),
+    Reference(MethodRefIndex),
 }
-impl ResolvedDebug for UserMethod<'_> {
+impl ResolvedDebug for UserMethod {
     fn show(&self, res: &Resolution) -> String {
         let signature;
         let parent_name;
@@ -352,20 +336,20 @@ impl ResolvedDebug for UserMethod<'_> {
         match self {
             UserMethod::Definition(i) => {
                 let method = &res[*i];
-                signature = method.signature.clone();
-                parent_name = res.type_definitions[i.parent_type].type_name();
+                signature = &method.signature;
+                parent_name = res[i.parent_type].type_name();
                 method_name = method.name;
             }
-            UserMethod::Reference(rc) => {
-                let r = rc.borrow();
-                signature = r.signature.clone();
+            UserMethod::Reference(i) => {
+                let r = &res[*i];
+                signature = &r.signature;
                 method_name = r.name;
 
                 use MethodReferenceParent::*;
                 parent_name = match &r.parent {
                     Type(t) => t.show(res),
-                    Module(m) => m.borrow().name.to_string(),
-                    VarargMethod(i) => res.type_definitions[i.parent_type].type_name(),
+                    Module(m) => res[*m].name.to_string(),
+                    VarargMethod(i) => res[i.parent_type].type_name(),
                 }
             }
         }
@@ -378,7 +362,7 @@ impl ResolvedDebug for UserMethod<'_> {
 
         let ret_type = signature.return_type.show(res);
 
-        match signature.varargs {
+        match &signature.varargs {
             Some(v) => write!(
                 buf,
                 "vararg {} {}.{}({})",
@@ -410,17 +394,17 @@ impl ResolvedDebug for UserMethod<'_> {
 }
 
 #[derive(Debug)]
-pub struct GenericMethodInstantiation<'a> {
-    pub base: UserMethod<'a>,
+pub struct GenericMethodInstantiation {
+    pub base: UserMethod,
     pub parameters: Vec<MethodType>,
 }
 
 #[derive(Debug)]
-pub enum MethodSource<'a> {
-    User(UserMethod<'a>),
-    Generic(GenericMethodInstantiation<'a>),
+pub enum MethodSource {
+    User(UserMethod),
+    Generic(GenericMethodInstantiation),
 }
-impl ResolvedDebug for MethodSource<'_> {
+impl ResolvedDebug for MethodSource {
     fn show(&self, res: &Resolution) -> String {
         use MethodSource::*;
         match self {

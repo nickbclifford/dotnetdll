@@ -116,14 +116,14 @@ fn process_def<'def, 'inst>(
 }
 
 fn method_to_type<'def, 'inst>(
-    m: MethodType,
+    m: &'def MethodType,
     resolution: &'def Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FieldOrPropType<'inst>> {
     match m {
         MethodType::Base(b) => {
             use BaseType::*;
-            let t = match *b {
+            let t = match &**b {
                 Type(ts) => match ts {
                     TypeSource::User(t) => {
                         let name = t.type_name(resolution);
@@ -197,7 +197,7 @@ fn parse_named<'def, 'inst>(
 
 #[derive(Debug, Clone)]
 pub struct Attribute<'a> {
-    pub constructor: members::UserMethod<'a>,
+    pub constructor: members::UserMethod,
     pub(crate) value: Option<&'a [u8]>,
 }
 
@@ -220,9 +220,9 @@ impl<'a> Attribute<'a> {
 
         use members::UserMethod;
 
-        let params = match &self.constructor {
-            UserMethod::Definition(m) => resolution[*m].signature.parameters.clone(),
-            UserMethod::Reference(r) => r.borrow().signature.parameters.clone(),
+        let sig = match &self.constructor {
+            UserMethod::Definition(m) => &resolution[*m].signature,
+            UserMethod::Reference(r) => &resolution[*r].signature,
         };
 
         let resolve = |s: &str| {
@@ -231,8 +231,9 @@ impl<'a> Attribute<'a> {
                 .map_err(|e| scroll::Error::Custom(e.to_string()))
         };
 
-        let fixed = params
-            .into_iter()
+        let fixed = sig
+            .parameters
+            .iter()
             .map(|Parameter(_, param)| match param {
                 ParameterType::Value(p_type) => parse_from_type(
                     method_to_type(p_type, resolution, &resolve)?,

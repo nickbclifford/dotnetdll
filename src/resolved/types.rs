@@ -1,17 +1,12 @@
-use std::{
-    cell::RefCell,
-    fmt::{Display, Formatter, Write},
-    rc::Rc,
-};
+use std::fmt::{Display, Formatter, Write};
 
 use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
-use crate::resolution::Resolution;
+use crate::resolution::*;
 
 use super::{
-    assembly,
     attribute::{Attribute, SecurityDeclaration},
     generic::{show_constraints, TypeGeneric},
-    members, module, signature, ResolvedDebug,
+    members, signature, ResolvedDebug,
 };
 
 #[derive(Debug)]
@@ -54,9 +49,9 @@ pub enum StringFormatting {
 }
 
 #[derive(Debug)]
-pub struct MethodOverride<'a> {
-    pub implementation: members::UserMethod<'a>,
-    pub declaration: members::UserMethod<'a>,
+pub struct MethodOverride {
+    pub implementation: members::UserMethod,
+    pub declaration: members::UserMethod,
 }
 
 #[derive(Debug)]
@@ -123,8 +118,8 @@ pub struct TypeDefinition<'a> {
     pub properties: Vec<members::Property<'a>>,
     pub methods: Vec<members::Method<'a>>,
     pub events: Vec<members::Event<'a>>,
-    pub encloser: Option<usize>,
-    pub overrides: Vec<MethodOverride<'a>>,
+    pub encloser: Option<TypeIndex>,
+    pub overrides: Vec<MethodOverride>,
     pub extends: Option<TypeSource<MemberType>>,
     pub implements: Vec<(Vec<Attribute<'a>>, TypeSource<MemberType>)>,
     pub generic_parameters: Vec<TypeGeneric<'a>>,
@@ -142,7 +137,7 @@ impl ResolvedDebug for TypeDefinition<'_> {
         }
 
         if let Some(idx) = &self.encloser {
-            write!(buf, "[{}] ", res.type_definitions[*idx]).unwrap();
+            write!(buf, "[{}] ", res[*idx]).unwrap();
         }
 
         let kind = match &self.flags.kind {
@@ -199,12 +194,12 @@ impl ResolvedDebug for TypeDefinition<'_> {
 }
 
 #[derive(Debug)]
-pub enum ResolutionScope<'a> {
+pub enum ResolutionScope {
     Nested(usize),
-    ExternalModule(Rc<RefCell<module::ExternalModuleReference<'a>>>),
+    ExternalModule(ModuleRefIndex),
     CurrentModule,
-    Assembly(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
-    Exported(Rc<RefCell<ExportedType<'a>>>),
+    Assembly(AssemblyRefIndex),
+    Exported(ExportedTypeIndex),
 }
 
 #[derive(Debug)]
@@ -212,17 +207,17 @@ pub struct ExternalTypeReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
     pub namespace: Option<&'a str>,
-    pub scope: ResolutionScope<'a>,
+    pub scope: ResolutionScope,
 }
 
 #[derive(Debug)]
-pub enum TypeImplementation<'a> {
-    Nested(usize),
+pub enum TypeImplementation {
+    Nested(ExportedTypeIndex),
     ModuleFile {
-        type_def_idx: usize,
-        file: Rc<RefCell<module::File<'a>>>,
+        type_def: TypeIndex,
+        file: FileIndex,
     },
-    TypeForwarder(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
+    TypeForwarder(AssemblyRefIndex),
 }
 
 #[derive(Debug)]
@@ -231,7 +226,7 @@ pub struct ExportedType<'a> {
     pub flags: TypeFlags,
     pub name: &'a str,
     pub namespace: Option<&'a str>,
-    pub implementation: TypeImplementation<'a>,
+    pub implementation: TypeImplementation,
 }
 
 macro_rules! type_name_impl {

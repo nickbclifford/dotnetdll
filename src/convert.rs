@@ -15,11 +15,12 @@ use super::{
         },
     },
     dll::{DLLError, Result},
-    resolution::MethodIndex,
+    resolution::{MethodIndex, MethodRefIndex},
     resolved::{self, members::*, signature, types::*},
 };
 use scroll::Pread;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::collections::HashMap;
+use crate::resolution::{FieldRefIndex, FieldIndex};
 
 macro_rules! throw {
     ($($arg:tt)*) => {
@@ -310,20 +311,18 @@ pub fn type_token(tok: Token, ctx: &Context) -> Result<MethodType> {
     }
 }
 
-pub struct MethodContext<'r, 'data: 'r> {
-    pub field_refs: &'r [Rc<RefCell<ExternalFieldReference<'data>>>],
+pub struct MethodContext<'r> {
     pub field_map: &'r HashMap<usize, usize>,
-    pub field_indices: &'r [(usize, usize)],
+    pub field_indices: &'r [FieldIndex],
     pub method_specs: &'r [MethodSpec],
     pub method_indices: &'r [MethodIndex],
-    pub method_refs: &'r [Rc<RefCell<ExternalMethodReference<'data>>>],
     pub method_map: &'r HashMap<usize, usize>,
 }
 
-pub fn user_method<'r, 'data>(
+pub fn user_method(
     idx: MethodDefOrRef,
-    ctx: &MethodContext<'r, 'data>,
-) -> Result<UserMethod<'data>> {
+    ctx: &MethodContext,
+) -> Result<UserMethod> {
     Ok(match idx {
         MethodDefOrRef::MethodDef(i) => {
             let m_idx = i - 1;
@@ -335,7 +334,7 @@ pub fn user_method<'r, 'data>(
         MethodDefOrRef::MemberRef(i) => {
             let r_idx = i - 1;
             match ctx.method_map.get(&r_idx) {
-                Some(&m_idx) => UserMethod::Reference(Rc::clone(&ctx.method_refs[m_idx])),
+                Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
                 None => throw!("invalid member reference index {} for user method", r_idx),
             }
         }
@@ -343,10 +342,10 @@ pub fn user_method<'r, 'data>(
     })
 }
 
-fn user_method_token<'r, 'data>(
+fn user_method_token(
     tok: Token,
-    ctx: &MethodContext<'r, 'data>,
-) -> Result<UserMethod<'data>> {
+    ctx: &MethodContext,
+) -> Result<UserMethod> {
     use TokenTarget::*;
     match tok.target {
         Table(Kind::MethodDef) => user_method(MethodDefOrRef::MethodDef(tok.index), ctx),
@@ -358,8 +357,8 @@ fn user_method_token<'r, 'data>(
 fn method_source<'r, 'data>(
     tok: Token,
     ctx: &Context<'r, 'data>,
-    m_ctx: &MethodContext<'r, 'data>,
-) -> Result<MethodSource<'data>> {
+    m_ctx: &MethodContext<'r>,
+) -> Result<MethodSource> {
     use TokenTarget::*;
     Ok(match tok.target {
         Table(Kind::MethodSpec) => {
@@ -383,19 +382,19 @@ fn method_source<'r, 'data>(
     })
 }
 
-fn field_source<'r, 'data>(
+fn field_source(
     tok: Token,
-    ctx: &MethodContext<'r, 'data>,
-) -> Result<FieldSource<'data>> {
+    ctx: &MethodContext,
+) -> Result<FieldSource> {
     use TokenTarget::*;
     let idx = tok.index - 1;
     Ok(match tok.target {
         Table(Kind::Field) => match ctx.field_indices.get(idx) {
-            Some(&(parent, field)) => FieldSource::Definition { parent, field },
+            Some(&i) => FieldSource::Definition(i),
             None => throw!("bad field index {} for field source", idx),
         },
         Table(Kind::MemberRef) => match ctx.field_map.get(&idx) {
-            Some(&i) => FieldSource::Reference(Rc::clone(&ctx.field_refs[i])),
+            Some(&i) => FieldSource::Reference(FieldRefIndex(i)),
             None => throw!("bad member reference index {} for field source", idx),
         },
         bad => throw!("invalid token {:?} for field source", bad),
@@ -407,8 +406,8 @@ pub fn instruction<'r, 'data>(
     index: usize,
     all_offsets: &'r [usize],
     ctx: &Context<'r, 'data>,
-    m_ctx: &MethodContext<'r, 'data>,
-) -> Result<resolved::il::Instruction<'data>> {
+    m_ctx: &MethodContext<'r>,
+) -> Result<resolved::il::Instruction> {
     use il::Instruction::*;
     use resolved::il::*;
 

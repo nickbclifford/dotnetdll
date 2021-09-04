@@ -36,7 +36,7 @@ mod tests {
             print!("assembly entry point: ");
             match e {
                 EntryPoint::Method(m) => println!("{}", UserMethod::Definition(*m).show(&r)),
-                EntryPoint::File(f) => println!("external file {}", f.borrow().name),
+                EntryPoint::File(f) => println!("external file {}", r[*f].name),
             }
         }
 

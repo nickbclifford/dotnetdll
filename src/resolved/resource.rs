@@ -1,10 +1,9 @@
-use super::{assembly, attribute::Attribute, module};
-use std::{cell::RefCell, rc::Rc};
+use super::attribute::Attribute;
 
 #[derive(Debug)]
-pub enum Implementation<'a> {
-    File(Rc<RefCell<module::File<'a>>>),
-    Assembly(Rc<RefCell<assembly::ExternalAssemblyReference<'a>>>),
+pub enum Implementation {
+    File(crate::resolution::FileIndex),
+    Assembly(crate::resolution::AssemblyRefIndex),
 }
 
 #[derive(Debug)]
@@ -19,5 +18,5 @@ pub struct ManifestResource<'a> {
     pub offset: usize,
     pub name: &'a str,
     pub visibility: Visibility,
-    pub implementation: Option<Implementation<'a>>,
+    pub implementation: Option<Implementation>,
 }

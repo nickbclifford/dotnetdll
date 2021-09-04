@@ -19,7 +19,7 @@ use object::{
     write::WritableBuffer,
 };
 use scroll::{Error as ScrollError, Pread};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -244,7 +244,7 @@ impl<'a> DLL<'a> {
             .map(|a| {
                 use assembly::*;
 
-                Ok(Rc::new(RefCell::new(ExternalAssemblyReference {
+                Ok(ExternalAssemblyReference {
                     attributes: vec![],
                     version: build_version!(a),
                     flags: Flags::new(a.flags),
@@ -252,7 +252,7 @@ impl<'a> DLL<'a> {
                     name: heap_idx!(strings, a.name),
                     culture: optional_idx!(strings, a.culture),
                     hash_value: optional_idx!(blobs, a.hash_value),
-                })))
+                })
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -313,7 +313,7 @@ impl<'a> DLL<'a> {
                 Some(t) => {
                     let enclose_idx = n.enclosing_class.0 - 1;
                     if enclose_idx < types_len {
-                        t.encloser = Some(enclose_idx);
+                        t.encloser = Some(TypeIndex(enclose_idx));
                     } else {
                         throw!(
                             "invalid enclosing type index {} for nested class declaration of type {}",
@@ -343,12 +343,12 @@ impl<'a> DLL<'a> {
             .file
             .iter()
             .map(|f| {
-                Ok(Rc::new(RefCell::new(module::File {
+                Ok(module::File {
                     attributes: vec![],
                     has_metadata: !check_bitmask!(f.flags, 0x0001),
                     name: heap_idx!(strings, f.name),
                     hash_value: heap_idx!(blobs, f.hash_value),
-                })))
+                })
             })
             .collect::<Result<_>>()?;
 
@@ -377,24 +377,27 @@ impl<'a> DLL<'a> {
                     implementation: match r.implementation {
                         BinImpl::File(f) => {
                             let idx = f - 1;
-                            match files.get(idx) {
-                                Some(f) => Some(Implementation::File(Rc::clone(f))),
-                                None => throw!(
+                            if idx < files.len() {
+                                Some(Implementation::File(FileIndex(idx)))
+                            } else {
+                                throw!(
                                     "invalid file index {} for manifest resource {}",
                                     idx,
                                     name
-                                ),
+                                )
                             }
                         }
                         BinImpl::AssemblyRef(a) => {
                             let idx = a - 1;
-                            match assembly_refs.get(idx) {
-                                Some(a) => Some(Implementation::Assembly(Rc::clone(a))),
-                                None => throw!(
+
+                            if idx < assembly_refs.len() {
+                                Some(Implementation::Assembly(AssemblyRefIndex(idx)))
+                            } else {
+                                throw!(
                                     "invalid assembly reference index {} for manifest resource {}",
                                     idx,
                                     name
-                                ),
+                                )
                             }
                         }
                         BinImpl::ExportedType(_) => throw!(
@@ -416,7 +419,7 @@ impl<'a> DLL<'a> {
                 use types::*;
 
                 let name = heap_idx!(strings, e.type_name);
-                Ok(Rc::new(RefCell::new(ExportedType {
+                Ok(ExportedType {
                     attributes: vec![],
                     flags: TypeFlags::new(e.flags, Layout::Automatic),
                     name,
@@ -424,33 +427,42 @@ impl<'a> DLL<'a> {
                     implementation: match e.implementation {
                         Implementation::File(f) => {
                             let idx = f - 1;
-                            match files.get(idx) {
-                                Some(f) => TypeImplementation::ModuleFile {
-                                    type_def_idx: e.type_def_id as usize,
-                                    file: Rc::clone(f),
-                                },
-                                None => {
-                                    throw!("invalid file index {} in exported type {}", idx, name)
+                            let t_idx = e.type_def_id as usize;
+
+                            if idx < files.len() {
+                                TypeImplementation::ModuleFile {
+                                    type_def: if t_idx < types_len {
+                                        TypeIndex(t_idx)
+                                    } else {
+                                        throw!(
+                                            "invalid type definition index {} in exported type {}",
+                                            t_idx,
+                                            name
+                                        )
+                                    },
+                                    file: FileIndex(idx),
                                 }
+                            } else {
+                                throw!("invalid file index {} in exported type {}", idx, name)
                             }
                         }
                         Implementation::AssemblyRef(a) => {
                             let idx = a - 1;
-                            match assembly_refs.get(idx) {
-                                Some(a) => TypeImplementation::TypeForwarder(Rc::clone(a)),
-                                None => {
-                                    throw!(
-                                        "invalid assembly reference index {} in exported type {}",
-                                        idx,
-                                        name
-                                    )
-                                }
+
+                            if idx < assembly_refs.len() {
+                                TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
+                            } else {
+                                throw!(
+                                    "invalid assembly reference index {} in exported type {}",
+                                    idx,
+                                    name
+                                )
                             }
                         }
                         Implementation::ExportedType(t) => {
                             let idx = t - 1;
                             if idx < export_len {
-                                TypeImplementation::Nested(idx)
+                                TypeImplementation::Nested(ExportedTypeIndex(idx))
                             } else {
                                 throw!(
                                     "invalid nested type index {} in exported type {}",
@@ -464,7 +476,7 @@ impl<'a> DLL<'a> {
                             name
                         ),
                     },
-                })))
+                })
             })
             .collect::<Result<_>>()?;
 
@@ -483,10 +495,10 @@ impl<'a> DLL<'a> {
             .module_ref
             .iter()
             .map(|r| {
-                Ok(Rc::new(RefCell::new(module::ExternalModuleReference {
+                Ok(module::ExternalModuleReference {
                     attributes: vec![],
                     name: heap_idx!(strings, r.name),
-                })))
+                })
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -510,24 +522,27 @@ impl<'a> DLL<'a> {
                         BinRS::Module(_) => ResolutionScope::CurrentModule,
                         BinRS::ModuleRef(m) => {
                             let idx = m - 1;
-                            match module_refs.get(idx) {
-                                Some(m) => ResolutionScope::ExternalModule(Rc::clone(m)),
-                                None => throw!(
+                            if idx < module_refs.len() {
+                                ResolutionScope::ExternalModule(ModuleRefIndex(idx))
+                            } else {
+                                throw!(
                                     "invalid module reference index {} for type reference {}",
                                     idx,
                                     name
-                                ),
+                                )
                             }
                         }
                         BinRS::AssemblyRef(a) => {
                             let idx = a - 1;
-                            match assembly_refs.get(idx) {
-                                Some(a) => ResolutionScope::Assembly(Rc::clone(a)),
-                                None => throw!(
+
+                            if idx < assembly_refs.len() {
+                                ResolutionScope::Assembly(AssemblyRefIndex(idx))
+                            } else {
+                                throw!(
                                     "invalid assembly reference index {} for type reference {}",
                                     idx,
                                     name
-                                ),
+                                )
                             }
                         }
                         BinRS::TypeRef(t) => {
@@ -542,11 +557,11 @@ impl<'a> DLL<'a> {
                                 );
                             }
                         }
-                        BinRS::Null => match exports.iter().find(|rc| {
-                            let e = rc.borrow();
-                            e.name == name && e.namespace == namespace
-                        }) {
-                            Some(e) => ResolutionScope::Exported(Rc::clone(e)),
+                        BinRS::Null => match exports
+                            .iter()
+                            .position(|e| e.name == name && e.namespace == namespace)
+                        {
+                            Some(idx) => ResolutionScope::Exported(ExportedTypeIndex(idx)),
                             None => throw!("missing exported type for type reference {}", name),
                         },
                     },
@@ -635,14 +650,16 @@ impl<'a> DLL<'a> {
                     marshal: None,
                     start_of_initial_value: None,
                 });
-                fields[f_idx] = (type_idx, parent_fields.len() - 1);
+                fields[f_idx] = FieldIndex {
+                    parent_type: TypeIndex(type_idx),
+                    field: parent_fields.len() - 1,
+                };
             }
         }
 
         macro_rules! get_field {
-            ($f_idx:expr) => {{
-                let (type_idx, internal_idx) = $f_idx;
-                &mut types[type_idx].fields[internal_idx]
+            ($f_idx:ident) => {{
+                &mut types[$f_idx.parent_type.0].fields[$f_idx.field]
             }};
         }
 
@@ -736,7 +753,7 @@ impl<'a> DLL<'a> {
                 });
 
                 methods[m_idx] = MethodIndex {
-                    parent_type: type_idx,
+                    parent_type: TypeIndex(type_idx),
                     member: MethodMemberIndex::Method(parent_methods.len() - 1),
                 };
 
@@ -758,7 +775,7 @@ impl<'a> DLL<'a> {
                     parent_type,
                     member,
                 } = $unwrap;
-                &mut types[parent_type].methods[match member {
+                &mut types[parent_type.0].methods[match member {
                     MethodMemberIndex::Method(i) => i,
                     _ => unreachable!(),
                 }]
@@ -803,13 +820,14 @@ impl<'a> DLL<'a> {
                 import_scope: {
                     let idx = i.import_scope.0 - 1;
 
-                    match module_refs.get(idx) {
-                        Some(m) => Rc::clone(m),
-                        None => throw!(
+                    if idx < module_refs.len() {
+                        ModuleRefIndex(idx)
+                    } else {
+                        throw!(
                             "invalid module reference index {} for PInvoke import {}",
                             idx,
                             name
-                        ),
+                        )
                     }
                 },
             });
@@ -819,7 +837,7 @@ impl<'a> DLL<'a> {
                     let idx = i - 1;
 
                     match fields.get(idx) {
-                        Some(&(parent, internal)) => types[parent].fields[internal].pinvoke = value,
+                        Some(&i) => get_field!(i).pinvoke = value,
                         None => throw!("invalid field index {} for PInvoke import {}", idx, name),
                     }
                 }
@@ -1124,7 +1142,7 @@ impl<'a> DLL<'a> {
                     let f_idx = i - 1;
 
                     match fields.get(f_idx) {
-                        Some(&(parent, internal)) => types[parent].fields[internal].default = value,
+                        Some(&i) => get_field!(i).default = value,
                         None => throw!("invalid field parent index {} for constant {}", f_idx, idx),
                     }
                 }
@@ -1260,7 +1278,7 @@ impl<'a> DLL<'a> {
                 None => throw!("invalid method index {} for method semantics", raw_idx),
             };
 
-            let parent = &mut types[method_idx.parent_type];
+            let parent = &mut types[method_idx.parent_type.0];
 
             let new_meth = extract_method!(parent, method_idx);
 
@@ -1348,14 +1366,13 @@ impl<'a> DLL<'a> {
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
-                        match module_refs.get(idx) {
-                            Some(m) => FieldReferenceParent::Module(Rc::clone(m)),
-                            None => {
-                                return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "invalid module reference index {} for field reference {}",
-                                    idx, name
-                                )))))
-                            }
+                        if idx < module_refs.len() {
+                            FieldReferenceParent::Module(ModuleRefIndex(idx))
+                        } else {
+                            return Some(Err(CLI(scroll::Error::Custom(format!(
+                                "invalid module reference index {} for field reference {}",
+                                idx, name
+                            )))));
                         }
                     }
                     _ => return None,
@@ -1376,7 +1393,7 @@ impl<'a> DLL<'a> {
             .enumerate()
             .map(|(current_idx, (orig_idx, r))| {
                 field_map.insert(orig_idx, current_idx);
-                Rc::new(RefCell::new(r))
+                r
             })
             .collect::<Vec<_>>();
 
@@ -1422,14 +1439,13 @@ impl<'a> DLL<'a> {
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
-                        match module_refs.get(idx) {
-                            Some(m) => MethodReferenceParent::Module(Rc::clone(m)),
-                            None => {
-                                return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "bad module ref index {} for method reference {}",
-                                    idx, name
-                                )))))
-                            }
+                        if idx < module_refs.len() {
+                            MethodReferenceParent::Module(ModuleRefIndex(idx))
+                        } else {
+                            return Some(Err(CLI(scroll::Error::Custom(format!(
+                                "invalid module reference index {} for method reference {}",
+                                idx, name
+                            )))));
                         }
                     }
                     MemberRefParent::MethodDef(i) => {
@@ -1467,17 +1483,15 @@ impl<'a> DLL<'a> {
             .enumerate()
             .map(|(current_idx, (orig_idx, r))| {
                 method_map.insert(orig_idx, current_idx);
-                Rc::new(RefCell::new(r))
+                r
             })
             .collect::<Vec<_>>();
 
         let m_ctx = convert::MethodContext {
-            field_refs: &field_refs,
             field_map: &field_map,
             field_indices: &fields,
             method_specs: &tables.method_spec,
             method_indices: &methods,
-            method_refs: &method_refs,
             method_map: &method_map,
         };
 
@@ -1515,15 +1529,21 @@ impl<'a> DLL<'a> {
                         Some(&m) => EntryPoint::Method(m),
                         None => throw!("invalid method index {} for entry point", entry_idx),
                     },
-                    TokenTarget::Table(Kind::File) => match files.get(entry_idx) {
-                        Some(f) => EntryPoint::File(Rc::clone(f)),
-                        None => throw!("invalid file index {} for entry point", entry_idx),
-                    },
+                    TokenTarget::Table(Kind::File) => {
+                        if entry_idx < files.len() {
+                            EntryPoint::File(FileIndex(entry_idx))
+                        } else {
+                            throw!("invalid file index {} for entry point", entry_idx)
+                        }
+                    }
                     bad => throw!("invalid entry point metadata token {:?}", bad),
                 })
             },
+            exported_types: exports,
+            field_references: field_refs,
             files,
             manifest_resources: resources,
+            method_references: method_refs,
             module,
             module_references: module_refs,
             type_definitions: types,
@@ -1553,7 +1573,7 @@ impl<'a> DLL<'a> {
                     CustomAttributeType::MemberRef(i) => {
                         let r_idx = i - 1;
                         match method_map.get(&r_idx) {
-                            Some(&m_idx) => UserMethod::Reference(Rc::clone(&method_refs[m_idx])),
+                            Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
                             None => throw!(
                                 "invalid member reference index {} for constructor of custom attribute {}",
                                 r_idx, idx
@@ -1606,8 +1626,7 @@ impl<'a> DLL<'a> {
                 Field(i) => {
                     let f_idx = i - 1;
                     match fields.get(f_idx) {
-                        Some(&(parent, internal)) => res.type_definitions[parent].fields[internal]
-                            .attributes
+                        Some(&i) => res[i].attributes
                             .push(attr),
                         None => throw!(
                             "invalid field index {} for parent of custom attribute {}",
@@ -1670,9 +1689,9 @@ impl<'a> DLL<'a> {
                     let m_idx = i - 1;
 
                     match field_map.get(&m_idx) {
-                        Some(&f) => field_refs[f].borrow_mut().attributes.push(attr),
+                        Some(&f) => res.field_references[f].attributes.push(attr),
                         None => match method_map.get(&m_idx) {
-                            Some(&m) => method_refs[m].borrow_mut().attributes.push(attr),
+                            Some(&m) => res.method_references[m].attributes.push(attr),
                             None => throw!(
                                 "invalid member reference index {} for parent of custom attribute {}",
                                 m_idx,
@@ -1733,8 +1752,8 @@ impl<'a> DLL<'a> {
                 ModuleRef(i) => {
                     let m_idx = i - 1;
 
-                    match res.module_references.get(m_idx) {
-                        Some(m) => m.borrow_mut().attributes.push(attr),
+                    match res.module_references.get_mut(m_idx) {
+                        Some(m) => m.attributes.push(attr),
                         None => throw!(
                             "invalid module reference index {} for parent of custom attribute {}",
                             m_idx,
@@ -1754,8 +1773,8 @@ impl<'a> DLL<'a> {
                 AssemblyRef(i) => {
                     let r_idx = i - 1;
 
-                    match res.assembly_references.get(r_idx) {
-                        Some(a) => a.borrow_mut().attributes.push(attr),
+                    match res.assembly_references.get_mut(r_idx) {
+                        Some(a) => a.attributes.push(attr),
                         None => throw!(
                             "invalid assembly reference index {} for parent of custom attribute {}",
                             r_idx,
@@ -1766,8 +1785,8 @@ impl<'a> DLL<'a> {
                 File(i) => {
                     let f_idx = i - 1;
 
-                    match res.files.get(f_idx) {
-                        Some(f) => f.borrow_mut().attributes.push(attr),
+                    match res.files.get_mut(f_idx) {
+                        Some(f) => f.attributes.push(attr),
                         None => throw!(
                             "invalid file index {} for parent of custom attribute {}",
                             f_idx,
@@ -1778,8 +1797,8 @@ impl<'a> DLL<'a> {
                 ExportedType(i) => {
                     let e_idx = i - 1;
 
-                    match exports.get(e_idx) {
-                        Some(e) => e.borrow_mut().attributes.push(attr),
+                    match res.exported_types.get_mut(e_idx) {
+                        Some(e) => e.attributes.push(attr),
                         None => throw!(
                             "invalid exported type index {} for parent of custom attribute {}",
                             e_idx,

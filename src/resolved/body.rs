@@ -11,9 +11,9 @@ pub struct Header {
 }
 
 #[derive(Debug)]
-pub struct Method<'a> {
+pub struct Method {
     pub header: Header,
-    pub body: Vec<Instruction<'a>>,
+    pub body: Vec<Instruction>,
     pub data_sections: Vec<DataSection>,
 }
 

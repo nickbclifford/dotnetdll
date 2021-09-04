@@ -62,7 +62,7 @@ pub enum StoreType {
 }
 
 #[derive(Debug)]
-pub enum Instruction<'a> {
+pub enum Instruction {
     Add,
     AddOverflow(NumberSign),
     And,
@@ -79,7 +79,7 @@ pub enum Instruction<'a> {
     BranchTruthy(usize),
     Call {
         tail_call: bool,
-        method: MethodSource<'a>,
+        method: MethodSource,
     },
     CallIndirect {
         tail_call: bool,
@@ -105,14 +105,14 @@ pub enum Instruction<'a> {
         unaligned: Option<Alignment>,
         volatile: bool,
     },
-    Jump(MethodSource<'a>),
+    Jump(MethodSource),
     LoadArgument(u16),
     LoadArgumentAddress(u16),
     LoadConstantInt32(i32),
     LoadConstantInt64(i64),
     LoadConstantFloat32(f32),
     LoadConstantFloat64(f64),
-    LoadMethodPointer(MethodSource<'a>),
+    LoadMethodPointer(MethodSource),
     LoadIndirect {
         unaligned: Option<Alignment>,
         volatile: bool,
@@ -151,7 +151,7 @@ pub enum Instruction<'a> {
         constraint: Option<MethodType>,
         skip_null_check: bool,
         tail_call: bool,
-        method: MethodSource<'a>,
+        method: MethodSource,
     },
     CastClass {
         skip_type_check: bool,
@@ -181,9 +181,9 @@ pub enum Instruction<'a> {
         skip_null_check: bool,
         unaligned: Option<Alignment>,
         volatile: bool,
-        field: FieldSource<'a>,
+        field: FieldSource,
     },
-    LoadFieldAddress(FieldSource<'a>),
+    LoadFieldAddress(FieldSource),
     LoadLength,
     LoadObject {
         unaligned: Option<Alignment>,
@@ -192,20 +192,20 @@ pub enum Instruction<'a> {
     },
     LoadStaticField {
         volatile: bool,
-        field: FieldSource<'a>,
+        field: FieldSource,
     },
-    LoadStaticFieldAddress(FieldSource<'a>),
+    LoadStaticFieldAddress(FieldSource),
     LoadString(Vec<u16>), // not necessarily a valid UTF-16 string, just 16-bit encoded chars
-    LoadTokenField(FieldSource<'a>),
-    LoadTokenMethod(MethodSource<'a>),
+    LoadTokenField(FieldSource),
+    LoadTokenMethod(MethodSource),
     LoadTokenType(MethodType),
     LoadVirtualMethodPointer {
         skip_null_check: bool,
-        method: MethodSource<'a>,
+        method: MethodSource,
     },
     MakeTypedReference(MethodType),
     NewArray(MethodType),
-    NewObject(UserMethod<'a>), // constructors can't have generics
+    NewObject(UserMethod), // constructors can't have generics
     ReadTypedReferenceType,
     ReadTypedReferenceValue(MethodType),
     Rethrow,
@@ -226,7 +226,7 @@ pub enum Instruction<'a> {
         skip_null_check: bool,
         unaligned: Option<Alignment>,
         volatile: bool,
-        field: FieldSource<'a>,
+        field: FieldSource,
     },
     StoreObject {
         unaligned: Option<Alignment>,
@@ -235,7 +235,7 @@ pub enum Instruction<'a> {
     },
     StoreStaticField {
         volatile: bool,
-        field: FieldSource<'a>,
+        field: FieldSource,
     },
     Throw,
     UnboxIntoAddress {
@@ -244,7 +244,7 @@ pub enum Instruction<'a> {
     },
     UnboxIntoValue(MethodType),
 }
-impl ResolvedDebug for Instruction<'_> {
+impl ResolvedDebug for Instruction {
     #[allow(unused_macros)]
     fn show(&self, res: &Resolution) -> String {
         use Instruction::*;
