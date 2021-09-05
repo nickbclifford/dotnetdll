@@ -1,8 +1,10 @@
-use super::types::{CustomTypeModifier, MethodType};
 use crate::{
     binary::signature::kinds::{CallingConvention, StandAloneCallingConvention},
     resolution::Resolution,
-    resolved::ResolvedDebug,
+    resolved::{
+        types::{CustomTypeModifier, MethodType},
+        ResolvedDebug,
+    },
 };
 use std::fmt::Write;
 

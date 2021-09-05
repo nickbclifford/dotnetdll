@@ -15,12 +15,11 @@ use super::{
         },
     },
     dll::{DLLError, Result},
-    resolution::{MethodIndex, MethodRefIndex},
+    resolution::*,
     resolved::{self, members::*, signature, types::*},
 };
 use scroll::Pread;
 use std::collections::HashMap;
-use crate::resolution::{FieldRefIndex, FieldIndex};
 
 macro_rules! throw {
     ($($arg:tt)*) => {
@@ -319,10 +318,7 @@ pub struct MethodContext<'r> {
     pub method_map: &'r HashMap<usize, usize>,
 }
 
-pub fn user_method(
-    idx: MethodDefOrRef,
-    ctx: &MethodContext,
-) -> Result<UserMethod> {
+pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMethod> {
     Ok(match idx {
         MethodDefOrRef::MethodDef(i) => {
             let m_idx = i - 1;
@@ -342,10 +338,7 @@ pub fn user_method(
     })
 }
 
-fn user_method_token(
-    tok: Token,
-    ctx: &MethodContext,
-) -> Result<UserMethod> {
+fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     use TokenTarget::*;
     match tok.target {
         Table(Kind::MethodDef) => user_method(MethodDefOrRef::MethodDef(tok.index), ctx),
@@ -382,10 +375,7 @@ fn method_source<'r, 'data>(
     })
 }
 
-fn field_source(
-    tok: Token,
-    ctx: &MethodContext,
-) -> Result<FieldSource> {
+fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
     use TokenTarget::*;
     let idx = tok.index - 1;
     Ok(match tok.target {
