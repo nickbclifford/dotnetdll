@@ -42,7 +42,7 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -
     match token.target {
         Table(Kind::TypeDef) => {
             if idx < ctx.def_len {
-                Ok(UserType::Definition(idx))
+                Ok(UserType::Definition(TypeIndex(idx)))
             } else {
                 Err(format!(
                     "invalid type definition index {} for user type",
@@ -52,7 +52,7 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -
         }
         Table(Kind::TypeRef) => {
             if idx < ctx.ref_len {
-                Ok(UserType::Reference(idx))
+                Ok(UserType::Reference(TypeRefIndex(idx)))
             } else {
                 Err(format!(
                     "invalid type reference index {} for user type",
@@ -153,7 +153,7 @@ macro_rules! def_type_idx {
                     let idx = i - 1;
                     if idx < ctx.def_len {
                         Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
-                            UserType::Definition(idx),
+                            UserType::Definition(TypeIndex(idx)),
                         )))))
                     } else {
                         Err(format!(
@@ -166,7 +166,7 @@ macro_rules! def_type_idx {
                     let idx = i - 1;
                     if idx < ctx.ref_len {
                         Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
-                            UserType::Reference(idx),
+                            UserType::Reference(TypeRefIndex(idx)),
                         )))))
                     } else {
                         Err(format!(

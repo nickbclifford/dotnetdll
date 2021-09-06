@@ -548,7 +548,7 @@ impl<'a> DLL<'a> {
                         BinRS::TypeRef(t) => {
                             let idx = t - 1;
                             if idx < type_ref_len {
-                                ResolutionScope::Nested(idx)
+                                ResolutionScope::Nested(TypeRefIndex(idx))
                             } else {
                                 throw!(
                                     "invalid nested type index {} for type reference {}",

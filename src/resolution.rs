@@ -49,6 +49,7 @@ basic_index!(FileIndex indexes files as module::File<'a>);
 basic_index!(MethodRefIndex indexes method_references as members::ExternalMethodReference<'a>);
 basic_index!(ModuleRefIndex indexes module_references as module::ExternalModuleReference<'a>);
 basic_index!(TypeIndex indexes type_definitions as types::TypeDefinition<'a>);
+basic_index!(TypeRefIndex indexes type_references as types::ExternalTypeReference<'a>);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct FieldIndex {

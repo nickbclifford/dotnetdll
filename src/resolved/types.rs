@@ -195,7 +195,7 @@ impl ResolvedDebug for TypeDefinition<'_> {
 
 #[derive(Debug)]
 pub enum ResolutionScope {
-    Nested(usize),
+    Nested(TypeRefIndex),
     ExternalModule(ModuleRefIndex),
     CurrentModule,
     Assembly(AssemblyRefIndex),
@@ -254,15 +254,15 @@ type_name_impl!(ExportedType<'_>);
 
 #[derive(Debug, Clone)]
 pub enum UserType {
-    Definition(usize),
-    Reference(usize),
+    Definition(TypeIndex),
+    Reference(TypeRefIndex),
 }
 
 impl UserType {
     pub fn type_name(&self, r: &Resolution) -> String {
         match self {
-            UserType::Definition(idx) => r.type_definitions[*idx].type_name(),
-            UserType::Reference(idx) => r.type_references[*idx].type_name(),
+            UserType::Definition(idx) => r[*idx].type_name(),
+            UserType::Reference(idx) => r[*idx].type_name(),
         }
     }
 }
