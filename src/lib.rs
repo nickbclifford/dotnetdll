@@ -43,6 +43,13 @@ mod tests {
         for t in &r.type_definitions {
             println!("{} {{", t.show(&r));
 
+            for f in &t.fields {
+                println!("\t{};", f.show(&r));
+            }
+            for p in &t.properties {
+                println!("\t{};", p.show(&r));
+            }
+
             for m in &t.methods {
                 print!("\t{}", m.show(&r));
 

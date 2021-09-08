@@ -59,13 +59,22 @@ pub struct Field<'a> {
 name_display!(Field<'_>);
 impl ResolvedDebug for Field<'_> {
     fn show(&self, res: &Resolution) -> String {
-        format!(
-            "{} {}{} {}",
-            self.accessibility,
-            if self.static_member { "static " } else { "" },
+        let mut buf = format!("{} ", self.accessibility);
+
+        if self.static_member { buf.push_str("static "); }
+
+        write!(
+            buf,
+            "{} {}",
             self.return_type.show(res),
             self.name
-        )
+        ).unwrap();
+
+        if let Some(c) = &self.default {
+            write!(buf, " = {:?}", c).unwrap();
+        }
+
+        buf
     }
 }
 
@@ -95,7 +104,11 @@ impl ResolvedDebug for FieldSource {
 
         match self {
             Definition(i) => {
-                format!("{}.{}", res[i.parent_type].type_name(), res[*i].name)
+                format!(
+                    "{}.{}",
+                    res[i.parent_type].nested_type_name(res),
+                    res[*i].name
+                )
             }
             Reference(i) => {
                 use FieldReferenceParent::*;
@@ -168,6 +181,10 @@ impl ResolvedDebug for Property<'_> {
         }
 
         buf.push('}');
+
+        if let Some(c) = &self.default {
+            write!(buf, " = {:?}", c).unwrap();
+        }
 
         buf
     }
@@ -337,7 +354,7 @@ impl ResolvedDebug for UserMethod {
             UserMethod::Definition(i) => {
                 let method = &res[*i];
                 signature = &method.signature;
-                parent_name = res[i.parent_type].type_name();
+                parent_name = res[i.parent_type].nested_type_name(res);
                 method_name = method.name;
             }
             UserMethod::Reference(i) => {
@@ -349,7 +366,7 @@ impl ResolvedDebug for UserMethod {
                 parent_name = match &r.parent {
                     Type(t) => t.show(res),
                     Module(m) => res[*m].name.to_string(),
-                    VarargMethod(i) => res[i.parent_type].type_name(),
+                    VarargMethod(i) => res[i.parent_type].nested_type_name(res),
                 }
             }
         }

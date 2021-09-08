@@ -136,10 +136,6 @@ impl ResolvedDebug for TypeDefinition<'_> {
             Accessibility::Nested(a) => write!(buf, "{} ", a).unwrap(),
         }
 
-        if let Some(idx) = &self.encloser {
-            write!(buf, "[{}] ", res[*idx]).unwrap();
-        }
-
         let kind = match &self.flags.kind {
             Kind::Class => match &self.extends {
                 Some(TypeSource::User(u)) => match u.type_name(res).as_str() {
@@ -160,7 +156,7 @@ impl ResolvedDebug for TypeDefinition<'_> {
             buf,
             "{} {}{}",
             kind,
-            self.type_name(),
+            self.nested_type_name(res),
             self.generic_parameters.show(res)
         )
         .unwrap();
@@ -193,6 +189,15 @@ impl ResolvedDebug for TypeDefinition<'_> {
     }
 }
 
+impl<'a> TypeDefinition<'a> {
+    pub fn nested_type_name(&self, res: &Resolution<'a>) -> String {
+        match self.encloser {
+            Some(enc) => format!("{}/{}", res[enc], self),
+            None => self.type_name(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ResolutionScope {
     Nested(TypeRefIndex),
@@ -208,6 +213,28 @@ pub struct ExternalTypeReference<'a> {
     pub name: &'a str,
     pub namespace: Option<&'a str>,
     pub scope: ResolutionScope,
+}
+
+impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
+    fn show(&self, res: &Resolution) -> String {
+        use ResolutionScope::*;
+        match self.scope {
+            Nested(enc) => format!("{}/{}", res[enc].show(res), self.name),
+            ExternalModule(m) => format!("[module {}]{}", res[m].name, self),
+            CurrentModule => self.type_name(),
+            Assembly(a) => format!("[{}]{}", res[a].name, self),
+            Exported(e) => format!(
+                "[{}]{}",
+                match res[e].implementation {
+                    TypeImplementation::Nested(_) =>
+                        panic!("exported type ref scopes cannot be nested"),
+                    TypeImplementation::ModuleFile { file, .. } => res[file].name,
+                    TypeImplementation::TypeForwarder(a) => res[a].name,
+                },
+                self
+            ),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -267,6 +294,15 @@ impl UserType {
     }
 }
 
+impl ResolvedDebug for UserType {
+    fn show(&self, res: &Resolution) -> String {
+        match self {
+            UserType::Definition(idx) => res[*idx].nested_type_name(res),
+            UserType::Reference(idx) => res[*idx].show(res),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CustomTypeModifier {
     Optional(UserType),
@@ -276,8 +312,8 @@ impl ResolvedDebug for CustomTypeModifier {
     fn show(&self, res: &Resolution) -> String {
         use CustomTypeModifier::*;
         match self {
-            Optional(t) => format!("[opt {}]", t.type_name(res)),
-            Required(t) => format!("[req {}]", t.type_name(res)),
+            Optional(t) => format!("<opt {}>", t.show(res)),
+            Required(t) => format!("<req {}>", t.show(res)),
         }
     }
 }
@@ -299,10 +335,10 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     fn show(&self, res: &Resolution) -> String {
         use TypeSource::*;
         match self {
-            User(u) => u.type_name(res),
+            User(u) => u.show(res),
             Generic(g) => format!(
                 "{}<{}>",
-                g.base.type_name(res),
+                g.base.show(res),
                 g.parameters
                     .iter()
                     .map(|p| p.show(res))
