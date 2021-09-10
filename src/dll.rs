@@ -2035,6 +2035,13 @@ impl<'a> DLL<'a> {
 
     // TODO
     pub fn write() {
+        fn align(stream: &mut Vec<u8>, alignment: usize) {
+            let rem = stream.len() % alignment;
+            if rem != 0 {
+                stream.extend(std::iter::repeat(0u8).take(alignment - rem));
+            }
+        }
+
         macro_rules! u16 {
             ($e:expr) => {
                 U16Bytes::new(LittleEndian, $e as u16)
@@ -2072,14 +2079,14 @@ impl<'a> DLL<'a> {
             0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e,
             0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
             0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a,
-            0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
 
         let signature = u32!(u32::from_le_bytes(*b"PE\0\0"));
 
         let file_header = pe::ImageFileHeader {
             machine: u16!(pe::IMAGE_FILE_MACHINE_UNKNOWN),
-            number_of_sections: u16!(0), // TODO
+            number_of_sections: u16!(1), // TODO
             time_date_stamp: u32!(match std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
             {
@@ -2088,7 +2095,7 @@ impl<'a> DLL<'a> {
             }),
             pointer_to_symbol_table: u32!(0),
             number_of_symbols: u32!(0),
-            size_of_optional_header: todo!(),
+            size_of_optional_header: u16!(if is_32_bit { 224 } else { 240 }), // 96/112 (headers) + 128 (data directories)
             characteristics: u16!({
                 let mut flags = pe::IMAGE_FILE_EXECUTABLE_IMAGE;
                 if !is_executable {
@@ -2100,19 +2107,18 @@ impl<'a> DLL<'a> {
 
         let mut text_section: Vec<u8> = vec![];
 
-        // TODO
-        let subsystem = pe::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+        align(&mut text_section, 0x200);
 
         let major_linker_version = 6;
         let minor_linker_version = 0;
-        let size_of_code = todo!();
-        let size_of_initialized_data = todo!(); // wtf?
-        let size_of_uninitialized_data = todo!();
+        let size_of_code = u32!(text_section.len());
+        let size_of_initialized_data = u32!(0); // TODO
+        let size_of_uninitialized_data = u32!(0); // don't have any
         let address_of_entry_point = u32!(if is_executable { todo!() } else { 0 });
         let base_of_code = todo!();
-        let base_of_data = todo!();
-        let image_base = 0x0040_0000; // TODO
-        let section_alignment = todo!();
+        let base_of_data = u32!(0); // TODO
+        let image_base = 0x0040_0000;
+        let section_alignment = u32!(0x200); // TODO
         let file_alignment = u32!(0x200);
         let major_operating_system_version = u16!(5);
         let minor_operating_system_version = u16!(0);
@@ -2121,10 +2127,10 @@ impl<'a> DLL<'a> {
         let major_subsystem_version = u16!(5);
         let minor_subsystem_version = u16!(0);
         let win32_version_value = u32!(0);
-        let size_of_image = todo!();
-        let size_of_headers = todo!();
+        let size_of_image = u32!(text_section.len() + 0x400); // TODO: this is a total guess
+        let size_of_headers = u32!(0x200);
         let check_sum = u32!(0);
-        let subsystem = u16!(subsystem);
+        let subsystem = u16!(pe::IMAGE_SUBSYSTEM_WINDOWS_CUI); // TODO
         let dll_characteristics = u16!(0);
         let size_of_stack_reserve = 0x0010_0000;
         let size_of_stack_commit = 0x1000;
