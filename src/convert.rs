@@ -665,7 +665,6 @@ pub fn instruction<'r, 'data>(
     let bytesize = instruction.bytesize();
 
     let convert_offset = |i: i32| -> Result<usize> {
-        use std::convert::TryInto;
         ((offset + bytesize) as i32 + i)
             .try_into()
             .ok()

@@ -310,8 +310,10 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn write_all() {
-    //     DLL::write();
-    // }
+    #[test]
+    fn write_all() {
+        let v = DLL::write().unwrap();
+
+        std::fs::write("test.dll", v).unwrap();
+    }
 }

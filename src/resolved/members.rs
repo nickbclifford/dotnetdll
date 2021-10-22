@@ -61,14 +61,11 @@ impl ResolvedDebug for Field<'_> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = format!("{} ", self.accessibility);
 
-        if self.static_member { buf.push_str("static "); }
+        if self.static_member {
+            buf.push_str("static ");
+        }
 
-        write!(
-            buf,
-            "{} {}",
-            self.return_type.show(res),
-            self.name
-        ).unwrap();
+        write!(buf, "{} {}", self.return_type.show(res), self.name).unwrap();
 
         if let Some(c) = &self.default {
             write!(buf, " = {:?}", c).unwrap();
@@ -144,10 +141,10 @@ impl ResolvedDebug for Property<'_> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
 
-        let accessors: Vec<_> =
-            std::array::IntoIter::new([self.getter.as_ref(), self.setter.as_ref()])
-                .flatten()
-                .collect();
+        let accessors: Vec<_> = [self.getter.as_ref(), self.setter.as_ref()]
+            .into_iter()
+            .flatten()
+            .collect();
 
         let least_restrictive = accessors.iter().map(|m| m.accessibility).max();
 

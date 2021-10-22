@@ -10,13 +10,13 @@ use super::{
 };
 use log::{debug, warn};
 use object::{
-    endian::{LittleEndian, U16Bytes, U32Bytes, U64Bytes},
+    endian::{LittleEndian, U32Bytes},
     pe::{self, ImageDataDirectory},
     read::{
         pe::{PeFile32, PeFile64, SectionTable},
-        Error as ObjectError, FileKind,
+        Error as ObjectReadError, FileKind,
     },
-    write::WritableBuffer,
+    write::Error as ObjectWriteError,
 };
 use scroll::{Error as ScrollError, Pread};
 use std::collections::HashMap;
@@ -31,14 +31,16 @@ pub struct DLL<'a> {
 
 #[derive(Debug)]
 pub enum DLLError {
-    PE(ObjectError),
+    PERead(ObjectReadError),
+    PEWrite(ObjectWriteError),
     CLI(ScrollError),
     Other(&'static str),
 }
 impl std::fmt::Display for DLLError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PE(o) => write!(f, "PE parsing: {}", o),
+            PERead(o) => write!(f, "PE parsing: {}", o),
+            PEWrite(o) => write!(f, "PE writing: {}", o),
             CLI(s) => write!(f, "CLI parsing: {}", s),
             Other(s) => write!(f, "Other parsing: {}", s),
         }
@@ -47,9 +49,14 @@ impl std::fmt::Display for DLLError {
 impl std::error::Error for DLLError {}
 
 // allows for clean usage with ? operator
-impl From<ObjectError> for DLLError {
-    fn from(e: ObjectError) -> Self {
-        PE(e)
+impl From<ObjectReadError> for DLLError {
+    fn from(e: ObjectReadError) -> Self {
+        PERead(e)
+    }
+}
+impl From<ObjectWriteError> for DLLError {
+    fn from(e: ObjectWriteError) -> Self {
+        PEWrite(e)
     }
 }
 impl From<ScrollError> for DLLError {
@@ -94,7 +101,7 @@ impl<'a> DLL<'a> {
             virtual_address: U32Bytes::new(LittleEndian, rva.rva),
             size: U32Bytes::new(LittleEndian, rva.size),
         };
-        dir.data(self.buffer, &self.sections).map_err(PE)
+        dir.data(self.buffer, &self.sections).map_err(PERead)
     }
 
     fn raw_rva(&self, rva: u32) -> Result<&'a [u8]> {
@@ -2034,208 +2041,63 @@ impl<'a> DLL<'a> {
     }
 
     // TODO
-    pub fn write() {
-        fn align(stream: &mut Vec<u8>, alignment: usize) {
-            let rem = stream.len() % alignment;
-            if rem != 0 {
-                stream.extend(std::iter::repeat(0u8).take(alignment - rem));
-            }
-        }
-
-        macro_rules! u16 {
-            ($e:expr) => {
-                U16Bytes::new(LittleEndian, $e as u16)
-            };
-        }
-        macro_rules! u32 {
-            ($e:expr) => {
-                U32Bytes::new(LittleEndian, $e as u32)
-            };
-        }
-        macro_rules! u64 {
-            ($e:expr) => {
-                U64Bytes::new(LittleEndian, $e as u64)
-            };
-        }
+    pub fn write() -> Result<Vec<u8>> {
+        use object::write::pe::*;
 
         // TODO
         let is_32_bit = false;
         let is_executable = false;
+        let text_section = vec![];
 
-        #[rustfmt::skip]
-        let mut buffer = vec![
-            0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
-            0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00,
-            0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // lfanew = 0x80: directly after the DOS header
-            0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd,
-            0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
-            0x69, 0x73, 0x20, 0x70, 0x72, 0x6f, 0x67, 0x72,
-            0x61, 0x6d, 0x20, 0x63, 0x61, 0x6e, 0x6e, 0x6f,
-            0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6e,
-            0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
-            0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a,
-            0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
+        let mut buffer = vec![];
 
-        let signature = u32!(u32::from_le_bytes(*b"PE\0\0"));
+        let mut writer = Writer::new(!is_32_bit, 0x200, 0x200, &mut buffer);
 
-        let file_header = pe::ImageFileHeader {
-            machine: u16!(pe::IMAGE_FILE_MACHINE_UNKNOWN),
-            number_of_sections: u16!(1), // TODO
-            time_date_stamp: u32!(match std::time::SystemTime::now()
+        writer.reserve_dos_header_and_stub();
+        writer.reserve_nt_headers(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
+        writer.reserve_section_headers(1);
+        let text_range = writer.reserve_text_section(text_section.len() as u32);
+
+        // TODO: reservations
+
+        writer.write_dos_header_and_stub()?;
+        writer.write_nt_headers(NtHeaders {
+            machine: pe::IMAGE_FILE_MACHINE_AMD64,
+            time_date_stamp: match std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
             {
-                Ok(d) => d.as_secs(),
+                Ok(d) => d.as_secs() as u32,
                 _ => 0,
-            }),
-            pointer_to_symbol_table: u32!(0),
-            number_of_symbols: u32!(0),
-            size_of_optional_header: u16!(if is_32_bit { 224 } else { 240 }), // 96/112 (headers) + 128 (data directories)
-            characteristics: u16!({
+            },
+            characteristics: {
                 let mut flags = pe::IMAGE_FILE_EXECUTABLE_IMAGE;
                 if !is_executable {
                     flags |= pe::IMAGE_FILE_DLL;
                 }
                 flags
-            }),
-        };
+            },
+            major_linker_version: 6,
+            minor_linker_version: 0,
+            address_of_entry_point: if is_executable { todo!() } else { 0 },
+            image_base: 0x0040_0000,
+            major_operating_system_version: 5,
+            minor_operating_system_version: 0,
+            major_image_version: 0,
+            minor_image_version: 0,
+            major_subsystem_version: 5,
+            minor_subsystem_version: 0,
+            subsystem: pe::IMAGE_SUBSYSTEM_WINDOWS_CUI, // TODO
+            dll_characteristics: 0,
+            size_of_stack_reserve: 0x0010_0000,
+            size_of_stack_commit: 0x1000,
+            size_of_heap_reserve: 0x0010_0000,
+            size_of_heap_commit: 0x1000,
+        });
+        writer.write_section_headers();
+        writer.write_section(text_range.file_offset, &text_section);
 
-        let mut text_section: Vec<u8> = vec![];
+        // TODO: write data
 
-        align(&mut text_section, 0x200);
-
-        let major_linker_version = 6;
-        let minor_linker_version = 0;
-        let size_of_code = u32!(text_section.len());
-        let size_of_initialized_data = u32!(0); // TODO
-        let size_of_uninitialized_data = u32!(0); // don't have any
-        let address_of_entry_point = u32!(if is_executable { todo!() } else { 0 });
-        let base_of_code = todo!();
-        let base_of_data = u32!(0); // TODO
-        let image_base = 0x0040_0000;
-        let section_alignment = u32!(0x200); // TODO
-        let file_alignment = u32!(0x200);
-        let major_operating_system_version = u16!(5);
-        let minor_operating_system_version = u16!(0);
-        let major_image_version = u16!(0);
-        let minor_image_version = u16!(0);
-        let major_subsystem_version = u16!(5);
-        let minor_subsystem_version = u16!(0);
-        let win32_version_value = u32!(0);
-        let size_of_image = u32!(text_section.len() + 0x400); // TODO: this is a total guess
-        let size_of_headers = u32!(0x200);
-        let check_sum = u32!(0);
-        let subsystem = u16!(pe::IMAGE_SUBSYSTEM_WINDOWS_CUI); // TODO
-        let dll_characteristics = u16!(0);
-        let size_of_stack_reserve = 0x0010_0000;
-        let size_of_stack_commit = 0x1000;
-        let size_of_heap_reserve = 0x0010_0000;
-        let size_of_heap_commit = 0x1000;
-        let loader_flags = u32!(0);
-        let number_of_rva_and_sizes = u32!(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
-
-        if is_32_bit {
-            buffer.write_pod(&pe::ImageNtHeaders32 {
-                signature,
-                file_header,
-                optional_header: pe::ImageOptionalHeader32 {
-                    magic: u16!(pe::IMAGE_NT_OPTIONAL_HDR32_MAGIC),
-                    major_linker_version,
-                    minor_linker_version,
-                    size_of_code,
-                    size_of_initialized_data,
-                    size_of_uninitialized_data,
-                    address_of_entry_point,
-                    base_of_code,
-                    base_of_data,
-                    image_base: u32!(image_base),
-                    section_alignment,
-                    file_alignment,
-                    major_operating_system_version,
-                    minor_operating_system_version,
-                    major_image_version,
-                    minor_image_version,
-                    major_subsystem_version,
-                    minor_subsystem_version,
-                    win32_version_value,
-                    size_of_image,
-                    size_of_headers,
-                    check_sum,
-                    subsystem,
-                    dll_characteristics,
-                    size_of_stack_reserve: u32!(size_of_stack_reserve),
-                    size_of_stack_commit: u32!(size_of_stack_commit),
-                    size_of_heap_reserve: u32!(size_of_heap_reserve),
-                    size_of_heap_commit: u32!(size_of_heap_commit),
-                    loader_flags,
-                    number_of_rva_and_sizes,
-                },
-            });
-        } else {
-            buffer.write_pod(&pe::ImageNtHeaders64 {
-                signature,
-                file_header,
-                optional_header: pe::ImageOptionalHeader64 {
-                    magic: u16!(pe::IMAGE_NT_OPTIONAL_HDR64_MAGIC),
-                    major_linker_version,
-                    minor_linker_version,
-                    size_of_code,
-                    size_of_initialized_data,
-                    size_of_uninitialized_data,
-                    address_of_entry_point,
-                    base_of_code,
-                    image_base: u64!(image_base),
-                    section_alignment,
-                    file_alignment,
-                    major_operating_system_version,
-                    minor_operating_system_version,
-                    major_image_version,
-                    minor_image_version,
-                    major_subsystem_version,
-                    minor_subsystem_version,
-                    win32_version_value,
-                    size_of_image,
-                    size_of_headers,
-                    check_sum,
-                    subsystem,
-                    dll_characteristics,
-                    size_of_stack_reserve: u64!(size_of_stack_reserve),
-                    size_of_stack_commit: u64!(size_of_stack_commit),
-                    size_of_heap_reserve: u64!(size_of_heap_reserve),
-                    size_of_heap_commit: u64!(size_of_heap_commit),
-                    loader_flags,
-                    number_of_rva_and_sizes,
-                },
-            });
-        }
-
-        let empty_datadir = pe::ImageDataDirectory {
-            virtual_address: u32!(0),
-            size: u32!(0),
-        };
-
-        buffer.write_pod_slice(&[
-            empty_datadir, // export table
-            todo!(),       // import table
-            empty_datadir, // resource table
-            empty_datadir, // exception table
-            empty_datadir, // certificate table
-            todo!(),       // base relocation table
-            empty_datadir, // debug
-            empty_datadir, // copyright
-            empty_datadir, // global ptr
-            empty_datadir, // TLS table
-            empty_datadir, // load config table
-            empty_datadir, // bound import
-            todo!(),       // IAT
-            empty_datadir, // delay import descriptor
-            todo!(),       // CLI header (the important one)
-            empty_datadir, // reserved
-        ]);
+        Ok(buffer)
     }
 }

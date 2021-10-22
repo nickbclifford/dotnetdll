@@ -2,7 +2,7 @@
 name = "dotnetdll"
 version = "0.1.0"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,7 +14,7 @@ dotnetdll-macros = { path = "dotnetdll-macros" }
 log = "0.4.14"
 num-traits = "0.2"
 num-derive = "0.3"
-object = { version = "0.26.0", features = ['write'] }
+object = { version = "0.27.0", features = ['write'] }
 paste = "1.0.5"
 scroll = { version = "0.10.2", features = ['derive'] }
 
