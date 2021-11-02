@@ -1,18 +1,18 @@
 use super::attribute::Attribute;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Implementation {
     File(crate::resolution::FileIndex),
     Assembly(crate::resolution::AssemblyRefIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Visibility {
     Public,
     Private,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ManifestResource<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub offset: usize,

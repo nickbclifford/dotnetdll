@@ -1,19 +1,19 @@
 use super::{members::*, signature, types::*, ResolvedDebug};
 use crate::resolution::Resolution;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum NumberSign {
     Signed,
     Unsigned,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum OverflowDetection {
     Check,
     NoCheck,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum ConversionType {
     Int8,
     UInt8,
@@ -27,14 +27,14 @@ pub enum ConversionType {
     UIntPtr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Alignment {
     Byte,
     Double,
     Quad,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum LoadType {
     Int8,
     UInt8,
@@ -49,7 +49,7 @@ pub enum LoadType {
     Object,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum StoreType {
     Int8,
     Int16,
@@ -61,7 +61,7 @@ pub enum StoreType {
     Object,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     Add,
     AddOverflow(NumberSign),

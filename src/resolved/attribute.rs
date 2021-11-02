@@ -195,7 +195,7 @@ fn parse_named<'def, 'inst>(
         .collect()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Attribute<'a> {
     pub constructor: members::UserMethod,
     pub(crate) value: Option<&'a [u8]>,
@@ -263,14 +263,14 @@ impl<'a> Attribute<'a> {
 // we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
 // it's not really possible to use those unless you're writing raw metadata though so we'll ignore them (for now)
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SecurityDeclaration<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub action: u16,
     pub(crate) value: &'a [u8],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SecurityAttributeData<'a> {
     pub type_name: &'a str,
     pub fields: Vec<NamedArg<'a>>,

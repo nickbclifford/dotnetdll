@@ -1,6 +1,6 @@
 use super::attribute::{Attribute, SecurityDeclaration};
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Flags {
     pub has_public_key: bool,
     pub retargetable: bool,
@@ -19,7 +19,7 @@ impl Flags {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Version {
     pub major: u16,
     pub minor: u16,
@@ -27,14 +27,14 @@ pub struct Version {
     pub revision: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum HashAlgorithm {
     None,
     ReservedMD5,
     SHA1,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Assembly<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub hash_algorithm: HashAlgorithm,
@@ -46,7 +46,7 @@ pub struct Assembly<'a> {
     pub security: Option<SecurityDeclaration<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternalAssemblyReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub version: Version,

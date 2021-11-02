@@ -37,7 +37,7 @@ impl Display for Accessibility {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Field<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -75,13 +75,13 @@ impl ResolvedDebug for Field<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FieldReferenceParent {
     Type(MethodType),
     Module(ModuleRefIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: FieldReferenceParent,
@@ -90,7 +90,7 @@ pub struct ExternalFieldReference<'a> {
 }
 name_display!(ExternalFieldReference<'_>);
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum FieldSource {
     Definition(FieldIndex),
     Reference(FieldRefIndex),
@@ -124,7 +124,7 @@ impl ResolvedDebug for FieldSource {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Property<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -187,7 +187,7 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum VtableLayout {
     ReuseSlot,
     NewSlot,
@@ -205,20 +205,20 @@ pub struct ParameterMetadata<'a> {
 }
 name_display!(ParameterMetadata<'_>);
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum BodyFormat {
     IL,
     Native,
     Runtime,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum BodyManagement {
     Unmanaged,
     Managed,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Method<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -293,7 +293,7 @@ impl ResolvedDebug for Method<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum CharacterSet {
     NotSpecified,
     Ansi,
@@ -301,7 +301,7 @@ pub enum CharacterSet {
     Auto,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnmanagedCallingConvention {
     Platformapi,
     Cdecl,
@@ -310,7 +310,7 @@ pub enum UnmanagedCallingConvention {
     Fastcall,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct PInvoke<'a> {
     pub no_mangle: bool,
     pub character_set: CharacterSet,
@@ -320,14 +320,14 @@ pub struct PInvoke<'a> {
     pub import_scope: ModuleRefIndex,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MethodReferenceParent {
     Type(MethodType),
     Module(ModuleRefIndex),
     VarargMethod(MethodIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternalMethodReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: MethodReferenceParent,
@@ -336,7 +336,7 @@ pub struct ExternalMethodReference<'a> {
 }
 name_display!(ExternalMethodReference<'_>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum UserMethod {
     Definition(MethodIndex),
     Reference(MethodRefIndex),
@@ -407,13 +407,13 @@ impl ResolvedDebug for UserMethod {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericMethodInstantiation {
     pub base: UserMethod,
     pub parameters: Vec<MethodType>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MethodSource {
     User(UserMethod),
     Generic(GenericMethodInstantiation),
@@ -454,7 +454,7 @@ pub enum Constant {
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Event<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,

@@ -1,14 +1,14 @@
 use super::{attribute::Attribute, types, ResolvedDebug};
 use crate::resolution::Resolution;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Variance {
     Invariant,
     Covariant,
     Contravariant,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct SpecialConstraint {
     pub reference_type: bool,
     pub value_type: bool,
@@ -20,14 +20,14 @@ impl SpecialConstraint {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericConstraint<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
     pub custom_modifiers: Vec<types::CustomTypeModifier>,
     pub constraint_type: ConstraintType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Generic<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
     pub sequence: usize,

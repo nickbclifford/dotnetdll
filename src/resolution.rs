@@ -1,6 +1,7 @@
 use super::resolved::*;
 use std::ops::{Index, IndexMut};
 
+#[derive(Debug, Clone)]
 pub struct Resolution<'a> {
     pub assembly: Option<assembly::Assembly<'a>>,
     pub assembly_references: Vec<assembly::ExternalAssemblyReference<'a>>,
@@ -16,7 +17,7 @@ pub struct Resolution<'a> {
     pub type_references: Vec<types::ExternalTypeReference<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum EntryPoint {
     Method(MethodIndex),
     File(FileIndex),

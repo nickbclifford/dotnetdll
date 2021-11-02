@@ -163,7 +163,7 @@ impl TryIntoCtx for FieldOrPropType<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum IntegralParam {
     Int8(i8),
     Int16(i16),
@@ -211,7 +211,7 @@ impl TryIntoCtx for IntegralParam {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FixedArg<'a> {
     Boolean(bool),
     Char(char),
@@ -298,7 +298,7 @@ impl TryIntoCtx for FixedArg<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NamedArg<'a> {
     Field(&'a str, FixedArg<'a>),
     Property(&'a str, FixedArg<'a>),

@@ -9,38 +9,38 @@ use super::{
     members, signature, ResolvedDebug,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Kind {
     Class,
     Interface,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Accessibility {
     NotPublic,
     Public,
     Nested(super::Accessibility),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct SequentialLayout {
     pub packing_size: usize,
     pub class_size: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ExplicitLayout {
     pub class_size: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Layout {
     Automatic,
     Sequential(Option<SequentialLayout>),
     Explicit(Option<ExplicitLayout>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum StringFormatting {
     ANSI,
     Unicode,
@@ -48,13 +48,13 @@ pub enum StringFormatting {
     Custom(u32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct MethodOverride {
     pub implementation: members::UserMethod,
     pub declaration: members::UserMethod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TypeFlags {
     pub accessibility: Accessibility,
     pub layout: Layout,
@@ -109,7 +109,7 @@ impl TypeFlags {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDefinition<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -198,7 +198,7 @@ impl<'a> TypeDefinition<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum ResolutionScope {
     Nested(TypeRefIndex),
     ExternalModule(ModuleRefIndex),
@@ -207,7 +207,7 @@ pub enum ResolutionScope {
     Exported(ExportedTypeIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExternalTypeReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: &'a str,
@@ -237,7 +237,7 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum TypeImplementation {
     Nested(ExportedTypeIndex),
     ModuleFile {
@@ -247,7 +247,7 @@ pub enum TypeImplementation {
     TypeForwarder(AssemblyRefIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExportedType<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub flags: TypeFlags,
@@ -279,7 +279,7 @@ type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum UserType {
     Definition(TypeIndex),
     Reference(TypeRefIndex),
@@ -303,7 +303,7 @@ impl ResolvedDebug for UserType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum CustomTypeModifier {
     Optional(UserType),
     Required(UserType),
@@ -454,7 +454,7 @@ impl ResolvedDebug for MethodType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LocalVariable {
     TypedReference,
     Variable {
