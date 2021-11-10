@@ -2042,23 +2042,104 @@ impl<'a> DLL<'a> {
 
     // TODO
     pub fn write() -> Result<Vec<u8>> {
+        use object::pod;
         use object::write::pe::*;
 
+        macro_rules! u32 {
+            ($e:expr) => {
+                U32Bytes::new(LittleEndian, $e)
+            };
+        }
+
+        // PE characteristics
         // TODO
         let is_32_bit = false;
-        let is_executable = false;
-        let text_section = vec![];
+        let is_executable = true;
 
+        // writer setup
         let mut buffer = vec![];
-
         let mut writer = Writer::new(!is_32_bit, 0x200, 0x200, &mut buffer);
+
+        let mut num_sections = 1; // .text
+        if is_executable {
+            // add .idata and .reloc
+            num_sections += 2;
+        }
+
+        // begin reservations
 
         writer.reserve_dos_header_and_stub();
         writer.reserve_nt_headers(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
-        writer.reserve_section_headers(1);
-        let text_range = writer.reserve_text_section(text_section.len() as u32);
+        writer.reserve_section_headers(num_sections);
 
-        // TODO: reservations
+        let mut text = vec![];
+
+        // add import information
+        let imports = if is_executable {
+            let import_rva = writer.virtual_len();
+
+            let mut idata = b"mscoree.dll\0".to_vec();
+
+            macro_rules! current_rva {
+                () => {
+                    import_rva + idata.len() as u32
+                };
+            }
+
+            let hint_name_rva = current_rva!();
+            idata.extend(b"\0\0_CorExeMain\0");
+
+            let import_lookup_rva = current_rva!();
+            let mut lookup_table: Vec<u8> = vec![];
+            if is_32_bit {
+                lookup_table.extend(hint_name_rva.to_le_bytes());
+                lookup_table.extend([0; 4]);
+            } else {
+                lookup_table.extend((hint_name_rva as u64).to_le_bytes());
+                lookup_table.extend([0; 8]);
+            }
+            // write lookup table
+            idata.extend_from_slice(&lookup_table);
+
+            // write IAT
+            let iat_rva = current_rva!();
+            idata.extend(lookup_table);
+            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IAT, iat_rva, 8);
+
+            // write import directory entries
+            let directory_rva = current_rva!();
+            idata.extend_from_slice(pod::bytes_of(&pe::ImageImportDescriptor {
+                original_first_thunk: u32!(import_lookup_rva),
+                time_date_stamp: u32!(0),
+                forwarder_chain: u32!(0),
+                name: u32!(import_rva),
+                first_thunk: u32!(iat_rva),
+            }));
+            idata.extend([0; 20]);
+            let section = writer.reserve_idata_section(idata.len() as u32);
+            // the writer sets the data dir to the whole section by default
+            // since we don't start the section with the import directory, we need to
+            // manually overwrite it with the directory RVA (set size to just cover the entries)
+            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IMPORT, directory_rva, 40);
+
+            // write entry point to beginning of text section
+            text.extend([0xff, 0x25]);
+            text.extend(iat_rva.to_le_bytes());
+
+            Some((idata, section))
+        } else {
+            None
+        };
+
+        let text_range = writer.reserve_text_section(text.len() as u32);
+
+        // TODO: are relocations really only needed for executables?
+        if is_executable {
+            writer.add_reloc(text_range.virtual_address, pe::IMAGE_REL_BASED_HIGHLOW);
+            writer.reserve_reloc_section();
+        }
+
+        // begin writing
 
         writer.write_dos_header_and_stub()?;
         writer.write_nt_headers(NtHeaders {
@@ -2078,7 +2159,11 @@ impl<'a> DLL<'a> {
             },
             major_linker_version: 6,
             minor_linker_version: 0,
-            address_of_entry_point: if is_executable { todo!() } else { 0 },
+            address_of_entry_point: if is_executable {
+                text_range.virtual_address
+            } else {
+                0
+            },
             image_base: 0x0040_0000,
             major_operating_system_version: 5,
             minor_operating_system_version: 0,
@@ -2094,9 +2179,11 @@ impl<'a> DLL<'a> {
             size_of_heap_commit: 0x1000,
         });
         writer.write_section_headers();
-        writer.write_section(text_range.file_offset, &text_section);
-
-        // TODO: write data
+        if let Some((idata, section)) = imports {
+            writer.write_section(section.file_offset, &idata);
+        }
+        writer.write_section(text_range.file_offset, &text);
+        writer.write_reloc_section();
 
         Ok(buffer)
     }
