@@ -1,9 +1,13 @@
+use paste::paste;
+use scroll::{
+    ctx::{TryFromCtx, TryIntoCtx},
+    Error, Pread, Pwrite,
+};
+
 use super::{
     super::metadata::{index, table},
     compressed, kinds,
 };
-use paste::paste;
-use scroll::{ctx::{TryFromCtx, TryIntoCtx}, Error, Pread, Pwrite};
 
 macro_rules! element_types {
     ($($name:ident = $val:literal),+) => {
@@ -246,7 +250,7 @@ pub enum Type {
     GenericInstValueType(TypeDefOrRefOrSpec, Vec<Type>),
     MVar(u32),
     Object,
-    Ptr(Vec<CustomMod>, Box<Option<Type>>),
+    Ptr(Vec<CustomMod>, Option<Box<Type>>),
     String,
     SzArray(Vec<CustomMod>, Box<Type>),
     ValueType(TypeDefOrRefOrSpec),
@@ -305,18 +309,15 @@ impl TryFromCtx<'_> for Type {
                 MVar(number)
             }
             ELEMENT_TYPE_OBJECT => Object,
-            ELEMENT_TYPE_PTR => {
-                let mods = all_custom_mods(from, offset);
-
-                let type_data = if from[*offset] == ELEMENT_TYPE_VOID {
+            ELEMENT_TYPE_PTR => Ptr(
+                all_custom_mods(from, offset),
+                if from[*offset] == ELEMENT_TYPE_VOID {
                     *offset += 1;
                     None
                 } else {
-                    Some(from.gread(offset)?)
-                };
-
-                Ptr(mods, Box::new(type_data))
-            }
+                    Some(Box::new(from.gread(offset)?))
+                },
+            ),
             ELEMENT_TYPE_STRING => String,
             ELEMENT_TYPE_SZARRAY => {
                 let mods = all_custom_mods(from, offset);
@@ -429,8 +430,8 @@ impl TryIntoCtx for Type {
                 for m in mods {
                     into.gwrite(m, offset)?;
                 }
-                match *opt {
-                    Some(t) => into.gwrite(t, offset)?,
+                match opt {
+                    Some(t) => into.gwrite(*t, offset)?,
                     None => into.gwrite_with(ELEMENT_TYPE_VOID, offset, scroll::LE)?,
                 };
             }

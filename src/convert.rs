@@ -110,8 +110,8 @@ fn base_type_sig<T>(
             cmod.into_iter()
                 .map(|c| custom_modifier(c, ctx))
                 .collect::<Result<_>>()?,
-            match *pt {
-                Some(t) => Some(enclosing(t, ctx)?),
+            match pt {
+                Some(t) => Some(enclosing(*t, ctx)?),
                 None => None,
             },
         ),
