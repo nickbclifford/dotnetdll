@@ -2042,7 +2042,6 @@ impl<'a> DLL<'a> {
 
     // TODO
     pub fn write() -> Result<Vec<u8>> {
-        use object::pod;
         use object::write::pe::*;
 
         macro_rules! u32 {
@@ -2078,7 +2077,8 @@ impl<'a> DLL<'a> {
         let imports = if is_executable {
             let import_rva = writer.virtual_len();
 
-            let mut idata = b"mscoree.dll\0".to_vec();
+            let mut idata = Vec::with_capacity(0x100);
+            idata.extend(b"mscoree.dll\0");
 
             macro_rules! current_rva {
                 () => {
@@ -2108,7 +2108,7 @@ impl<'a> DLL<'a> {
 
             // write import directory entries
             let directory_rva = current_rva!();
-            idata.extend_from_slice(pod::bytes_of(&pe::ImageImportDescriptor {
+            idata.extend_from_slice(object::pod::bytes_of(&pe::ImageImportDescriptor {
                 original_first_thunk: u32!(import_lookup_rva),
                 time_date_stamp: u32!(0),
                 forwarder_chain: u32!(0),
@@ -2130,6 +2130,9 @@ impl<'a> DLL<'a> {
         } else {
             None
         };
+
+        // TODO: write metadata into text
+        // field RVAs, method bodies, heaps, metadata
 
         let text_range = writer.reserve_text_section(text.len() as u32);
 
@@ -2183,6 +2186,7 @@ impl<'a> DLL<'a> {
             writer.write_section(section.file_offset, &idata);
         }
         writer.write_section(text_range.file_offset, &text);
+        // ignored if no relocs have been set
         writer.write_reloc_section();
 
         Ok(buffer)
