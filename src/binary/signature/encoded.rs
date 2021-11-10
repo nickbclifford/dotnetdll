@@ -3,10 +3,7 @@ use super::{
     compressed, kinds,
 };
 use paste::paste;
-use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
-    Pread, Pwrite,
-};
+use scroll::{ctx::{TryFromCtx, TryIntoCtx}, Error, Pread, Pwrite};
 
 macro_rules! element_types {
     ($($name:ident = $val:literal),+) => {
@@ -169,8 +166,17 @@ pub enum CustomMod {
     Optional(TypeDefOrRefOrSpec),
 }
 
+pub struct FailUnit;
+impl From<scroll::Error> for FailUnit {
+    fn from(_: Error) -> Self {
+        FailUnit
+    }
+}
+
 impl TryFromCtx<'_> for CustomMod {
-    type Error = scroll::Error;
+    // since all reading is done from all_custom_mods, which discards errors,
+    // avoid allocating error messages and just fail with a unit
+    type Error = FailUnit;
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -182,7 +188,7 @@ impl TryFromCtx<'_> for CustomMod {
             match tag as u8 {
                 ELEMENT_TYPE_CMOD_OPT => CustomMod::Optional(token),
                 ELEMENT_TYPE_CMOD_REQD => CustomMod::Required(token),
-                _ => throw!("bad modifier tag type {:#04x}", tag),
+                _ => return Err(FailUnit),
             },
             *offset,
         ))

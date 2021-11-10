@@ -120,7 +120,7 @@ fn build_params_with_varargs(
     from: &[u8],
     offset: &mut usize,
 ) -> scroll::Result<Vec<Param>> {
-    let mut params = vec![];
+    let mut params = Vec::with_capacity(*len as usize);
     while *len > 0 {
         if from[*offset] == ELEMENT_TYPE_SENTINEL {
             *offset += 1;

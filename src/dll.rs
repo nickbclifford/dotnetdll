@@ -614,6 +614,7 @@ impl<'a> DLL<'a> {
         // this allows us to initialize the Vec out of order, which is safe because we know that everything
         // will eventually be initialized in the end
         // it's much simpler/more efficient than trying to use a HashMap or something
+        // TODO: MaybeUninit for better semantic correctness
         macro_rules! new_with_len {
             ($name:ident, $len:ident) => {
                 let mut $name = Vec::with_capacity($len);
@@ -632,6 +633,7 @@ impl<'a> DLL<'a> {
             use members::*;
 
             let parent_fields = &mut types[type_idx].fields;
+            parent_fields.reserve(type_fields.len());
 
             for (f_idx, f) in type_fields {
                 let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
@@ -707,6 +709,7 @@ impl<'a> DLL<'a> {
         let mut owned_params = Vec::with_capacity(params_len);
         for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
             let parent_methods = &mut types[type_idx].methods;
+            parent_methods.reserve(type_methods.len());
 
             for (m_idx, m) in type_methods {
                 use members::*;
@@ -723,6 +726,7 @@ impl<'a> DLL<'a> {
                     signature: sig,
                     accessibility: member_accessibility(m.flags)?,
                     generic_parameters: vec![],
+                    // NOTE: lots of allocations since this is generated for every single method
                     parameter_metadata: vec![None; num_method_params + 1],
                     static_member: check_bitmask!(m.flags, 0x10),
                     sealed: check_bitmask!(m.flags, 0x20),
@@ -992,6 +996,7 @@ impl<'a> DLL<'a> {
         // this doesn't really matter that much, just to make the sequences nicer
         // I originally tried to do this with uninitialized Vecs and no sequence field,
         // but for reasons I don't understand, that broke
+        // TODO: get rid of this, it adds possibility for invalid state when writing
         for t in &mut types {
             t.generic_parameters.sort_by_key(|p| p.sequence);
 
@@ -1343,8 +1348,7 @@ impl<'a> DLL<'a> {
 
         debug!("field refs");
 
-        let mut field_map = HashMap::new();
-        let field_refs = tables
+        let (field_refs, field_map): (Vec<_>, HashMap<_, _>) = tables
             .member_ref
             .iter()
             .enumerate()
@@ -1356,6 +1360,7 @@ impl<'a> DLL<'a> {
                 let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
+                // NOTE: discarding errors means wasted allocation of formatted messages
                 let field_sig: FieldSig = match sig_blob.pread(0) {
                     Ok(s) => s,
                     Err(_) => return None,
@@ -1399,15 +1404,13 @@ impl<'a> DLL<'a> {
             .into_iter()
             .enumerate()
             .map(|(current_idx, (orig_idx, r))| {
-                field_map.insert(orig_idx, current_idx);
-                r
+                (r, (orig_idx, current_idx))
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
         debug!("method refs");
 
-        let mut method_map = HashMap::new();
-        let method_refs = tables
+        let (method_refs, method_map): (Vec<_>, HashMap<_, _>) = tables
             .member_ref
             .iter()
             .enumerate()
@@ -1489,10 +1492,9 @@ impl<'a> DLL<'a> {
             .into_iter()
             .enumerate()
             .map(|(current_idx, (orig_idx, r))| {
-                method_map.insert(orig_idx, current_idx);
-                r
+                (r, (orig_idx, current_idx))
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
         let m_ctx = convert::MethodContext {
             field_map: &field_map,

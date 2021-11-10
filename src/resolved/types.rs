@@ -424,6 +424,7 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
 
 #[derive(Debug, Clone)]
 pub enum MemberType {
+    // NOTE: lots of heap allocation taking place because of how common this type is
     Base(Box<BaseType<MemberType>>),
     TypeGeneric(usize),
 }
@@ -439,6 +440,7 @@ impl ResolvedDebug for MemberType {
 
 #[derive(Debug, Clone)]
 pub enum MethodType {
+    // ditto
     Base(Box<BaseType<MethodType>>),
     TypeGeneric(usize),
     MethodGeneric(usize),
