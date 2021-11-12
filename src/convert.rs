@@ -1,6 +1,6 @@
 use super::{
     binary::{
-        heap::{Blob, Heap, UserString},
+        heap::{BlobReader, HeapReader, UserStringReader},
         il,
         metadata::{
             index::{MethodDefOrRef, Token, TokenTarget, TypeDefOrRef},
@@ -32,8 +32,8 @@ pub struct Context<'r, 'data: 'r> {
     pub ref_len: usize,
     pub specs: &'r [TypeSpec],
     pub sigs: &'r [StandAloneSig],
-    pub blobs: &'r Blob<'data>,
-    pub userstrings: &'r UserString<'data>,
+    pub blobs: &'r BlobReader<'data>,
+    pub userstrings: &'r UserStringReader<'data>,
 }
 
 pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -> Result<UserType> {

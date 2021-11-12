@@ -1,25 +1,26 @@
 use super::{metadata::index, signature::compressed};
 use scroll::{ctx::StrCtx, Pread, Pwrite, Result};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::*,
+};
 
-pub trait Heap<'a> {
+pub trait HeapReader<'a> {
     type Index;
     type Value;
 
     fn new(bytes: &'a [u8]) -> Self;
 
     fn at_index(&self, idx: Self::Index) -> Result<Self::Value>;
-
-    // TODO: mutating internal buffer?
-    fn write(value: Self::Value) -> Result<Vec<u8>>;
 }
 
-macro_rules! heap_struct {
+macro_rules! heap_reader {
     ($name:ident, { $($i:item)* }) => {
         pub struct $name<'a> {
             bytes: &'a [u8],
         }
 
-        impl<'a> Heap<'a> for $name<'a> {
+        impl<'a> HeapReader<'a> for $name<'a> {
             fn new(bytes: &'a [u8]) -> $name<'a> {
                 $name {
                     bytes: &bytes,
@@ -53,37 +54,23 @@ fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-heap_struct!(Strings, {
+heap_reader!(StringsReader, {
     type Index = index::String;
     type Value = &'a str;
 
     fn at_index(&self, index::String(idx): Self::Index) -> Result<Self::Value> {
         self.bytes.pread_with(idx, StrCtx::Delimiter(0))
     }
-
-    fn write(value: Self::Value) -> Result<Vec<u8>> {
-        let mut buf = vec![0_u8; value.len() + 1];
-
-        buf.pwrite(value.as_bytes(), 0)?;
-
-        // null terminator included in buffer
-
-        Ok(buf)
-    }
 });
-heap_struct!(Blob, {
+heap_reader!(BlobReader, {
     type Index = index::Blob;
     type Value = &'a [u8];
 
     fn at_index(&self, index::Blob(idx): Self::Index) -> Result<Self::Value> {
         read_bytes(self.bytes, idx)
     }
-
-    fn write(value: Self::Value) -> Result<Vec<u8>> {
-        write_bytes(value)
-    }
 });
-heap_struct!(GUID, {
+heap_reader!(GUIDReader, {
     type Index = index::GUID;
     type Value = [u8; 16];
 
@@ -93,12 +80,8 @@ heap_struct!(GUID, {
             .gread_inout_with(&mut ((idx - 1) * 16), &mut buf, scroll::LE)?;
         Ok(buf)
     }
-
-    fn write(value: Self::Value) -> Result<Vec<u8>> {
-        Ok(value.to_vec())
-    }
 });
-heap_struct!(UserString, {
+heap_reader!(UserStringReader, {
     type Index = usize;
     type Value = Vec<u16>;
 
@@ -113,23 +96,92 @@ heap_struct!(UserString, {
 
         Ok(chars)
     }
+});
 
-    fn write(value: Self::Value) -> Result<Vec<u8>> {
-        let final_byte: u8 = if value.iter().any(|u| {
-            let [high, low] = u.to_le_bytes();
-            high != 0 || matches!(low, 0x01..=0x08 | 0x0E..=0x1F | 0x27 | 0x2D | 0x7F)
-        }) {
-            1
-        } else {
-            0
-        };
+pub trait HeapWriter {
+    type Index;
+    type Value: ?Sized;
 
-        write_bytes(
-            &value
-                .into_iter()
-                .flat_map(u16::to_le_bytes)
-                .chain(std::iter::once(final_byte))
-                .collect::<Vec<_>>(),
-        )
-    }
+    fn new() -> Self;
+
+    fn write(&mut self, value: &Self::Value) -> Result<Self::Index>;
+
+    fn into_vec(self) -> Vec<u8>;
+}
+
+macro_rules! heap_writer {
+    ($name:ident, $index:ty, $value:ty, |$s:ident, $n:ident| $e:expr) => {
+        pub struct $name {
+            buffer: Vec<u8>,
+            index_cache: HashMap<u64, <Self as HeapWriter>::Index>,
+        }
+
+        impl HeapWriter for $name {
+            type Index = $index;
+            type Value = $value;
+
+            fn new() -> Self {
+                $name {
+                    buffer: vec![],
+                    index_cache: HashMap::new(),
+                }
+            }
+
+            fn into_vec(self) -> Vec<u8> {
+                self.buffer
+            }
+
+            fn write(&mut $s, $n: &Self::Value) -> Result<Self::Index> {
+                let mut hasher = DefaultHasher::new();
+                $n.hash(&mut hasher);
+                let hash = hasher.finish();
+
+                Ok(match $s.index_cache.get(&hash) {
+                    Some(&i) => i,
+                    None => {
+                        let idx = $e;
+                        $s.index_cache.insert(hash, idx);
+                        idx
+                    }
+                })
+            }
+        }
+    };
+}
+
+heap_writer!(StringsWriter, index::String, str, |self, value| {
+    let start = self.buffer.len();
+    self.buffer.extend(value.as_bytes());
+    self.buffer.push(0u8);
+    index::String(start)
+});
+heap_writer!(BlobWriter, index::Blob, [u8], |self, value| {
+    let start = self.buffer.len();
+    self.buffer.extend(write_bytes(value)?);
+    index::Blob(start)
+});
+heap_writer!(GUIDWriter, index::GUID, [u8; 16], |self, value| {
+    let start = self.buffer.len();
+    self.buffer.extend(value);
+    index::GUID((start + 1) / 16)
+});
+heap_writer!(UserStringWriter, usize, [u16], |self, value| {
+    let final_byte: u8 = if value.iter().any(|u| {
+        let [high, low] = u.to_le_bytes();
+        high != 0 || matches!(low, 0x01..=0x08 | 0x0E..=0x1F | 0x27 | 0x2D | 0x7F)
+    }) {
+        1
+    } else {
+        0
+    };
+
+    let start = self.buffer.len();
+    self.buffer.extend(write_bytes(
+        &value
+            .into_iter()
+            .flat_map(|&u| u.to_le_bytes())
+            .chain(std::iter::once(final_byte))
+            .collect::<Vec<_>>(),
+    )?);
+    start
 });

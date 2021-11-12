@@ -121,7 +121,7 @@ impl<'a> DLL<'a> {
         Ok(&data[..header.size as usize])
     }
 
-    pub fn get_heap<T: Heap<'a>>(&self, name: &'static str) -> Result<T> {
+    pub fn get_heap<T: HeapReader<'a>>(&self, name: &'static str) -> Result<T> {
         Ok(T::new(self.get_stream(name)?))
     }
 
@@ -139,10 +139,10 @@ impl<'a> DLL<'a> {
 
     #[allow(clippy::nonminimal_bool)]
     pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
-        let strings: Strings = self.get_heap("#Strings")?;
-        let blobs: Blob = self.get_heap("#Blob")?;
-        let guids: GUID = self.get_heap("#GUID")?;
-        let userstrings: UserString = self.get_heap("#US")?;
+        let strings: StringsReader = self.get_heap("#Strings")?;
+        let blobs: BlobReader = self.get_heap("#Blob")?;
+        let guids: GUIDReader = self.get_heap("#GUID")?;
+        let userstrings: UserStringReader = self.get_heap("#US")?;
         let mut tables = self.get_logical_metadata()?.tables;
 
         let types_len = tables.type_def.len();
