@@ -5,6 +5,18 @@ mod utils {
             $mask & $val == $val
         };
     }
+
+    macro_rules! build_bitmask {
+        ($target:expr, $($field:ident => $val:literal),+) => {{
+            let mut mask = 0;
+            $(
+                if $target.$field {
+                    mask |= $val;
+                }
+            )+
+            mask
+        }}
+    }
 }
 
 pub mod binary;
@@ -312,7 +324,13 @@ mod tests {
 
     #[test]
     fn write_all() {
-        let v = DLL::write().unwrap();
+        use super::{resolution::Resolution, resolved::module::Module};
+
+        let v = DLL::write(Resolution::new(Module {
+            attributes: vec![],
+            name: "test",
+            mvid: [0; 16]
+        })).unwrap();
 
         std::fs::write("test.dll", v).unwrap();
     }

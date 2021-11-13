@@ -2043,13 +2043,225 @@ impl<'a> DLL<'a> {
     }
 
     // TODO
-    pub fn write() -> Result<Vec<u8>> {
+    pub fn write(res: Resolution) -> Result<Vec<u8>> {
         use object::write::pe::*;
+        use metadata::{table::*};
+        use resolved::{assembly::HashAlgorithm, members::{Accessibility, VtableLayout, BodyFormat, BodyManagement}};
 
         macro_rules! u32 {
             ($e:expr) => {
                 U32Bytes::new(LittleEndian, $e)
             };
+        }
+
+        macro_rules! heap_idx {
+            ($heap:ident, $val:expr) => {
+                $heap.write($val)?
+            }
+        }
+
+        macro_rules! opt_heap {
+            ($heap:ident, $val:expr) => {
+                match $val {
+                    Some(v) => heap_idx!($heap, v),
+                    None => 0.into(),
+                }
+            }
+        }
+
+        let mut strings = StringsWriter::new();
+        let mut blobs = BlobWriter::new();
+        let mut guids = GUIDWriter::new();
+        let mut userstrings = UserStringWriter::new();
+
+        let mut tables = Tables::new();
+
+        if let Some(a) = &res.assembly {
+            tables.assembly.push(Assembly {
+                hash_alg_id: match a.hash_algorithm {
+                    HashAlgorithm::None => 0x0000,
+                    HashAlgorithm::ReservedMD5 => 0x8003,
+                    HashAlgorithm::SHA1 => 0x8004
+                },
+                major_version: a.version.major,
+                minor_version: a.version.minor,
+                build_number: a.version.build,
+                revision_number: a.version.revision,
+                flags: a.flags.to_mask(),
+                public_key: opt_heap!(blobs, a.public_key),
+                name: heap_idx!(strings, a.name),
+                culture: opt_heap!(strings, a.culture)
+            });
+        }
+
+        tables.assembly_ref.reserve(res.assembly_references.len());
+        for a in &res.assembly_references {
+            tables.assembly_ref.push(AssemblyRef {
+                major_version: a.version.major,
+                minor_version: a.version.minor,
+                build_number: a.version.build,
+                revision_number: a.version.revision,
+                flags: a.flags.to_mask(),
+                public_key_or_token: opt_heap!(blobs, a.public_key_or_token),
+                name: heap_idx!(strings, a.name),
+                culture: opt_heap!(strings, a.culture),
+                hash_value: opt_heap!(blobs, a.hash_value)
+            });
+        }
+        
+        tables.type_def.reserve(res.type_definitions.len());
+        for (idx, t) in res.type_definitions.iter().enumerate() {
+            if let Some(enc) = t.encloser {
+                tables.nested_class.push(NestedClass {
+                    nested_class: idx.into(),
+                    enclosing_class: enc.0.into(),
+                });
+            }
+            
+            tables.type_def.push(TypeDef {
+                flags: {
+                    let mut f = t.flags.to_mask();
+                    if t.security.is_some() {
+                        f |= 0x0004_0000;
+                    }
+                    f
+                },
+                type_name: heap_idx!(strings, t.name),
+                type_namespace: opt_heap!(strings, t.namespace),
+                extends: todo!(),
+                field_list: if t.fields.is_empty() { 0 } else { tables.field.len() + 1 }.into(),
+                method_list: if t.methods.is_empty() { 0 } else { tables.method_def.len() + 1 }.into()
+            });
+
+            // TODO: security
+            
+            tables.field.reserve(t.fields.len());
+            for f in &t.fields {
+                tables.field.push(Field {
+                    flags: {
+                        let mut mask = build_bitmask!(f,
+                            static_member => 0x0010,
+                            init_only => 0x0020,
+                            literal => 0x0040,
+                            not_serialized => 0x0080,
+                            special_name => 0x0200,
+                            runtime_special_name => 0x0400);
+                        mask |= match f.accessibility {
+                            Accessibility::CompilerControlled => 0x0,
+                            Accessibility::Access(resolved::Accessibility::Private) => 0x1,
+                            Accessibility::Access(resolved::Accessibility::FamilyANDAssembly) => 0x2,
+                            Accessibility::Access(resolved::Accessibility::Assembly) => 0x3,
+                            Accessibility::Access(resolved::Accessibility::Family) => 0x4,
+                            Accessibility::Access(resolved::Accessibility::FamilyORAssembly) => 0x5,
+                            Accessibility::Access(resolved::Accessibility::Public) => 0x6
+                        };
+                        if f.pinvoke.is_some() {
+                            mask |= 0x2000;
+                        }
+                        if f.marshal.is_some() {
+                            mask |= 0x1000;
+                        }
+                        if f.default.is_some() {
+                            mask |= 0x8000;
+                        }
+                        if f.start_of_initial_value.is_some() {
+                            mask |= 0x0100;
+                        }
+                        mask
+                    },
+                    name: heap_idx!(strings, f.name),
+                    signature: todo!()
+                });
+
+                // TODO: pinvoke, marshal, default, rva
+            }
+            
+            tables.method_def.reserve(t.methods.len());
+            for m in &t.methods {
+                tables.method_def.push(MethodDef {
+                    rva: todo!(),
+                    impl_flags: {
+                        let mut mask = build_bitmask!(m,
+                            forward_ref => 0x0010,
+                            preserve_sig => 0x0080,
+                            synchronized => 0x0020,
+                            no_inlining => 0x0008,
+                            no_optimization => 0x0040);
+                        mask |= match m.body_format {
+                            BodyFormat::IL => 0x0,
+                            BodyFormat::Native => 0x1,
+                            BodyFormat::Runtime => 0x3
+                        };
+                        mask |= match m.body_management {
+                            BodyManagement::Unmanaged => 0x4,
+                            BodyManagement::Managed => 0x0
+                        };
+                        mask
+                    },
+                    flags: {
+                        let mut mask = build_bitmask!(m,
+                            static_member => 0x0010,
+                            sealed => 0x0020,
+                            virtual_member => 0x0040,
+                            hide_by_sig => 0x0080,
+                            strict => 0x0200,
+                            abstract_member => 0x0400,
+                            special_name => 0x0800,
+                            runtime_special_name => 0x1000,
+                            require_sec_object => 0x8000);
+                        mask |= match m.accessibility {
+                            Accessibility::CompilerControlled => 0x0,
+                            Accessibility::Access(resolved::Accessibility::Private) => 0x1,
+                            Accessibility::Access(resolved::Accessibility::FamilyANDAssembly) => 0x2,
+                            Accessibility::Access(resolved::Accessibility::Assembly) => 0x3,
+                            Accessibility::Access(resolved::Accessibility::Family) => 0x4,
+                            Accessibility::Access(resolved::Accessibility::FamilyORAssembly) => 0x5,
+                            Accessibility::Access(resolved::Accessibility::Public) => 0x6
+                        };
+                        mask |= match m.vtable_layout {
+                            VtableLayout::ReuseSlot => 0x0000,
+                            VtableLayout::NewSlot => 0x0100
+                        };
+                        if m.pinvoke.is_some() {
+                            mask |= 0x2000;
+                        }
+                        if m.security.is_some() {
+                            mask |= 0x4000;
+                        }
+                        mask
+                    },
+                    name: heap_idx!(strings, m.name),
+                    signature: todo!(),
+                    param_list: if m.parameter_metadata.is_empty() { 0 } else { tables.param.len() + 1 }.into()
+                });
+
+                // TODO: pinvoke, security
+
+                tables.param.reserve(m.parameter_metadata.len());
+                for (idx, p) in m.parameter_metadata.iter().enumerate() {
+                    if let Some(p) = p {
+                        tables.param.push(Param {
+                            flags: {
+                                let mut mask = build_bitmask!(p,
+                                    is_in => 0x0001,
+                                    is_out => 0x0002,
+                                    optional => 0x0010);
+                                if p.default.is_some() {
+                                    mask |= 0x1000;
+                                }
+                                if p.marshal.is_some() {
+                                    mask |= 0x2000;
+                                }
+                                mask
+                            },
+                            sequence: idx as u16,
+                            name: heap_idx!(strings, p.name)
+                        });
+
+                        // TODO: default, marshal
+                    }
+                }
+            }
         }
 
         // PE characteristics

@@ -17,6 +17,14 @@ impl Flags {
             enable_jit_tracking: check_bitmask!(bitmask, 0x8000),
         }
     }
+
+    pub fn to_mask(self) -> u32 {
+        build_bitmask!(self,
+            has_public_key => 0x0001,
+            retargetable => 0x0100,
+            disable_jit_optimizer => 0x4000,
+            enable_jit_tracking => 0x8000)
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

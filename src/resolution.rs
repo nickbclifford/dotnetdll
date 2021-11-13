@@ -17,6 +17,25 @@ pub struct Resolution<'a> {
     pub type_references: Vec<types::ExternalTypeReference<'a>>,
 }
 
+impl Resolution<'_> {
+    pub fn new(module: module::Module) -> Resolution {
+        Resolution {
+            assembly: None,
+            assembly_references: vec![],
+            entry_point: None,
+            exported_types: vec![],
+            field_references: vec![],
+            files: vec![],
+            manifest_resources: vec![],
+            method_references: vec![],
+            module,
+            module_references: vec![],
+            type_definitions: vec![],
+            type_references: vec![]
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum EntryPoint {
     Method(MethodIndex),

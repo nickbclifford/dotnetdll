@@ -109,8 +109,14 @@ pub trait HeapWriter {
     fn into_vec(self) -> Vec<u8>;
 }
 
+fn hash(val: impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    val.hash(&mut hasher);
+    hasher.finish()
+}
+
 macro_rules! heap_writer {
-    ($name:ident, $index:ty, $value:ty, |$s:ident, $n:ident| $e:expr) => {
+    ($name:ident, ($buf:expr, $map:expr), $index:ty, $value:ty, |$s:ident, $n:ident| $e:expr) => {
         pub struct $name {
             buffer: Vec<u8>,
             index_cache: HashMap<u64, <Self as HeapWriter>::Index>,
@@ -122,8 +128,8 @@ macro_rules! heap_writer {
 
             fn new() -> Self {
                 $name {
-                    buffer: vec![],
-                    index_cache: HashMap::new(),
+                    buffer: $buf,
+                    index_cache: $map,
                 }
             }
 
@@ -132,15 +138,13 @@ macro_rules! heap_writer {
             }
 
             fn write(&mut $s, $n: &Self::Value) -> Result<Self::Index> {
-                let mut hasher = DefaultHasher::new();
-                $n.hash(&mut hasher);
-                let hash = hasher.finish();
+                let h = hash($n);
 
-                Ok(match $s.index_cache.get(&hash) {
+                Ok(match $s.index_cache.get(&h) {
                     Some(&i) => i,
                     None => {
                         let idx = $e;
-                        $s.index_cache.insert(hash, idx);
+                        $s.index_cache.insert(h, idx);
                         idx
                     }
                 })
@@ -149,39 +153,63 @@ macro_rules! heap_writer {
     };
 }
 
-heap_writer!(StringsWriter, index::String, str, |self, value| {
-    let start = self.buffer.len();
-    self.buffer.extend(value.as_bytes());
-    self.buffer.push(0u8);
-    index::String(start)
-});
-heap_writer!(BlobWriter, index::Blob, [u8], |self, value| {
-    let start = self.buffer.len();
-    self.buffer.extend(write_bytes(value)?);
-    index::Blob(start)
-});
-heap_writer!(GUIDWriter, index::GUID, [u8; 16], |self, value| {
-    let start = self.buffer.len();
-    self.buffer.extend(value);
-    index::GUID((start + 1) / 16)
-});
-heap_writer!(UserStringWriter, usize, [u16], |self, value| {
-    let final_byte: u8 = if value.iter().any(|u| {
-        let [high, low] = u.to_le_bytes();
-        high != 0 || matches!(low, 0x01..=0x08 | 0x0E..=0x1F | 0x27 | 0x2D | 0x7F)
-    }) {
-        1
-    } else {
-        0
-    };
+heap_writer!(
+    StringsWriter,
+    (vec![0], HashMap::from([(hash(""), 0.into())])),
+    index::String,
+    str,
+    |self, value| {
+        let start = self.buffer.len();
+        self.buffer.extend(value.as_bytes());
+        self.buffer.push(0u8);
+        index::String(start)
+    }
+);
+heap_writer!(
+    BlobWriter,
+    (vec![0], HashMap::from([(hash(&[] as &Self::Value), 0.into())])),
+    index::Blob,
+    [u8],
+    |self, value| {
+        let start = self.buffer.len();
+        self.buffer.extend(write_bytes(value)?);
+        index::Blob(start)
+    }
+);
+heap_writer!(
+    GUIDWriter,
+    (vec![], HashMap::new()),
+    index::GUID,
+    [u8; 16],
+    |self, value| {
+        let start = self.buffer.len();
+        self.buffer.extend(value);
+        index::GUID((start + 1) / 16)
+    }
+);
+heap_writer!(
+    UserStringWriter,
+    (vec![0], HashMap::from([(hash(&[] as &Self::Value), 0)])),
+    usize,
+    [u16],
+    |self, value| {
+        let final_byte: u8 = if value.iter().any(|u| {
+            let [high, low] = u.to_le_bytes();
+            high != 0 || matches!(low, 0x01..=0x08 | 0x0E..=0x1F | 0x27 | 0x2D | 0x7F)
+        }) {
+            1
+        } else {
+            0
+        };
 
-    let start = self.buffer.len();
-    self.buffer.extend(write_bytes(
-        &value
-            .into_iter()
-            .flat_map(|&u| u.to_le_bytes())
-            .chain(std::iter::once(final_byte))
-            .collect::<Vec<_>>(),
-    )?);
-    start
-});
+        let start = self.buffer.len();
+        self.buffer.extend(write_bytes(
+            &value
+                .into_iter()
+                .flat_map(|&u| u.to_le_bytes())
+                .chain(std::iter::once(final_byte))
+                .collect::<Vec<_>>(),
+        )?);
+        start
+    }
+);

@@ -134,6 +134,11 @@ macro_rules! heap_index {
                 Ok(*offset)
             }
         }
+        impl From<usize> for $name {
+            fn from(i: usize) -> Self {
+                $name(i)
+            }
+        }
 
         impl $name {
             pub fn is_null(&self) -> bool {
@@ -187,6 +192,11 @@ impl<T: Eq> PartialOrd for Simple<T> {
 impl<T: Eq> Ord for Simple<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)
+    }
+}
+impl<T> From<usize> for Simple<T> {
+    fn from(val: usize) -> Self {
+        Simple(val, PhantomData)
     }
 }
 

@@ -103,9 +103,46 @@ impl TypeFlags {
                 0x30000 => StringFormatting::Custom(bitmask & 0x00C0_0000),
                 _ => unreachable!(),
             },
-            before_field_init: check_bitmask!(bitmask, 0x0100_0000),
+            before_field_init: check_bitmask!(bitmask, 0x0010_0000),
             runtime_special_name: check_bitmask!(bitmask, 0x800),
         }
+    }
+
+    pub fn to_mask(self) -> u32 {
+        let mut mask = build_bitmask!(self,
+            abstract_type => 0x80,
+            sealed => 0x100,
+            special_name => 0x400,
+            imported => 0x1000,
+            serializable => 0x2000,
+            before_field_init => 0x0010_0000,
+            runtime_special_name => 0x800);
+        mask |= match self.accessibility {
+            Accessibility::NotPublic => 0x0,
+            Accessibility::Public => 0x1,
+            Accessibility::Nested(super::Accessibility::Public) => 0x2,
+            Accessibility::Nested(super::Accessibility::Private) => 0x3,
+            Accessibility::Nested(super::Accessibility::Family) => 0x4,
+            Accessibility::Nested(super::Accessibility::Assembly) => 0x5,
+            Accessibility::Nested(super::Accessibility::FamilyANDAssembly) => 0x6,
+            Accessibility::Nested(super::Accessibility::FamilyORAssembly) => 0x7,
+        };
+        mask |= match self.layout {
+            Layout::Automatic => 0x00,
+            Layout::Sequential(_) => 0x08,
+            Layout::Explicit(_) => 0x10,
+        };
+        mask |= match self.kind {
+            Kind::Class => 0x00,
+            Kind::Interface => 0x20,
+        };
+        mask |= match self.string_formatting {
+            StringFormatting::ANSI => 0x00000,
+            StringFormatting::Unicode => 0x10000,
+            StringFormatting::Automatic => 0x20000,
+            StringFormatting::Custom(val) => 0x30000 | (val & 0x00C0_0000),
+        };
+        mask
     }
 }
 
