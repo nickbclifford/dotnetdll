@@ -5,9 +5,13 @@ use std::{
     hash::*,
 };
 
+// TODO: seal these traits
+
 pub trait HeapReader<'a> {
     type Index;
     type Value;
+
+    const NAME: &'static str;
 
     fn new(bytes: &'a [u8]) -> Self;
 
@@ -15,19 +19,26 @@ pub trait HeapReader<'a> {
 }
 
 macro_rules! heap_reader {
-    ($name:ident, { $($i:item)* }) => {
+    ($name:ident, $heap:literal, $index:ty, $value:ty, |$s:ident, $val:ident| $e:expr) => {
         pub struct $name<'a> {
             bytes: &'a [u8],
         }
 
         impl<'a> HeapReader<'a> for $name<'a> {
+            type Index = $index;
+            type Value = $value;
+
+            const NAME: &'static str = $heap;
+
             fn new(bytes: &'a [u8]) -> $name<'a> {
                 $name {
                     bytes: &bytes,
                 }
             }
 
-            $($i)*
+            fn at_index(&$s, $val: Self::Index) -> Result<Self::Value> {
+                $e
+            }
         }
     };
 }
@@ -39,6 +50,34 @@ fn read_bytes(bytes: &[u8], idx: usize) -> Result<&[u8]> {
 
     bytes.pread_with(offset, size as usize)
 }
+
+heap_reader!(
+    StringsReader,
+    "#Strings",
+    index::String,
+    &'a str,
+    |self, idx| self.bytes.pread_with(idx.0, StrCtx::Delimiter(0))
+);
+heap_reader!(BlobReader, "#Blob", index::Blob, &'a [u8], |self, idx| {
+    read_bytes(self.bytes, idx.0)
+});
+heap_reader!(GUIDReader, "#GUID", index::GUID, [u8; 16], |self, idx| {
+    let mut buf = [0_u8; 16];
+    self.bytes
+        .gread_inout_with(&mut ((idx.0 - 1) * 16), &mut buf, scroll::LE)?;
+    Ok(buf)
+});
+heap_reader!(UserStringReader, "#US", usize, Vec<u16>, |self, idx| {
+    let bytes = read_bytes(self.bytes, idx)?;
+
+    let num_utf16 = (bytes.len() - 1) / 2;
+    let offset = &mut 0;
+    let chars = (0..num_utf16)
+        .map(|_| bytes.gread_with::<u16>(offset, scroll::LE))
+        .collect::<Result<_>>()?;
+
+    Ok(chars)
+});
 
 fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     let len = bytes.len();
@@ -53,50 +92,6 @@ fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
 
     Ok(buf)
 }
-
-heap_reader!(StringsReader, {
-    type Index = index::String;
-    type Value = &'a str;
-
-    fn at_index(&self, index::String(idx): Self::Index) -> Result<Self::Value> {
-        self.bytes.pread_with(idx, StrCtx::Delimiter(0))
-    }
-});
-heap_reader!(BlobReader, {
-    type Index = index::Blob;
-    type Value = &'a [u8];
-
-    fn at_index(&self, index::Blob(idx): Self::Index) -> Result<Self::Value> {
-        read_bytes(self.bytes, idx)
-    }
-});
-heap_reader!(GUIDReader, {
-    type Index = index::GUID;
-    type Value = [u8; 16];
-
-    fn at_index(&self, index::GUID(idx): Self::Index) -> Result<Self::Value> {
-        let mut buf = [0_u8; 16];
-        self.bytes
-            .gread_inout_with(&mut ((idx - 1) * 16), &mut buf, scroll::LE)?;
-        Ok(buf)
-    }
-});
-heap_reader!(UserStringReader, {
-    type Index = usize;
-    type Value = Vec<u16>;
-
-    fn at_index(&self, idx: Self::Index) -> Result<Self::Value> {
-        let bytes = read_bytes(self.bytes, idx)?;
-
-        let num_utf16 = (bytes.len() - 1) / 2;
-        let offset = &mut 0;
-        let chars = (0..num_utf16)
-            .map(|_| bytes.gread_with::<u16>(offset, scroll::LE))
-            .collect::<Result<_>>()?;
-
-        Ok(chars)
-    }
-});
 
 pub trait HeapWriter {
     type Index;
@@ -167,7 +162,10 @@ heap_writer!(
 );
 heap_writer!(
     BlobWriter,
-    (vec![0], HashMap::from([(hash(&[] as &Self::Value), 0.into())])),
+    (
+        vec![0],
+        HashMap::from([(hash(&[] as &Self::Value), 0.into())])
+    ),
     index::Blob,
     [u8],
     |self, value| {

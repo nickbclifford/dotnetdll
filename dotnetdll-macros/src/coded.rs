@@ -1,8 +1,8 @@
 use proc_macro2::Ident;
 use quote::quote;
-use syn::{braced, Result, Token};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
+use syn::{braced, Result, Token};
 
 pub struct CodedIndex {
     name: Ident,

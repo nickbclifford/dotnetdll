@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{braced, Field, Fields, Result, Token, Variant};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
+use syn::{braced, Field, Fields, Result, Token, Variant};
 
 // separate prefix and normal instruction declarations
 pub struct Instructions {
@@ -363,8 +363,8 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     let nums = [
         "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     ]
-        .iter()
-        .map(|n| Ident::new(n, Span::call_site()));
+    .iter()
+    .map(|n| Ident::new(n, Span::call_site()));
 
     quote! {
         use scroll::{Pread, Pwrite};

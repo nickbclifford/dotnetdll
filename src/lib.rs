@@ -189,7 +189,7 @@ mod tests {
         }
 
         let mut files = vec![];
-        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/5.0.8")? {
+        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.0")? {
             let path = p?.path();
             if matches!(path.extension(), Some(o) if o == "dll") {
                 files.push(std::fs::read(path)?);
@@ -242,7 +242,9 @@ mod tests {
 
     #[test]
     fn headers_write() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/sdk/5.0.205/System.Text.Json.dll")?;
+        let file = std::fs::read(
+            "/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.0/System.Text.Json.dll",
+        )?;
         let dll = DLL::parse(&file)?;
         let meta = dll.get_logical_metadata()?;
 
@@ -329,8 +331,9 @@ mod tests {
         let v = DLL::write(&Resolution::new(Module {
             attributes: vec![],
             name: "test",
-            mvid: [0; 16]
-        })).unwrap();
+            mvid: [0; 16],
+        }))
+        .unwrap();
 
         std::fs::write("test.dll", v).unwrap();
     }

@@ -110,19 +110,20 @@ impl<'a> DLL<'a> {
             .ok_or(Other("bad stream offset"))
     }
 
-    fn get_stream(&self, name: &'static str) -> Result<&'a [u8]> {
+    fn get_stream(&self, name: &'static str) -> Result<Option<&'a [u8]>> {
         let meta = self.get_cli_metadata()?;
-        let header = meta
-            .stream_headers
-            .iter()
-            .find(|h| h.name == name)
-            .ok_or(Other("unable to find stream"))?;
+        let header = match meta.stream_headers.iter().find(|h| h.name == name) {
+            Some(h) => h,
+            None => return Ok(None),
+        };
         let data = self.raw_rva(self.cli.metadata.rva + header.offset)?;
-        Ok(&data[..header.size as usize])
+        Ok(Some(&data[..header.size as usize]))
     }
 
-    pub fn get_heap<T: HeapReader<'a>>(&self, name: &'static str) -> Result<T> {
-        Ok(T::new(self.get_stream(name)?))
+    pub fn get_heap<T: HeapReader<'a>>(&self) -> Result<T> {
+        // heap names from the traits are known to be good
+        // so if we can't find them, assume they are empty
+        Ok(T::new(self.get_stream(T::NAME)?.unwrap_or(&[])))
     }
 
     pub fn get_cli_metadata(&self) -> Result<Metadata<'a>> {
@@ -130,7 +131,10 @@ impl<'a> DLL<'a> {
     }
 
     pub fn get_logical_metadata(&self) -> Result<metadata::header::Header> {
-        self.get_stream("#~")?.pread(0).map_err(CLI)
+        self.get_stream("#~")?
+            .ok_or(Other("unable to find metadata stream"))?
+            .pread(0)
+            .map_err(CLI)
     }
 
     pub fn get_method(&self, def: &metadata::table::MethodDef) -> Result<method::Method> {
@@ -139,16 +143,16 @@ impl<'a> DLL<'a> {
 
     #[allow(clippy::nonminimal_bool)]
     pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
-        let strings: StringsReader = self.get_heap("#Strings")?;
-        let blobs: BlobReader = self.get_heap("#Blob")?;
-        let guids: GUIDReader = self.get_heap("#GUID")?;
-        let userstrings: UserStringReader = self.get_heap("#US")?;
+        let strings: StringsReader = self.get_heap()?;
+        let blobs: BlobReader = self.get_heap()?;
+        let guids: GUIDReader = self.get_heap()?;
+        let userstrings: UserStringReader = self.get_heap()?;
         let mut tables = self.get_logical_metadata()?.tables;
 
         let types_len = tables.type_def.len();
         let type_ref_len = tables.type_ref.len();
 
-        let ctx = convert::Context {
+        let ctx = convert::read::Context {
             def_len: types_len,
             ref_len: type_ref_len,
             specs: &tables.type_spec,
@@ -305,7 +309,7 @@ impl<'a> DLL<'a> {
                     extends: if t.extends.is_null() {
                         None
                     } else {
-                        Some(convert::member_type_source(t.extends, &ctx)?)
+                        Some(convert::read::member_type_source(t.extends, &ctx)?)
                     },
                     implements: vec![],
                     generic_parameters: vec![],
@@ -585,8 +589,10 @@ impl<'a> DLL<'a> {
                 let idx = i.class.0 - 1;
                 match types.get_mut(idx) {
                     Some(t) => {
-                        t.implements
-                            .push((vec![], convert::member_type_source(i.interface, &ctx)?));
+                        t.implements.push((
+                            vec![],
+                            convert::read::member_type_source(i.interface, &ctx)?,
+                        ));
 
                         Ok((idx, t.implements.len() - 1))
                     }
@@ -643,9 +649,9 @@ impl<'a> DLL<'a> {
                     name: heap_idx!(strings, f.name),
                     type_modifiers: cmod
                         .into_iter()
-                        .map(|c| convert::custom_modifier(c, &ctx))
+                        .map(|c| convert::read::custom_modifier(c, &ctx))
                         .collect::<Result<_>>()?,
-                    return_type: convert::member_type_sig(t, &ctx)?,
+                    return_type: convert::read::member_type_sig(t, &ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
                     init_only: check_bitmask!(f.flags, 0x20),
@@ -716,7 +722,8 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, m.name);
 
-                let sig = convert::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+                let sig =
+                    convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
                 let num_method_params = sig.parameters.len();
 
                 parent_methods.push(Method {
@@ -936,8 +943,10 @@ impl<'a> DLL<'a> {
                             .enumerate()
                             .filter_map(|(c_idx, c)| {
                                 if c.owner.0 - 1 == idx {
-                                    let (cmod, ty) =
-                                        filter_map_try!(convert::$convert_meth(c.constraint, &ctx));
+                                    let (cmod, ty) = filter_map_try!(convert::read::$convert_meth(
+                                        c.constraint,
+                                        &ctx
+                                    ));
                                     Some(Ok((
                                         c_idx,
                                         GenericConstraint {
@@ -1095,7 +1104,7 @@ impl<'a> DLL<'a> {
                     getter: None,
                     setter: None,
                     other: vec![],
-                    property_type: convert::parameter(sig.property_type, &ctx)?,
+                    property_type: convert::read::parameter(sig.property_type, &ctx)?,
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                     default: None,
@@ -1264,7 +1273,7 @@ impl<'a> DLL<'a> {
                 parent_events.push(Event {
                     attributes: vec![],
                     name,
-                    delegate_type: convert::member_type_idx(event.event_type, &ctx)?,
+                    delegate_type: convert::read::member_type_idx(event.event_type, &ctx)?,
                     add_listener: get_listener!("add", 0x8, EventAdd),
                     remove_listener: get_listener!("remove", 0x10, EventRemove),
                     raise_event: None,
@@ -1368,13 +1377,13 @@ impl<'a> DLL<'a> {
 
                 let parent = match r.class {
                     MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
                     )),
                     MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
                     )),
                     MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
@@ -1396,7 +1405,10 @@ impl<'a> DLL<'a> {
                         attributes: vec![],
                         parent,
                         name,
-                        return_type: filter_map_try!(convert::member_type_sig(field_sig.1, &ctx)),
+                        return_type: filter_map_try!(convert::read::member_type_sig(
+                            field_sig.1,
+                            &ctx
+                        )),
                     },
                 )))
             })
@@ -1426,24 +1438,24 @@ impl<'a> DLL<'a> {
                 };
 
                 let mut signature =
-                    filter_map_try!(convert::managed_method(ref_sig.method_def, &ctx));
+                    filter_map_try!(convert::read::managed_method(ref_sig.method_def, &ctx));
                 if signature.calling_convention == CallingConvention::Vararg {
                     signature.varargs = Some(filter_map_try!(ref_sig
                         .varargs
                         .into_iter()
-                        .map(|p| convert::parameter(p, &ctx))
+                        .map(|p| convert::read::parameter(p, &ctx))
                         .collect::<Result<_>>()));
                 }
 
                 let parent = match r.class {
                     MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
                     )),
                     MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
                     )),
                     MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
+                        convert::read::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
@@ -1492,7 +1504,7 @@ impl<'a> DLL<'a> {
             .map(|(current_idx, (orig_idx, r))| (r, (orig_idx, current_idx)))
             .unzip();
 
-        let m_ctx = convert::MethodContext {
+        let m_ctx = convert::read::MethodContext {
             field_map: &field_map,
             field_indices: &fields,
             method_specs: &tables.method_spec,
@@ -1508,8 +1520,8 @@ impl<'a> DLL<'a> {
             let idx = i.class.0 - 1;
             match types.get_mut(idx) {
                 Some(t) => t.overrides.push(MethodOverride {
-                    implementation: convert::user_method(i.method_body, &m_ctx)?,
-                    declaration: convert::user_method(i.method_declaration, &m_ctx)?,
+                    implementation: convert::read::user_method(i.method_body, &m_ctx)?,
+                    declaration: convert::read::user_method(i.method_declaration, &m_ctx)?,
                 }),
                 None => throw!("invalid parent type index {} for method override", idx),
             }
@@ -1919,11 +1931,15 @@ impl<'a> DLL<'a> {
                                             } => LocalVariable::Variable {
                                                 custom_modifiers: custom_modifiers
                                                     .into_iter()
-                                                    .map(|c| convert::custom_modifier(c, &ctx))
+                                                    .map(|c| {
+                                                        convert::read::custom_modifier(c, &ctx)
+                                                    })
                                                     .collect::<Result<_>>()?,
                                                 pinned,
                                                 by_ref,
-                                                var_type: convert::method_type_sig(var_type, &ctx)?,
+                                                var_type: convert::read::method_type_sig(
+                                                    var_type, &ctx,
+                                                )?,
                                             },
                                         })
                                     })
@@ -1987,7 +2003,7 @@ impl<'a> DLL<'a> {
 
                                     let kind = match h.flags {
                                         0 => ExceptionKind::TypedException(
-                                            convert::type_token(
+                                            convert::read::type_token(
                                                 h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
                                                 &ctx
                                             )?
@@ -2022,7 +2038,9 @@ impl<'a> DLL<'a> {
                 let instrs = raw_instrs
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, i)| convert::instruction(i, idx, &instr_offsets, &ctx, &m_ctx))
+                    .map(|(idx, i)| {
+                        convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx)
+                    })
                     .collect::<Result<_>>()?;
 
                 res[methods[idx]].body = Some(Method {

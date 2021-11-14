@@ -33,7 +33,7 @@ impl Resolution<'_> {
             module,
             module_references: vec![],
             type_definitions: vec![],
-            type_references: vec![]
+            type_references: vec![],
         }
     }
 }

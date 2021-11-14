@@ -1,4 +1,4 @@
-use super::{
+use crate::{
     binary::{
         heap::{BlobReader, HeapReader, UserStringReader},
         il,
