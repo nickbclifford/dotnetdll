@@ -36,6 +36,19 @@ impl Display for Accessibility {
         }
     }
 }
+impl Accessibility {
+    pub fn to_mask(self) -> u16 {
+        match self {
+            Accessibility::CompilerControlled => 0x0,
+            Accessibility::Access(super::Accessibility::Private) => 0x1,
+            Accessibility::Access(super::Accessibility::FamilyANDAssembly) => 0x2,
+            Accessibility::Access(super::Accessibility::Assembly) => 0x3,
+            Accessibility::Access(super::Accessibility::Family) => 0x4,
+            Accessibility::Access(super::Accessibility::FamilyORAssembly) => 0x5,
+            Accessibility::Access(super::Accessibility::Public) => 0x6,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Field<'a> {

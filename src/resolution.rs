@@ -1,6 +1,8 @@
 use super::resolved::*;
 use std::ops::{Index, IndexMut};
 
+// TODO: how will consumers get indices when writing from scratch?
+
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
     pub assembly: Option<assembly::Assembly<'a>>,

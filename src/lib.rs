@@ -326,7 +326,7 @@ mod tests {
     fn write_all() {
         use super::{resolution::Resolution, resolved::module::Module};
 
-        let v = DLL::write(Resolution::new(Module {
+        let v = DLL::write(&Resolution::new(Module {
             attributes: vec![],
             name: "test",
             mvid: [0; 16]

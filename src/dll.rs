@@ -1403,9 +1403,7 @@ impl<'a> DLL<'a> {
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .enumerate()
-            .map(|(current_idx, (orig_idx, r))| {
-                (r, (orig_idx, current_idx))
-            })
+            .map(|(current_idx, (orig_idx, r))| (r, (orig_idx, current_idx)))
             .unzip();
 
         debug!("method refs");
@@ -1491,9 +1489,7 @@ impl<'a> DLL<'a> {
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .enumerate()
-            .map(|(current_idx, (orig_idx, r))| {
-                (r, (orig_idx, current_idx))
-            })
+            .map(|(current_idx, (orig_idx, r))| (r, (orig_idx, current_idx)))
             .unzip();
 
         let m_ctx = convert::MethodContext {
@@ -2043,10 +2039,14 @@ impl<'a> DLL<'a> {
     }
 
     // TODO
-    pub fn write(res: Resolution) -> Result<Vec<u8>> {
+    pub fn write(res: &Resolution) -> Result<Vec<u8>> {
+        use metadata::table::*;
         use object::write::pe::*;
-        use metadata::{table::*};
-        use resolved::{assembly::HashAlgorithm, members::{Accessibility, VtableLayout, BodyFormat, BodyManagement}};
+        use resolved::{
+            assembly::HashAlgorithm,
+            members::{BodyFormat, BodyManagement, VtableLayout},
+            types::Layout,
+        };
 
         macro_rules! u32 {
             ($e:expr) => {
@@ -2057,7 +2057,7 @@ impl<'a> DLL<'a> {
         macro_rules! heap_idx {
             ($heap:ident, $val:expr) => {
                 $heap.write($val)?
-            }
+            };
         }
 
         macro_rules! opt_heap {
@@ -2066,7 +2066,7 @@ impl<'a> DLL<'a> {
                     Some(v) => heap_idx!($heap, v),
                     None => 0.into(),
                 }
-            }
+            };
         }
 
         let mut strings = StringsWriter::new();
@@ -2076,12 +2076,14 @@ impl<'a> DLL<'a> {
 
         let mut tables = Tables::new();
 
+        // TODO: all attributes
+
         if let Some(a) = &res.assembly {
             tables.assembly.push(Assembly {
                 hash_alg_id: match a.hash_algorithm {
                     HashAlgorithm::None => 0x0000,
                     HashAlgorithm::ReservedMD5 => 0x8003,
-                    HashAlgorithm::SHA1 => 0x8004
+                    HashAlgorithm::SHA1 => 0x8004,
                 },
                 major_version: a.version.major,
                 minor_version: a.version.minor,
@@ -2090,7 +2092,7 @@ impl<'a> DLL<'a> {
                 flags: a.flags.to_mask(),
                 public_key: opt_heap!(blobs, a.public_key),
                 name: heap_idx!(strings, a.name),
-                culture: opt_heap!(strings, a.culture)
+                culture: opt_heap!(strings, a.culture),
             });
         }
 
@@ -2105,19 +2107,36 @@ impl<'a> DLL<'a> {
                 public_key_or_token: opt_heap!(blobs, a.public_key_or_token),
                 name: heap_idx!(strings, a.name),
                 culture: opt_heap!(strings, a.culture),
-                hash_value: opt_heap!(blobs, a.hash_value)
+                hash_value: opt_heap!(blobs, a.hash_value),
             });
         }
-        
+
+        tables.file.reserve(res.files.len());
+        for f in &res.files {
+            tables.file.push(File {
+                flags: build_bitmask!(f, has_metadata => 0x0001),
+                name: heap_idx!(strings, f.name),
+                hash_value: heap_idx!(blobs, f.hash_value),
+            });
+        }
+
+        tables.module.push(Module {
+            generation: 0,
+            name: heap_idx!(strings, res.module.name),
+            mvid: heap_idx!(guids, &res.module.mvid),
+            enc_id: 0.into(),
+            enc_base_id: 0.into(),
+        });
+
+        tables.module_ref.reserve(res.module_references.len());
+        for r in &res.module_references {
+            tables.module_ref.push(ModuleRef {
+                name: heap_idx!(strings, r.name),
+            });
+        }
+
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
-            if let Some(enc) = t.encloser {
-                tables.nested_class.push(NestedClass {
-                    nested_class: idx.into(),
-                    enclosing_class: enc.0.into(),
-                });
-            }
-            
             tables.type_def.push(TypeDef {
                 flags: {
                     let mut f = t.flags.to_mask();
@@ -2129,12 +2148,47 @@ impl<'a> DLL<'a> {
                 type_name: heap_idx!(strings, t.name),
                 type_namespace: opt_heap!(strings, t.namespace),
                 extends: todo!(),
-                field_list: if t.fields.is_empty() { 0 } else { tables.field.len() + 1 }.into(),
-                method_list: if t.methods.is_empty() { 0 } else { tables.method_def.len() + 1 }.into()
+                field_list: if t.fields.is_empty() {
+                    0
+                } else {
+                    tables.field.len() + 1
+                }
+                .into(),
+                method_list: if t.methods.is_empty() {
+                    0
+                } else {
+                    tables.method_def.len() + 1
+                }
+                .into(),
             });
 
-            // TODO: security
-            
+            // TODO: security, implements, overrides, generics
+
+            match t.flags.layout {
+                Layout::Sequential(Some(s)) => {
+                    tables.class_layout.push(ClassLayout {
+                        packing_size: s.packing_size as u16,
+                        class_size: s.class_size as u32,
+                        parent: idx.into(),
+                    });
+                }
+                Layout::Explicit(Some(e)) => {
+                    tables.class_layout.push(ClassLayout {
+                        packing_size: 0,
+                        class_size: e.class_size as u32,
+                        parent: idx.into(),
+                    });
+                }
+                _ => {}
+            }
+
+            if let Some(enc) = t.encloser {
+                tables.nested_class.push(NestedClass {
+                    nested_class: idx.into(),
+                    enclosing_class: enc.0.into(),
+                });
+            }
+
             tables.field.reserve(t.fields.len());
             for f in &t.fields {
                 tables.field.push(Field {
@@ -2146,15 +2200,7 @@ impl<'a> DLL<'a> {
                             not_serialized => 0x0080,
                             special_name => 0x0200,
                             runtime_special_name => 0x0400);
-                        mask |= match f.accessibility {
-                            Accessibility::CompilerControlled => 0x0,
-                            Accessibility::Access(resolved::Accessibility::Private) => 0x1,
-                            Accessibility::Access(resolved::Accessibility::FamilyANDAssembly) => 0x2,
-                            Accessibility::Access(resolved::Accessibility::Assembly) => 0x3,
-                            Accessibility::Access(resolved::Accessibility::Family) => 0x4,
-                            Accessibility::Access(resolved::Accessibility::FamilyORAssembly) => 0x5,
-                            Accessibility::Access(resolved::Accessibility::Public) => 0x6
-                        };
+                        mask |= f.accessibility.to_mask();
                         if f.pinvoke.is_some() {
                             mask |= 0x2000;
                         }
@@ -2170,14 +2216,67 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, f.name),
-                    signature: todo!()
+                    signature: todo!(),
                 });
 
                 // TODO: pinvoke, marshal, default, rva
             }
-            
-            tables.method_def.reserve(t.methods.len());
-            for m in &t.methods {
+
+            let mut all_methods: Vec<_> = t.methods.iter().collect();
+
+            tables.property.reserve(t.properties.len());
+            if !t.properties.is_empty() {
+                tables.property_map.push(PropertyMap {
+                    parent: idx.into(),
+                    property_list: (tables.property.len() + 1).into(),
+                });
+            }
+            for p in &t.properties {
+                tables.property.push(Property {
+                    flags: {
+                        let mut mask = build_bitmask!(p,
+                            special_name => 0x0200,
+                            runtime_special_name => 0x0400);
+                        if p.default.is_some() {
+                            mask |= 0x1000;
+                        }
+                        mask
+                    },
+                    name: heap_idx!(strings, p.name),
+                    property_type: todo!(),
+                });
+
+                // TODO: default
+
+                all_methods.extend(p.other.iter().chain(&p.getter).chain(&p.setter));
+            }
+
+            tables.event.reserve(t.events.len());
+            if !t.events.is_empty() {
+                tables.event_map.push(EventMap {
+                    parent: idx.into(),
+                    event_list: (tables.event.len() + 1).into(),
+                });
+            }
+            for e in &t.events {
+                tables.event.push(Event {
+                    event_flags: build_bitmask!(e,
+                        special_name => 0x0200,
+                        runtime_special_name => 0x0400),
+                    name: heap_idx!(strings, e.name),
+                    event_type: todo!(),
+                });
+
+                all_methods.extend(
+                    [&e.add_listener, &e.remove_listener]
+                        .into_iter()
+                        .chain(&e.raise_event)
+                        .chain(e.other.iter()),
+                );
+            }
+
+            tables.method_def.reserve(all_methods.len());
+            for m in all_methods {
                 tables.method_def.push(MethodDef {
                     rva: todo!(),
                     impl_flags: {
@@ -2190,11 +2289,11 @@ impl<'a> DLL<'a> {
                         mask |= match m.body_format {
                             BodyFormat::IL => 0x0,
                             BodyFormat::Native => 0x1,
-                            BodyFormat::Runtime => 0x3
+                            BodyFormat::Runtime => 0x3,
                         };
                         mask |= match m.body_management {
                             BodyManagement::Unmanaged => 0x4,
-                            BodyManagement::Managed => 0x0
+                            BodyManagement::Managed => 0x0,
                         };
                         mask
                     },
@@ -2209,18 +2308,10 @@ impl<'a> DLL<'a> {
                             special_name => 0x0800,
                             runtime_special_name => 0x1000,
                             require_sec_object => 0x8000);
-                        mask |= match m.accessibility {
-                            Accessibility::CompilerControlled => 0x0,
-                            Accessibility::Access(resolved::Accessibility::Private) => 0x1,
-                            Accessibility::Access(resolved::Accessibility::FamilyANDAssembly) => 0x2,
-                            Accessibility::Access(resolved::Accessibility::Assembly) => 0x3,
-                            Accessibility::Access(resolved::Accessibility::Family) => 0x4,
-                            Accessibility::Access(resolved::Accessibility::FamilyORAssembly) => 0x5,
-                            Accessibility::Access(resolved::Accessibility::Public) => 0x6
-                        };
+                        mask |= m.accessibility.to_mask();
                         mask |= match m.vtable_layout {
                             VtableLayout::ReuseSlot => 0x0000,
-                            VtableLayout::NewSlot => 0x0100
+                            VtableLayout::NewSlot => 0x0100,
                         };
                         if m.pinvoke.is_some() {
                             mask |= 0x2000;
@@ -2232,10 +2323,15 @@ impl<'a> DLL<'a> {
                     },
                     name: heap_idx!(strings, m.name),
                     signature: todo!(),
-                    param_list: if m.parameter_metadata.is_empty() { 0 } else { tables.param.len() + 1 }.into()
+                    param_list: if m.parameter_metadata.is_empty() {
+                        0
+                    } else {
+                        tables.param.len() + 1
+                    }
+                    .into(),
                 });
 
-                // TODO: pinvoke, security
+                // TODO: pinvoke, security, generics
 
                 tables.param.reserve(m.parameter_metadata.len());
                 for (idx, p) in m.parameter_metadata.iter().enumerate() {
@@ -2255,7 +2351,7 @@ impl<'a> DLL<'a> {
                                 mask
                             },
                             sequence: idx as u16,
-                            name: heap_idx!(strings, p.name)
+                            name: heap_idx!(strings, p.name),
                         });
 
                         // TODO: default, marshal
