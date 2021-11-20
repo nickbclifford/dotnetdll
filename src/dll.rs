@@ -568,13 +568,7 @@ impl<'a> DLL<'a> {
                                 );
                             }
                         }
-                        BinRS::Null => match exports
-                            .iter()
-                            .position(|e| e.name == name && e.namespace == namespace)
-                        {
-                            Some(idx) => ResolutionScope::Exported(ExportedTypeIndex(idx)),
-                            None => throw!("missing exported type for type reference {}", name),
-                        },
+                        BinRS::Null => ResolutionScope::Exported,
                     },
                 })
             })
@@ -2058,12 +2052,13 @@ impl<'a> DLL<'a> {
 
     // TODO
     pub fn write(res: &Resolution) -> Result<Vec<u8>> {
-        use metadata::table::*;
+        use metadata::{index, table::*};
         use object::write::pe::*;
         use resolved::{
             assembly::HashAlgorithm,
             members::{BodyFormat, BodyManagement, VtableLayout},
-            types::Layout,
+            resource::{Implementation, Visibility},
+            types::{Layout, ResolutionScope, TypeImplementation},
         };
 
         macro_rules! u32 {
@@ -2129,12 +2124,58 @@ impl<'a> DLL<'a> {
             });
         }
 
+        tables.exported_type.reserve(res.exported_types.len());
+        for e in &res.exported_types {
+            let mut export = ExportedType {
+                flags: e.flags.to_mask(),
+                type_def_id: 0,
+                type_name: heap_idx!(strings, e.name),
+                type_namespace: opt_heap!(strings, e.namespace),
+                implementation: index::Implementation::Null,
+            };
+
+            export.implementation = match e.implementation {
+                TypeImplementation::Nested(t) => index::Implementation::ExportedType(t.0 + 1),
+                TypeImplementation::ModuleFile { type_def, file } => {
+                    export.type_def_id = type_def.0 as u32;
+                    index::Implementation::File(file.0 + 1)
+                }
+                TypeImplementation::TypeForwarder(a) => {
+                    export.flags |= 0x0020_0000;
+                    index::Implementation::AssemblyRef(a.0 + 1)
+                }
+            };
+
+            tables.exported_type.push(export);
+        }
+
         tables.file.reserve(res.files.len());
         for f in &res.files {
             tables.file.push(File {
                 flags: build_bitmask!(f, has_metadata => 0x0001),
                 name: heap_idx!(strings, f.name),
                 hash_value: heap_idx!(blobs, f.hash_value),
+            });
+        }
+
+        tables
+            .manifest_resource
+            .reserve(res.manifest_resources.len());
+        for r in &res.manifest_resources {
+            tables.manifest_resource.push(ManifestResource {
+                offset: r.offset as u32,
+                flags: match r.visibility {
+                    Visibility::Public => 0x0001,
+                    Visibility::Private => 0x0002,
+                },
+                name: heap_idx!(strings, r.name),
+                implementation: match r.implementation {
+                    Some(Implementation::File(f)) => index::Implementation::File(f.0 + 1),
+                    Some(Implementation::Assembly(a)) => {
+                        index::Implementation::AssemblyRef(a.0 + 1)
+                    }
+                    None => index::Implementation::Null,
+                },
             });
         }
 
@@ -2152,6 +2193,8 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, r.name),
             });
         }
+
+        let mut index_map = HashMap::new();
 
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
@@ -2240,7 +2283,12 @@ impl<'a> DLL<'a> {
                 // TODO: pinvoke, marshal, default, rva
             }
 
-            let mut all_methods: Vec<_> = t.methods.iter().collect();
+            let mut all_methods: Vec<_> = t
+                .methods
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (MethodMemberIndex::Method(i), m))
+                .collect();
 
             tables.property.reserve(t.properties.len());
             if !t.properties.is_empty() {
@@ -2249,7 +2297,7 @@ impl<'a> DLL<'a> {
                     property_list: (tables.property.len() + 1).into(),
                 });
             }
-            for p in &t.properties {
+            for (prop_idx, p) in t.properties.iter().enumerate() {
                 tables.property.push(Property {
                     flags: {
                         let mut mask = build_bitmask!(p,
@@ -2266,7 +2314,30 @@ impl<'a> DLL<'a> {
 
                 // TODO: default
 
-                all_methods.extend(p.other.iter().chain(&p.getter).chain(&p.setter));
+                all_methods.extend(
+                    p.other
+                        .iter()
+                        .enumerate()
+                        .map(|(i, o)| {
+                            (
+                                MethodMemberIndex::PropertyOther {
+                                    property: prop_idx,
+                                    other: i,
+                                },
+                                o,
+                            )
+                        })
+                        .chain(
+                            p.getter
+                                .as_ref()
+                                .map(|g| (MethodMemberIndex::PropertyGetter(prop_idx), g)),
+                        )
+                        .chain(
+                            p.setter
+                                .as_ref()
+                                .map(|g| (MethodMemberIndex::PropertySetter(prop_idx), g)),
+                        ),
+                );
             }
 
             tables.event.reserve(t.events.len());
@@ -2276,7 +2347,7 @@ impl<'a> DLL<'a> {
                     event_list: (tables.event.len() + 1).into(),
                 });
             }
-            for e in &t.events {
+            for (event_idx, e) in t.events.iter().enumerate() {
                 tables.event.push(Event {
                     event_flags: build_bitmask!(e,
                         special_name => 0x0200,
@@ -2286,15 +2357,70 @@ impl<'a> DLL<'a> {
                 });
 
                 all_methods.extend(
-                    [&e.add_listener, &e.remove_listener]
-                        .into_iter()
-                        .chain(&e.raise_event)
-                        .chain(e.other.iter()),
+                    [
+                        (MethodMemberIndex::EventAdd(event_idx), &e.add_listener),
+                        (
+                            MethodMemberIndex::EventRemove(event_idx),
+                            &e.remove_listener,
+                        ),
+                    ]
+                    .into_iter()
+                    .chain(
+                        e.raise_event
+                            .as_ref()
+                            .map(|r| (MethodMemberIndex::EventRaise(event_idx), r)),
+                    )
+                    .chain(e.other.iter().enumerate().map(|(i, o)| {
+                        (
+                            MethodMemberIndex::EventOther {
+                                event: event_idx,
+                                other: i,
+                            },
+                            o,
+                        )
+                    })),
                 );
             }
 
+            index_map.reserve(all_methods.len());
             tables.method_def.reserve(all_methods.len());
-            for m in all_methods {
+            for (member_idx, m) in all_methods {
+                let def_index = tables.method_def.len() + 1;
+                index_map.insert(member_idx, def_index);
+
+                let semantics = match member_idx {
+                    MethodMemberIndex::PropertyGetter(p) => {
+                        Some((index::HasSemantics::Property(p + 1), 0x0002))
+                    }
+                    MethodMemberIndex::PropertySetter(p) => {
+                        Some((index::HasSemantics::Property(p + 1), 0x0001))
+                    }
+                    MethodMemberIndex::PropertyOther { property, .. } => {
+                        Some((index::HasSemantics::Property(property + 1), 0x0004))
+                    }
+                    MethodMemberIndex::EventAdd(e) => {
+                        Some((index::HasSemantics::Event(e + 1), 0x0008))
+                    }
+                    MethodMemberIndex::EventRemove(e) => {
+                        Some((index::HasSemantics::Event(e + 1), 0x0010))
+                    }
+                    MethodMemberIndex::EventRaise(e) => {
+                        Some((index::HasSemantics::Event(e + 1), 0x0020))
+                    }
+                    MethodMemberIndex::EventOther { event, .. } => {
+                        Some((index::HasSemantics::Event(event + 1), 0x0004))
+                    }
+                    _ => None, // regular methods don't need this
+                };
+
+                if let Some((idx, mask)) = semantics {
+                    tables.method_semantics.push(MethodSemantics {
+                        semantics: mask,
+                        method: def_index.into(),
+                        association: idx,
+                    });
+                }
+
                 tables.method_def.push(MethodDef {
                     rva: todo!(),
                     impl_flags: {
@@ -2376,6 +2502,23 @@ impl<'a> DLL<'a> {
                     }
                 }
             }
+        }
+
+        tables.type_ref.reserve(res.type_references.len());
+        for r in &res.type_references {
+            tables.type_ref.push(TypeRef {
+                resolution_scope: match r.scope {
+                    ResolutionScope::Nested(t) => index::ResolutionScope::TypeRef(t.0 + 1),
+                    ResolutionScope::ExternalModule(m) => {
+                        index::ResolutionScope::ModuleRef(m.0 + 1)
+                    }
+                    ResolutionScope::CurrentModule => index::ResolutionScope::Module(1),
+                    ResolutionScope::Assembly(a) => index::ResolutionScope::AssemblyRef(a.0 + 1),
+                    ResolutionScope::Exported => index::ResolutionScope::Null,
+                },
+                type_name: heap_idx!(strings, r.name),
+                type_namespace: opt_heap!(strings, r.namespace),
+            });
         }
 
         // PE characteristics

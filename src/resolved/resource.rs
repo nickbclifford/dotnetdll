@@ -12,6 +12,9 @@ pub enum Visibility {
     Private,
 }
 
+// TODO: a null implementation means offset in the current file
+// change from Option<Implementation> to an Implementation that contains the bytes to insert?
+
 #[derive(Debug, Clone)]
 pub struct ManifestResource<'a> {
     pub attributes: Vec<Attribute<'a>>,

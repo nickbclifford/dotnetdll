@@ -241,7 +241,7 @@ pub enum ResolutionScope {
     ExternalModule(ModuleRefIndex),
     CurrentModule,
     Assembly(AssemblyRefIndex),
-    Exported(ExportedTypeIndex),
+    Exported,
 }
 
 #[derive(Debug, Clone)]
@@ -260,13 +260,20 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
             ExternalModule(m) => format!("[module {}]{}", res[m].name, self),
             CurrentModule => self.type_name(),
             Assembly(a) => format!("[{}]{}", res[a].name, self),
-            Exported(e) => format!(
+            Exported => format!(
                 "[{}]{}",
-                match res[e].implementation {
-                    TypeImplementation::Nested(_) =>
-                        panic!("exported type ref scopes cannot be nested"),
-                    TypeImplementation::ModuleFile { file, .. } => res[file].name,
-                    TypeImplementation::TypeForwarder(a) => res[a].name,
+                match res
+                    .exported_types
+                    .iter()
+                    .find(|e| e.name == self.name && e.namespace == self.namespace)
+                {
+                    Some(e) => match e.implementation {
+                        TypeImplementation::Nested(_) =>
+                            panic!("exported type ref scopes cannot be nested"),
+                        TypeImplementation::ModuleFile { file, .. } => res[file].name,
+                        TypeImplementation::TypeForwarder(a) => res[a].name,
+                    },
+                    None => panic!("missing exported type entry for type ref"),
                 },
                 self
             ),
