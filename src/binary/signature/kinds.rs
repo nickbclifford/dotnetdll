@@ -185,7 +185,7 @@ impl TryIntoCtx for MethodRefSig {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub enum StandAloneCallingConvention {
     DefaultManaged,
     Vararg,

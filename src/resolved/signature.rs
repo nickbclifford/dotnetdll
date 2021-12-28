@@ -8,7 +8,7 @@ use crate::{
 };
 use std::fmt::Write;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType {
     Value(MethodType),
     Ref(MethodType),
@@ -25,7 +25,7 @@ impl ResolvedDebug for ParameterType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Parameter(pub Vec<CustomTypeModifier>, pub ParameterType);
 impl ResolvedDebug for Parameter {
     fn show(&self, res: &Resolution) -> String {
@@ -40,7 +40,7 @@ impl ResolvedDebug for Parameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReturnType(pub Vec<CustomTypeModifier>, pub Option<ParameterType>);
 impl ResolvedDebug for ReturnType {
     fn show(&self, res: &Resolution) -> String {
@@ -58,7 +58,7 @@ impl ResolvedDebug for ReturnType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodSignature<CallConv> {
     pub instance: bool,
     pub explicit_this: bool,

@@ -60,6 +60,32 @@ element_types! {
 #[derive(Debug, Clone)]
 pub struct TypeDefOrRefOrSpec(pub index::Token);
 
+impl From<index::TypeDefOrRef> for TypeDefOrRefOrSpec {
+    fn from(t: index::TypeDefOrRef) -> Self {
+        use index::TypeDefOrRef::*;
+        use num_traits::FromPrimitive;
+
+        TypeDefOrRefOrSpec(match t {
+            TypeDef(i) => index::Token {
+                target: index::TokenTarget::Table(table::Kind::TypeDef),
+                index: i,
+            },
+            TypeRef(i) => index::Token {
+                target: index::TokenTarget::Table(table::Kind::TypeRef),
+                index: i,
+            },
+            TypeSpec(i) => index::Token {
+                target: index::TokenTarget::Table(table::Kind::TypeSpec),
+                index: i,
+            },
+            Null => index::Token {
+                target: index::TokenTarget::Table(table::Kind::from_u8(0).unwrap()),
+                index: 0,
+            },
+        })
+    }
+}
+
 impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
     type Error = scroll::Error;
 
@@ -103,7 +129,7 @@ impl TryIntoCtx for TypeDefOrRefOrSpec {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArrayShape {
     pub rank: usize,
     pub sizes: Vec<usize>,

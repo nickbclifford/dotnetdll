@@ -17,6 +17,14 @@ mod utils {
             mask
         }}
     }
+
+    use std::hash::*;
+
+    pub fn hash(val: impl Hash) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        val.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 pub mod binary;

@@ -1,9 +1,7 @@
 use super::{metadata::index, signature::compressed};
+use crate::utils::hash;
 use scroll::{ctx::StrCtx, Pread, Pwrite, Result};
-use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
-    hash::*,
-};
+use std::collections::HashMap;
 
 // TODO: seal these traits
 
@@ -102,12 +100,6 @@ pub trait HeapWriter {
     fn write(&mut self, value: &Self::Value) -> Result<Self::Index>;
 
     fn into_vec(self) -> Vec<u8>;
-}
-
-fn hash(val: impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    val.hash(&mut hasher);
-    hasher.finish()
 }
 
 macro_rules! heap_writer {

@@ -2089,6 +2089,20 @@ impl<'a> DLL<'a> {
 
         let mut tables = Tables::new();
 
+        let mut type_cache = HashMap::new();
+        let mut blob_cache = HashMap::new();
+
+        macro_rules! build_ctx {
+            () => {
+                &mut convert::write::Context {
+                    blobs: &mut blobs,
+                    specs: &mut tables.type_spec,
+                    type_cache: &mut type_cache,
+                    blob_cache: &mut blob_cache,
+                }
+            };
+        }
+
         // TODO: all attributes
 
         if let Some(a) = &res.assembly {
@@ -2208,7 +2222,10 @@ impl<'a> DLL<'a> {
                 },
                 type_name: heap_idx!(strings, t.name),
                 type_namespace: opt_heap!(strings, t.namespace),
-                extends: todo!(),
+                extends: match &t.extends {
+                    Some(t) => convert::write::source_index(t, build_ctx!())?,
+                    None => metadata::index::TypeDefOrRef::Null,
+                },
                 field_list: if t.fields.is_empty() {
                     0
                 } else {
@@ -2277,7 +2294,7 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, f.name),
-                    signature: todo!(),
+                    signature: convert::write::blob_index(&f.return_type, build_ctx!())?,
                 });
 
                 // TODO: pinvoke, marshal, default, rva
@@ -2309,7 +2326,7 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, p.name),
-                    property_type: todo!(),
+                    property_type: convert::write::parameter(&p.property_type, build_ctx!())?,
                 });
 
                 // TODO: default
@@ -2353,7 +2370,7 @@ impl<'a> DLL<'a> {
                         special_name => 0x0200,
                         runtime_special_name => 0x0400),
                     name: heap_idx!(strings, e.name),
-                    event_type: todo!(),
+                    event_type: convert::write::index(&e.delegate_type, build_ctx!())?,
                 });
 
                 all_methods.extend(

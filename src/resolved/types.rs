@@ -323,7 +323,7 @@ type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum UserType {
     Definition(TypeIndex),
     Reference(TypeRefIndex),
@@ -347,7 +347,7 @@ impl ResolvedDebug for UserType {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum CustomTypeModifier {
     Optional(UserType),
     Required(UserType),
@@ -362,7 +362,7 @@ impl ResolvedDebug for CustomTypeModifier {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GenericInstantiation<CtxBaseType> {
     pub base: UserType,
     pub parameters: Vec<CtxBaseType>,
@@ -370,7 +370,7 @@ pub struct GenericInstantiation<CtxBaseType> {
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeSource<EnclosingType> {
     User(UserType),
     Generic(GenericInstantiation<EnclosingType>),
@@ -393,7 +393,7 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseType<EnclosingType> {
     Type(TypeSource<EnclosingType>),
     Boolean,
@@ -466,7 +466,7 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MemberType {
     // NOTE: lots of heap allocation taking place because of how common this type is
     Base(Box<BaseType<MemberType>>),
@@ -482,7 +482,7 @@ impl ResolvedDebug for MemberType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MethodType {
     // ditto
     Base(Box<BaseType<MethodType>>),
