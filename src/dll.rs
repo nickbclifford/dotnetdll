@@ -2483,7 +2483,7 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, m.name),
-                    signature: todo!(),
+                    signature: convert::write::method_def(&m.signature, build_ctx!())?,
                     param_list: if m.parameter_metadata.is_empty() {
                         0
                     } else {

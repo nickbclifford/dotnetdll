@@ -15,6 +15,7 @@ use crate::{
 };
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use std::collections::HashMap;
+use crate::binary::signature::kinds::MethodDefSig;
 
 pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
@@ -230,4 +231,18 @@ fn ret_type_sig(p: &ReturnType, ctx: &mut Context) -> Result<RetType> {
             None => RetTypeType::Void,
         },
     ))
+}
+
+fn method_def_sig(p: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> {
+    Ok(MethodDefSig {
+        has_this: p.instance,
+        explicit_this: p.explicit_this,
+        calling_convention: p.calling_convention,
+        ret_type: ret_type_sig(&p.return_type, ctx)?,
+        params: p.parameters.iter().map(|p| parameter_sig(p, ctx)).collect::<Result<_>>()?
+    })
+}
+
+pub fn method_def(p: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
+    sig_blob(method_def_sig(p, ctx)?, ctx)
 }
