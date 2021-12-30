@@ -82,6 +82,17 @@ fn base_type_sig<T>(
 ) -> Result<BaseType<T>> {
     use Type::*;
 
+    let generic_inst = |tok, types: Vec<Type>, kind| -> Result<BaseType<T>> {
+        Ok(BaseType::Type(TypeSource::Generic(GenericInstantiation {
+            base_kind: kind,
+            base: user_type(tok, ctx)?,
+            parameters: types
+                .into_iter()
+                .map(|t| enclosing(t, ctx))
+                .collect::<Result<_>>()?,
+        })))
+    };
+
     Ok(match sig {
         Boolean => BaseType::Boolean,
         Char => BaseType::Char,
@@ -117,15 +128,8 @@ fn base_type_sig<T>(
         ),
         Class(tok) | ValueType(tok) => BaseType::Type(TypeSource::User(user_type(tok, ctx)?)),
         FnPtr(s) => BaseType::FunctionPointer(maybe_unmanaged_method(*s, ctx)?),
-        GenericInstClass(tok, types) | GenericInstValueType(tok, types) => {
-            BaseType::Type(TypeSource::Generic(GenericInstantiation {
-                base: user_type(tok, ctx)?,
-                parameters: types
-                    .into_iter()
-                    .map(|t| enclosing(t, ctx))
-                    .collect::<Result<_>>()?,
-            }))
-        }
+        GenericInstClass(tok, types) => generic_inst(tok, types, InstantiationKind::Class)?,
+        GenericInstValueType(tok, types) => generic_inst(tok, types, InstantiationKind::ValueType)?,
         bad => throw!("invalid type signature for base type {:?}", bad),
     })
 }

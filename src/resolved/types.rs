@@ -362,8 +362,15 @@ impl ResolvedDebug for CustomTypeModifier {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum InstantiationKind {
+    Class,
+    ValueType,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GenericInstantiation<CtxBaseType> {
+    pub base_kind: InstantiationKind,
     pub base: UserType,
     pub parameters: Vec<CtxBaseType>,
 }

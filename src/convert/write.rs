@@ -30,7 +30,7 @@ pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
         return Ok(i);
     }
 
-    let result = t.into_idx(ctx)?;
+    let result = t.as_idx(ctx)?;
 
     ctx.type_cache.insert(hash, result);
 
@@ -44,7 +44,7 @@ pub fn blob_index(t: &impl TypeKind, ctx: &mut Context) -> Result<Blob> {
         return Ok(i);
     }
 
-    let result = sig_blob(t.into_sig(ctx)?, ctx)?;
+    let result = sig_blob(t.as_sig(ctx)?, ctx)?;
 
     ctx.blob_cache.insert(hash, result);
 
@@ -59,19 +59,19 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
 }
 
 pub trait TypeKind: std::hash::Hash {
-    fn into_sig(&self, ctx: &mut Context) -> Result<SType>;
-    fn into_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef>;
+    fn as_sig(&self, ctx: &mut Context) -> Result<SType>;
+    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef>;
 }
 
 impl TypeKind for MemberType {
-    fn into_sig(&self, ctx: &mut Context) -> Result<SType> {
+    fn as_sig(&self, ctx: &mut Context) -> Result<SType> {
         match self {
             MemberType::Base(b) => base_sig(&**b, ctx),
             MemberType::TypeGeneric(i) => Ok(SType::Var(*i as u32)),
         }
     }
 
-    fn into_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
+    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
         match self {
             MemberType::Base(b) => base_index(&**b, ctx),
             MemberType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
@@ -80,7 +80,7 @@ impl TypeKind for MemberType {
 }
 
 impl TypeKind for MethodType {
-    fn into_sig(&self, ctx: &mut Context) -> Result<SType> {
+    fn as_sig(&self, ctx: &mut Context) -> Result<SType> {
         match self {
             MethodType::Base(b) => base_sig(&**b, ctx),
             MethodType::TypeGeneric(i) => Ok(SType::Var(*i as u32)),
@@ -88,7 +88,7 @@ impl TypeKind for MethodType {
         }
     }
 
-    fn into_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
+    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
         match self {
             MethodType::Base(b) => base_index(&**b, ctx),
             MethodType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
@@ -98,11 +98,24 @@ impl TypeKind for MethodType {
 }
 
 pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
-    match t {
-        TypeSource::User(u) => Ok(user_index(*u)),
-        // TODO: we have no way of knowing whether the instantiation is for a class or value type
-        TypeSource::Generic(_) => todo!(),
-    }
+    Ok(match t {
+        TypeSource::User(u) => user_index(*u),
+        TypeSource::Generic(g) => {
+            let base = user_index(g.base).into();
+            let params = g
+                .parameters
+                .iter()
+                .map(|g| g.as_sig(ctx))
+                .collect::<Result<_>>()?;
+            sig_index(
+                match g.base_kind {
+                    InstantiationKind::Class => SType::GenericInstClass(base, params),
+                    InstantiationKind::ValueType => SType::GenericInstValueType(base, params),
+                },
+                ctx,
+            )?
+        }
+    })
 }
 
 pub fn base_index<T: TypeKind>(base: &BaseType<T>, ctx: &mut Context) -> Result<TypeDefOrRef> {
@@ -113,7 +126,7 @@ pub fn base_index<T: TypeKind>(base: &BaseType<T>, ctx: &mut Context) -> Result<
 }
 
 pub fn sig_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
-    // TODO: scroll expanding buffer
+    // TODO: scroll expanding buffer, maybe preallocated scratch buffer?
     let mut bytes = vec![];
 
     bytes.pwrite(sig, 0)?;
@@ -152,12 +165,12 @@ fn base_sig<T: TypeKind>(base: &BaseType<T>, ctx: &mut Context) -> Result<SType>
         UIntPtr => SType::UIntPtr,
         Object => SType::Object,
         String => SType::String,
-        Vector(m, t) => SType::SzArray(custom_modifiers(m), Box::new(t.into_sig(ctx)?)),
-        Array(t, shape) => SType::Array(Box::new(t.into_sig(ctx)?), shape.clone()),
+        Vector(m, t) => SType::SzArray(custom_modifiers(m), Box::new(t.as_sig(ctx)?)),
+        Array(t, shape) => SType::Array(Box::new(t.as_sig(ctx)?), shape.clone()),
         ValuePointer(m, opt) => SType::Ptr(
             custom_modifiers(m),
             match opt {
-                Some(t) => Some(Box::new(t.into_sig(ctx)?)),
+                Some(t) => Some(Box::new(t.as_sig(ctx)?)),
                 None => None,
             },
         ),
@@ -196,8 +209,8 @@ fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
     Ok(Param(
         custom_modifiers(&p.0),
         match &p.1 {
-            ParameterType::Value(v) => ParamType::Type(v.into_sig(ctx)?),
-            ParameterType::Ref(r) => ParamType::ByRef(r.into_sig(ctx)?),
+            ParameterType::Value(v) => ParamType::Type(v.as_sig(ctx)?),
+            ParameterType::Ref(r) => ParamType::ByRef(r.as_sig(ctx)?),
             ParameterType::TypedReference => ParamType::TypedByRef,
         },
     ))
@@ -211,8 +224,8 @@ fn ret_type_sig(p: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
         custom_modifiers(&p.0),
         match &p.1 {
-            Some(ParameterType::Value(v)) => RetTypeType::Type(v.into_sig(ctx)?),
-            Some(ParameterType::Ref(r)) => RetTypeType::ByRef(r.into_sig(ctx)?),
+            Some(ParameterType::Value(v)) => RetTypeType::Type(v.as_sig(ctx)?),
+            Some(ParameterType::Ref(r)) => RetTypeType::ByRef(r.as_sig(ctx)?),
             Some(ParameterType::TypedReference) => RetTypeType::TypedByRef,
             None => RetTypeType::Void,
         },
