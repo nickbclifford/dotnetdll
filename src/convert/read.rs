@@ -149,6 +149,8 @@ pub fn method_type_sig(sig: Type, ctx: &Context) -> Result<MethodType> {
     })
 }
 
+// TODO: replace these macros with trait dispatch
+
 macro_rules! def_type_idx {
     (fn $name:ident uses $sig:ident -> $t:ident) => {
         pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<$t> {

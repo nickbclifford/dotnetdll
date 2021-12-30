@@ -8,6 +8,7 @@ use super::{
     resolution::*,
     resolved,
 };
+use crate::resolved::generic::{SpecialConstraint, Variance};
 use log::{debug, warn};
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -2210,6 +2211,50 @@ impl<'a> DLL<'a> {
 
         let mut index_map = HashMap::new();
 
+        macro_rules! build_generic {
+            ($g:expr, $owner:expr) => {{
+                let new_idx = tables.generic_param.len().into();
+                tables.generic_param.push(GenericParam {
+                    number: $g.sequence as u16,
+                    flags: {
+                        let mut mask = match $g.variance {
+                            Variance::Invariant => 0x0,
+                            Variance::Covariant => 0x1,
+                            Variance::Contravariant => 0x2,
+                        };
+                        if $g.special_constraint.reference_type {
+                            mask |= 0x04;
+                        }
+                        if $g.special_constraint.value_type {
+                            mask |= 0x08;
+                        }
+                        if $g.special_constraint.has_default_constructor {
+                            mask |= 0x10;
+                        }
+                        mask
+                    },
+                    owner: $owner,
+                    name: heap_idx!(strings, $g.name),
+                });
+
+                tables
+                    .generic_param_constraint
+                    .reserve($g.type_constraints.len());
+                for c in &$g.type_constraints {
+                    tables
+                        .generic_param_constraint
+                        .push(GenericParamConstraint {
+                            owner: new_idx,
+                            constraint: convert::write::idx_with_modifiers(
+                                &c.constraint_type,
+                                &c.custom_modifiers,
+                                build_ctx!(),
+                            )?,
+                        });
+                }
+            }};
+        }
+
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
             tables.type_def.push(TypeDef {
@@ -2240,7 +2285,12 @@ impl<'a> DLL<'a> {
                 .into(),
             });
 
-            // TODO: security, implements, overrides, generics
+            tables.generic_param.reserve(t.generic_parameters.len());
+            for g in &t.generic_parameters {
+                build_generic!(g, index::TypeOrMethodDef::TypeDef(idx));
+            }
+
+            // TODO: security, implements, overrides
 
             match t.flags.layout {
                 Layout::Sequential(Some(s)) => {
@@ -2492,7 +2542,12 @@ impl<'a> DLL<'a> {
                     .into(),
                 });
 
-                // TODO: pinvoke, security, generics
+                tables.generic_param.reserve(m.generic_parameters.len());
+                for g in &m.generic_parameters {
+                    build_generic!(g, index::TypeOrMethodDef::MethodDef(def_index));
+                }
+
+                // TODO: pinvoke, security
 
                 tables.param.reserve(m.parameter_metadata.len());
                 for (idx, p) in m.parameter_metadata.iter().enumerate() {

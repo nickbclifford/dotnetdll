@@ -7,7 +7,7 @@ use crate::{
         },
         signature::{
             encoded::{CustomMod, Param, ParamType, RetType, RetTypeType, Type as SType},
-            kinds::StandAloneMethodSig,
+            kinds::{MethodDefSig, StandAloneMethodSig},
         },
     },
     dll::Result,
@@ -15,7 +15,6 @@ use crate::{
 };
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use std::collections::HashMap;
-use crate::binary::signature::kinds::MethodDefSig;
 
 pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
@@ -59,9 +58,10 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
     }
 }
 
-pub trait TypeKind: std::hash::Hash {
+pub trait TypeKind: Sized + std::hash::Hash {
     fn as_sig(&self, ctx: &mut Context) -> Result<SType>;
     fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef>;
+    fn as_base(&self) -> Option<&BaseType<Self>>;
 }
 
 impl TypeKind for MemberType {
@@ -76,6 +76,13 @@ impl TypeKind for MemberType {
         match self {
             MemberType::Base(b) => base_index(&**b, ctx),
             MemberType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
+        }
+    }
+
+    fn as_base(&self) -> Option<&BaseType<Self>> {
+        match self {
+            MemberType::Base(b) => Some(&**b),
+            _ => None,
         }
     }
 }
@@ -94,6 +101,13 @@ impl TypeKind for MethodType {
             MethodType::Base(b) => base_index(&**b, ctx),
             MethodType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
             MethodType::MethodGeneric(i) => sig_index(SType::MVar(*i as u32), ctx),
+        }
+    }
+
+    fn as_base(&self) -> Option<&BaseType<Self>> {
+        match self {
+            MethodType::Base(b) => Some(&**b),
+            _ => None,
         }
     }
 }
@@ -135,7 +149,10 @@ pub fn sig_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) 
     Ok(ctx.blobs.write(&bytes)?)
 }
 
-fn sig_index(sig: SType, ctx: &mut Context) -> Result<TypeDefOrRef> {
+fn sig_index(
+    sig: impl TryIntoCtx<Error = scroll::Error>,
+    ctx: &mut Context,
+) -> Result<TypeDefOrRef> {
     let len = ctx.specs.len();
 
     let t = TypeSpec {
@@ -239,10 +256,49 @@ fn method_def_sig(p: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> 
         explicit_this: p.explicit_this,
         calling_convention: p.calling_convention,
         ret_type: ret_type_sig(&p.return_type, ctx)?,
-        params: p.parameters.iter().map(|p| parameter_sig(p, ctx)).collect::<Result<_>>()?
+        params: p
+            .parameters
+            .iter()
+            .map(|p| parameter_sig(p, ctx))
+            .collect::<Result<_>>()?,
     })
 }
 
 pub fn method_def(p: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
     sig_blob(method_def_sig(p, ctx)?, ctx)
+}
+
+pub fn idx_with_modifiers(
+    t: &impl TypeKind,
+    mods: &[CustomTypeModifier],
+    ctx: &mut Context,
+) -> Result<TypeDefOrRef> {
+    if let Some(BaseType::Type(TypeSource::User(u))) = t.as_base() {
+        Ok(user_index(*u))
+    } else {
+        let sig = t.as_sig(ctx)?;
+        let mods = custom_modifiers(mods);
+
+        struct Wrapper(Vec<CustomMod>, SType);
+        impl TryIntoCtx for Wrapper {
+            type Error = scroll::Error;
+
+            fn try_into_ctx(
+                self,
+                buf: &mut [u8],
+                _: (),
+            ) -> std::result::Result<usize, Self::Error> {
+                let offset = &mut 0;
+
+                for m in self.0 {
+                    buf.gwrite(m, offset)?;
+                }
+                buf.gwrite(self.1, offset)?;
+
+                Ok(*offset)
+            }
+        }
+
+        sig_index(Wrapper(mods, sig), ctx)
+    }
 }
