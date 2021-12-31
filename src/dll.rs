@@ -8,7 +8,6 @@ use super::{
     resolution::*,
     resolved,
 };
-use crate::resolved::generic::{SpecialConstraint, Variance};
 use log::{debug, warn};
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -144,6 +143,12 @@ impl<'a> DLL<'a> {
 
     #[allow(clippy::nonminimal_bool)]
     pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
+        use convert::TypeKind;
+        use resolved::{
+            types::{MemberType, MethodType},
+            *,
+        };
+
         let strings: StringsReader = self.get_heap()?;
         let blobs: BlobReader = self.get_heap()?;
         let guids: GUIDReader = self.get_heap()?;
@@ -215,8 +220,6 @@ impl<'a> DLL<'a> {
                 }
             };
         }
-
-        use resolved::*;
 
         macro_rules! build_version {
             ($src:ident) => {
@@ -310,7 +313,7 @@ impl<'a> DLL<'a> {
                     extends: if t.extends.is_null() {
                         None
                     } else {
-                        Some(convert::read::member_type_source(t.extends, &ctx)?)
+                        Some(convert::read::type_source(t.extends, &ctx)?)
                     },
                     implements: vec![],
                     generic_parameters: vec![],
@@ -584,10 +587,8 @@ impl<'a> DLL<'a> {
                 let idx = i.class.0 - 1;
                 match types.get_mut(idx) {
                     Some(t) => {
-                        t.implements.push((
-                            vec![],
-                            convert::read::member_type_source(i.interface, &ctx)?,
-                        ));
+                        t.implements
+                            .push((vec![], convert::read::type_source(i.interface, &ctx)?));
 
                         Ok((idx, t.implements.len() - 1))
                     }
@@ -646,7 +647,7 @@ impl<'a> DLL<'a> {
                         .into_iter()
                         .map(|c| convert::read::custom_modifier(c, &ctx))
                         .collect::<Result<_>>()?,
-                    return_type: convert::read::member_type_sig(t, &ctx)?,
+                    return_type: MemberType::from_sig(t, &ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
                     init_only: check_bitmask!(f.flags, 0x20),
@@ -914,7 +915,7 @@ impl<'a> DLL<'a> {
             let name = heap_idx!(strings, p.name);
 
             macro_rules! make_generic {
-                ($convert_meth:ident) => {
+                () => {
                     Generic {
                         attributes: vec![],
                         sequence: p.number as usize,
@@ -938,7 +939,7 @@ impl<'a> DLL<'a> {
                             .enumerate()
                             .filter_map(|(c_idx, c)| {
                                 if c.owner.0 - 1 == idx {
-                                    let (cmod, ty) = filter_map_try!(convert::read::$convert_meth(
+                                    let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(
                                         c.constraint,
                                         &ctx
                                     ));
@@ -970,9 +971,7 @@ impl<'a> DLL<'a> {
                 TypeOrMethodDef::TypeDef(i) => {
                     let idx = i - 1;
                     match types.get_mut(idx) {
-                        Some(t) => t
-                            .generic_parameters
-                            .push(make_generic!(member_type_idx_mod)),
+                        Some(t) => t.generic_parameters.push(make_generic!()),
                         None => throw!("invalid type index {} for generic parameter {}", idx, name),
                     }
                 }
@@ -987,9 +986,7 @@ impl<'a> DLL<'a> {
                         ),
                     };
 
-                    method
-                        .generic_parameters
-                        .push(make_generic!(method_type_idx_mod));
+                    method.generic_parameters.push(make_generic!());
                 }
                 TypeOrMethodDef::Null => {
                     throw!("invalid null owner index for generic parameter {}", name)
@@ -1268,7 +1265,7 @@ impl<'a> DLL<'a> {
                 parent_events.push(Event {
                     attributes: vec![],
                     name,
-                    delegate_type: convert::read::member_type_idx(event.event_type, &ctx)?,
+                    delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
                     add_listener: get_listener!("add", 0x8, EventAdd),
                     remove_listener: get_listener!("remove", 0x10, EventRemove),
                     raise_event: None,
@@ -1372,13 +1369,13 @@ impl<'a> DLL<'a> {
 
                 let parent = match r.class {
                     MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)
                     )),
                     MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)
                     )),
                     MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
@@ -1400,10 +1397,7 @@ impl<'a> DLL<'a> {
                         attributes: vec![],
                         parent,
                         name,
-                        return_type: filter_map_try!(convert::read::member_type_sig(
-                            field_sig.1,
-                            &ctx
-                        )),
+                        return_type: filter_map_try!(MemberType::from_sig(field_sig.1, &ctx)),
                     },
                 )))
             })
@@ -1444,13 +1438,13 @@ impl<'a> DLL<'a> {
 
                 let parent = match r.class {
                     MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeDef(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)
                     )),
                     MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeRef(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)
                     )),
                     MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::method_type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
+                        convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
                     )),
                     MemberRefParent::ModuleRef(i) => {
                         let idx = i - 1;
@@ -1932,9 +1926,7 @@ impl<'a> DLL<'a> {
                                                     .collect::<Result<_>>()?,
                                                 pinned,
                                                 by_ref,
-                                                var_type: convert::read::method_type_sig(
-                                                    var_type, &ctx,
-                                                )?,
+                                                var_type: MethodType::from_sig(var_type, &ctx)?,
                                             },
                                         })
                                     })
@@ -2057,6 +2049,7 @@ impl<'a> DLL<'a> {
         use object::write::pe::*;
         use resolved::{
             assembly::HashAlgorithm,
+            generic::Variance,
             members::{BodyFormat, BodyManagement, VtableLayout},
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},

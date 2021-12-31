@@ -1,3 +1,4 @@
+use super::TypeKind;
 use crate::{
     binary::{
         heap::{BlobWriter, HeapWriter},
@@ -44,7 +45,7 @@ pub fn blob_index(t: &impl TypeKind, ctx: &mut Context) -> Result<Blob> {
         return Ok(i);
     }
 
-    let result = sig_blob(t.as_sig(ctx)?, ctx)?;
+    let result = into_blob(t.as_sig(ctx)?, ctx)?;
 
     ctx.blob_cache.insert(hash, result);
 
@@ -58,60 +59,6 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
     }
 }
 
-pub trait TypeKind: Sized + std::hash::Hash {
-    fn as_sig(&self, ctx: &mut Context) -> Result<SType>;
-    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef>;
-    fn as_base(&self) -> Option<&BaseType<Self>>;
-}
-
-impl TypeKind for MemberType {
-    fn as_sig(&self, ctx: &mut Context) -> Result<SType> {
-        match self {
-            MemberType::Base(b) => base_sig(&**b, ctx),
-            MemberType::TypeGeneric(i) => Ok(SType::Var(*i as u32)),
-        }
-    }
-
-    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
-        match self {
-            MemberType::Base(b) => base_index(&**b, ctx),
-            MemberType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
-        }
-    }
-
-    fn as_base(&self) -> Option<&BaseType<Self>> {
-        match self {
-            MemberType::Base(b) => Some(&**b),
-            _ => None,
-        }
-    }
-}
-
-impl TypeKind for MethodType {
-    fn as_sig(&self, ctx: &mut Context) -> Result<SType> {
-        match self {
-            MethodType::Base(b) => base_sig(&**b, ctx),
-            MethodType::TypeGeneric(i) => Ok(SType::Var(*i as u32)),
-            MethodType::MethodGeneric(i) => Ok(SType::MVar(*i as u32)),
-        }
-    }
-
-    fn as_idx(&self, ctx: &mut Context) -> Result<TypeDefOrRef> {
-        match self {
-            MethodType::Base(b) => base_index(&**b, ctx),
-            MethodType::TypeGeneric(i) => sig_index(SType::Var(*i as u32), ctx),
-            MethodType::MethodGeneric(i) => sig_index(SType::MVar(*i as u32), ctx),
-        }
-    }
-
-    fn as_base(&self) -> Option<&BaseType<Self>> {
-        match self {
-            MethodType::Base(b) => Some(&**b),
-            _ => None,
-        }
-    }
-}
-
 pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match t {
         TypeSource::User(u) => user_index(*u),
@@ -122,7 +69,7 @@ pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<
                 .iter()
                 .map(|g| g.as_sig(ctx))
                 .collect::<Result<_>>()?;
-            sig_index(
+            into_index(
                 match g.base_kind {
                     InstantiationKind::Class => SType::GenericInstClass(base, params),
                     InstantiationKind::ValueType => SType::GenericInstValueType(base, params),
@@ -133,14 +80,14 @@ pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<
     })
 }
 
-pub fn base_index<T: TypeKind>(base: &BaseType<T>, ctx: &mut Context) -> Result<TypeDefOrRef> {
+pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match base {
         BaseType::Type(t) => source_index(t, ctx)?,
-        rest => sig_index(base_sig(rest, ctx)?, ctx)?,
+        rest => into_index(base_sig(rest, ctx)?, ctx)?,
     })
 }
 
-pub fn sig_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
+pub fn into_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
     // TODO: scroll expanding buffer, maybe preallocated scratch buffer?
     let mut bytes = vec![];
 
@@ -149,21 +96,21 @@ pub fn sig_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) 
     Ok(ctx.blobs.write(&bytes)?)
 }
 
-fn sig_index(
+pub(super) fn into_index(
     sig: impl TryIntoCtx<Error = scroll::Error>,
     ctx: &mut Context,
 ) -> Result<TypeDefOrRef> {
     let len = ctx.specs.len();
 
     let t = TypeSpec {
-        signature: sig_blob(sig, ctx)?,
+        signature: into_blob(sig, ctx)?,
     };
     ctx.specs.push(t);
 
     Ok(TypeDefOrRef::TypeSpec(len))
 }
 
-fn base_sig<T: TypeKind>(base: &BaseType<T>, ctx: &mut Context) -> Result<SType> {
+pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     use BaseType::*;
 
     Ok(match base {
@@ -235,7 +182,7 @@ fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
 }
 
 pub fn parameter(p: &Parameter, ctx: &mut Context) -> Result<Blob> {
-    sig_blob(parameter_sig(p, ctx)?, ctx)
+    into_blob(parameter_sig(p, ctx)?, ctx)
 }
 
 fn ret_type_sig(p: &ReturnType, ctx: &mut Context) -> Result<RetType> {
@@ -265,7 +212,7 @@ fn method_def_sig(p: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> 
 }
 
 pub fn method_def(p: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
-    sig_blob(method_def_sig(p, ctx)?, ctx)
+    into_blob(method_def_sig(p, ctx)?, ctx)
 }
 
 pub fn idx_with_modifiers(
@@ -299,6 +246,6 @@ pub fn idx_with_modifiers(
             }
         }
 
-        sig_index(Wrapper(mods, sig), ctx)
+        into_index(Wrapper(mods, sig), ctx)
     }
 }

@@ -1,3 +1,4 @@
+use super::TypeKind;
 use crate::{
     binary::{
         heap::{BlobReader, HeapReader, UserStringReader},
@@ -75,11 +76,7 @@ pub fn custom_modifier(src: CustomMod, ctx: &Context) -> Result<CustomTypeModifi
     })
 }
 
-fn base_type_sig<T>(
-    sig: Type,
-    enclosing: impl Fn(Type, &Context) -> Result<T>,
-    ctx: &Context,
-) -> Result<BaseType<T>> {
+pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<BaseType<T>> {
     use Type::*;
 
     let generic_inst = |tok, types: Vec<Type>, kind| -> Result<BaseType<T>> {
@@ -88,7 +85,7 @@ fn base_type_sig<T>(
             base: user_type(tok, ctx)?,
             parameters: types
                 .into_iter()
-                .map(|t| enclosing(t, ctx))
+                .map(|t| T::from_sig(t, ctx))
                 .collect::<Result<_>>()?,
         })))
     };
@@ -110,19 +107,19 @@ fn base_type_sig<T>(
         UIntPtr => BaseType::UIntPtr,
         Object => BaseType::Object,
         String => BaseType::String,
-        Array(t, shape) => BaseType::Array(enclosing(*t, ctx)?, shape),
+        Array(t, shape) => BaseType::Array(T::from_sig(*t, ctx)?, shape),
         SzArray(cmod, t) => BaseType::Vector(
             cmod.into_iter()
                 .map(|c| custom_modifier(c, ctx))
                 .collect::<Result<_>>()?,
-            enclosing(*t, ctx)?,
+            T::from_sig(*t, ctx)?,
         ),
         Ptr(cmod, pt) => BaseType::ValuePointer(
             cmod.into_iter()
                 .map(|c| custom_modifier(c, ctx))
                 .collect::<Result<_>>()?,
             match pt {
-                Some(t) => Some(enclosing(*t, ctx)?),
+                Some(t) => Some(T::from_sig(*t, ctx)?),
                 None => None,
             },
         ),
@@ -134,125 +131,72 @@ fn base_type_sig<T>(
     })
 }
 
-pub fn member_type_sig(sig: Type, ctx: &Context) -> Result<MemberType> {
-    Ok(match sig {
-        Type::Var(idx) => MemberType::TypeGeneric(idx as usize),
-        rest => MemberType::Base(Box::new(base_type_sig(rest, member_type_sig, ctx)?)),
-    })
-}
-
-pub fn method_type_sig(sig: Type, ctx: &Context) -> Result<MethodType> {
-    Ok(match sig {
-        Type::Var(idx) => MethodType::TypeGeneric(idx as usize),
-        Type::MVar(idx) => MethodType::MethodGeneric(idx as usize),
-        rest => MethodType::Base(Box::new(base_type_sig(rest, method_type_sig, ctx)?)),
-    })
-}
-
-// TODO: replace these macros with trait dispatch
-
-macro_rules! def_type_idx {
-    (fn $name:ident uses $sig:ident -> $t:ident) => {
-        pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<$t> {
-            match idx {
-                TypeDefOrRef::TypeDef(i) => {
-                    let idx = i - 1;
-                    if idx < ctx.def_len {
-                        Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
-                            UserType::Definition(TypeIndex(idx)),
-                        )))))
-                    } else {
-                        Err(format!(
-                            "invalid type definition index {} while parsing a type",
-                            idx
-                        ))
-                    }
-                }
-                TypeDefOrRef::TypeRef(i) => {
-                    let idx = i - 1;
-                    if idx < ctx.ref_len {
-                        Ok($t::Base(Box::new(BaseType::Type(TypeSource::User(
-                            UserType::Reference(TypeRefIndex(idx)),
-                        )))))
-                    } else {
-                        Err(format!(
-                            "invalid type reference index {} while parsing a type",
-                            idx
-                        ))
-                    }
-                }
-                TypeDefOrRef::TypeSpec(i) => {
-                    let idx = i - 1;
-                    match ctx.specs.get(idx) {
-                        Some(s) => Ok($sig(ctx.blobs.at_index(s.signature)?.pread(0)?, ctx)?),
-                        None => Err(format!(
-                            "invalid type spec index {} while parsing a type",
-                            idx
-                        )),
-                    }
-                }
-                TypeDefOrRef::Null => Err("invalid null type index".to_string()),
-            }
-            .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
-        }
-    };
-}
-
-def_type_idx!(fn member_type_idx uses member_type_sig -> MemberType);
-def_type_idx!(fn method_type_idx uses method_type_sig -> MethodType);
-
-macro_rules! def_idx_with_mod {
-    (fn $name:ident uses ($idx:ident, $sig:ident) -> $t:ident) => {
-        pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<(Vec<CustomTypeModifier>, $t)> {
-            if let TypeDefOrRef::TypeSpec(i) = idx {
-                let t_idx = i - 1;
-                match ctx.specs.get(t_idx) {
-                    Some(s) => {
-                        let blob = ctx.blobs.at_index(s.signature)?;
-                        let mut offset = 0;
-                        let mods = all_custom_mods(blob, &mut offset);
-
-                        Ok((
-                            mods.into_iter()
-                                .map(|c| custom_modifier(c, ctx))
-                                .collect::<Result<_>>()?,
-                            $sig(blob.pread(offset)?, ctx)?,
-                        ))
-                    }
-                    None => throw!("invalid type spec index {} while parsing a type", t_idx),
-                }
+pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
+    match idx {
+        TypeDefOrRef::TypeDef(i) => {
+            let idx = i - 1;
+            if idx < ctx.def_len {
+                Ok(T::from_base(BaseType::Type(TypeSource::User(
+                    UserType::Definition(TypeIndex(idx)),
+                ))))
             } else {
-                Ok((vec![], $idx(idx, ctx)?))
+                throw!("invalid type definition index {} while parsing a type", idx)
             }
         }
-    };
-}
-
-def_idx_with_mod!(fn member_type_idx_mod uses (member_type_idx, member_type_sig) -> MemberType);
-def_idx_with_mod!(fn method_type_idx_mod uses (method_type_idx, method_type_sig) -> MethodType);
-
-macro_rules! type_source_error {
-    ($bind:ident) => {
-        throw!("invalid type source {:?}", $bind)
-    };
-}
-
-macro_rules! def_type_source {
-    (fn $name:ident uses $idx:ident -> $t:ident) => {
-        pub fn $name(idx: TypeDefOrRef, ctx: &Context) -> Result<TypeSource<$t>> {
-            match $idx(idx, ctx)? {
-                $t::Base(b) => match *b {
-                    BaseType::Type(s) => Ok(s),
-                    bad => type_source_error!(bad),
-                },
-                bad => type_source_error!(bad),
+        TypeDefOrRef::TypeRef(i) => {
+            let idx = i - 1;
+            if idx < ctx.ref_len {
+                Ok(T::from_base(BaseType::Type(TypeSource::User(
+                    UserType::Reference(TypeRefIndex(idx)),
+                ))))
+            } else {
+                throw!("invalid type reference index {} while parsing a type", idx)
             }
         }
-    };
+        TypeDefOrRef::TypeSpec(i) => {
+            let idx = i - 1;
+            match ctx.specs.get(idx) {
+                Some(s) => T::from_sig(ctx.blobs.at_index(s.signature)?.pread(0)?, ctx),
+                None => throw!("invalid type spec index {} while parsing a type", idx),
+            }
+        }
+        TypeDefOrRef::Null => throw!("invalid null type index"),
+    }
 }
 
-def_type_source!(fn member_type_source uses member_type_idx -> MemberType);
-// def_type_source!(fn method_type_source uses method_type_idx -> MethodType);
+pub fn idx_with_mod<T: TypeKind>(
+    idx: TypeDefOrRef,
+    ctx: &Context,
+) -> Result<(Vec<CustomTypeModifier>, T)> {
+    if let TypeDefOrRef::TypeSpec(i) = idx {
+        let t_idx = i - 1;
+        match ctx.specs.get(t_idx) {
+            Some(s) => {
+                let blob = ctx.blobs.at_index(s.signature)?;
+                let mut offset = 0;
+                let mods = all_custom_mods(blob, &mut offset);
+
+                Ok((
+                    mods.into_iter()
+                        .map(|c| custom_modifier(c, ctx))
+                        .collect::<Result<_>>()?,
+                    T::from_sig(blob.pread(offset)?, ctx)?,
+                ))
+            }
+            None => throw!("invalid type spec index {} while parsing a type", t_idx),
+        }
+    } else {
+        Ok((vec![], type_idx(idx, ctx)?))
+    }
+}
+
+pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<TypeSource<T>> {
+    match type_idx::<T>(idx, ctx)?.into_base() {
+        Some(BaseType::Type(s)) => Ok(s),
+        Some(b) => throw!("invalid type source {:?}", b),
+        None => throw!("invalid type source - {:?} refers to generic", idx),
+    }
+}
 
 pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
     use signature::ParameterType::*;
@@ -262,8 +206,8 @@ pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
             .map(|c| custom_modifier(c, ctx))
             .collect::<Result<_>>()?,
         match p.1 {
-            ParamType::Type(t) => Value(method_type_sig(t, ctx)?),
-            ParamType::ByRef(t) => Ref(method_type_sig(t, ctx)?),
+            ParamType::Type(t) => Value(MethodType::from_sig(t, ctx)?),
+            ParamType::ByRef(t) => Ref(MethodType::from_sig(t, ctx)?),
             ParamType::TypedByRef => TypedReference,
         },
     ))
@@ -290,9 +234,11 @@ macro_rules! def_method_sig {
                         .collect::<Result<_>>()?,
                     match sig.ret_type.1 {
                         RetTypeType::Type(t) => {
-                            Some(ParameterType::Value(method_type_sig(t, ctx)?))
+                            Some(ParameterType::Value(MethodType::from_sig(t, ctx)?))
                         }
-                        RetTypeType::ByRef(t) => Some(ParameterType::Ref(method_type_sig(t, ctx)?)),
+                        RetTypeType::ByRef(t) => {
+                            Some(ParameterType::Ref(MethodType::from_sig(t, ctx)?))
+                        }
                         RetTypeType::TypedByRef => Some(ParameterType::TypedReference),
                         RetTypeType::Void => None,
                     },
@@ -309,9 +255,9 @@ def_method_sig!(fn maybe_unmanaged_method(StandAloneMethodSig) -> MaybeUnmanaged
 pub fn type_token(tok: Token, ctx: &Context) -> Result<MethodType> {
     use TokenTarget::*;
     match tok.target {
-        Table(Kind::TypeDef) => method_type_idx(TypeDefOrRef::TypeDef(tok.index), ctx),
-        Table(Kind::TypeRef) => method_type_idx(TypeDefOrRef::TypeRef(tok.index), ctx),
-        Table(Kind::TypeSpec) => method_type_idx(TypeDefOrRef::TypeSpec(tok.index), ctx),
+        Table(Kind::TypeDef) => type_idx(TypeDefOrRef::TypeDef(tok.index), ctx),
+        Table(Kind::TypeRef) => type_idx(TypeDefOrRef::TypeRef(tok.index), ctx),
+        Table(Kind::TypeSpec) => type_idx(TypeDefOrRef::TypeSpec(tok.index), ctx),
         bad => throw!("invalid token {:?} for method type", bad),
     }
 }
@@ -371,7 +317,7 @@ fn method_source<'r, 'data>(
                         .pread::<MethodSpecSig>(0)?
                         .0
                         .into_iter()
-                        .map(|t| method_type_sig(t, ctx))
+                        .map(|t| MethodType::from_sig(t, ctx))
                         .collect::<Result<_>>()?,
                 }),
                 None => throw!("invalid method spec index {} for method source", idx),
