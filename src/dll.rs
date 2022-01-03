@@ -1398,6 +1398,11 @@ impl<'a> DLL<'a> {
                         attributes: vec![],
                         parent,
                         name,
+                        custom_modifiers: filter_map_try!(field_sig
+                            .0
+                            .into_iter()
+                            .map(|c| convert::read::custom_modifier(c, &ctx))
+                            .collect::<Result<_>>()),
                         return_type: filter_map_try!(MemberType::from_sig(field_sig.1, &ctx)),
                     },
                 )))
@@ -2052,7 +2057,8 @@ impl<'a> DLL<'a> {
             assembly::HashAlgorithm,
             generic::Variance,
             members::{
-                BodyFormat, BodyManagement, CharacterSet, UnmanagedCallingConvention, VtableLayout,
+                BodyFormat, BodyManagement, CharacterSet, FieldReferenceParent,
+                MethodReferenceParent, UnmanagedCallingConvention, UserMethod, VtableLayout,
             },
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
@@ -2260,8 +2266,12 @@ impl<'a> DLL<'a> {
             }};
         }
 
+        let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
+
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
+            let simple_idx = idx.into();
+
             tables.type_def.push(TypeDef {
                 flags: {
                     let mut f = t.flags.to_mask();
@@ -2305,21 +2315,25 @@ impl<'a> DLL<'a> {
 
             write_security!(&t.security, index::HasDeclSecurity::TypeDef(idx));
 
-            // TODO: overrides
+            overrides.extend(
+                t.overrides
+                    .iter()
+                    .map(|o| (simple_idx, o.implementation, o.declaration)),
+            );
 
             match t.flags.layout {
                 Layout::Sequential(Some(s)) => {
                     tables.class_layout.push(ClassLayout {
                         packing_size: s.packing_size as u16,
                         class_size: s.class_size as u32,
-                        parent: idx.into(),
+                        parent: simple_idx,
                     });
                 }
                 Layout::Explicit(Some(e)) => {
                     tables.class_layout.push(ClassLayout {
                         packing_size: 0,
                         class_size: e.class_size as u32,
-                        parent: idx.into(),
+                        parent: simple_idx,
                     });
                 }
                 _ => {}
@@ -2327,7 +2341,7 @@ impl<'a> DLL<'a> {
 
             if let Some(enc) = t.encloser {
                 tables.nested_class.push(NestedClass {
-                    nested_class: idx.into(),
+                    nested_class: simple_idx,
                     enclosing_class: enc.0.into(),
                 });
             }
@@ -2405,7 +2419,7 @@ impl<'a> DLL<'a> {
             tables.property.reserve(t.properties.len());
             if !t.properties.is_empty() {
                 tables.property_map.push(PropertyMap {
-                    parent: idx.into(),
+                    parent: simple_idx,
                     property_list: (tables.property.len() + 1).into(),
                 });
             }
@@ -2455,7 +2469,7 @@ impl<'a> DLL<'a> {
             tables.event.reserve(t.events.len());
             if !t.events.is_empty() {
                 tables.event_map.push(EventMap {
-                    parent: idx.into(),
+                    parent: simple_idx,
                     event_list: (tables.event.len() + 1).into(),
                 });
             }
@@ -2498,7 +2512,13 @@ impl<'a> DLL<'a> {
             tables.method_def.reserve(all_methods.len());
             for (member_idx, m) in all_methods {
                 let def_index = tables.method_def.len() + 1;
-                index_map.insert(member_idx, def_index);
+                index_map.insert(
+                    MethodIndex {
+                        parent_type: TypeIndex(idx),
+                        member: member_idx,
+                    },
+                    def_index,
+                );
 
                 let semantics = match member_idx {
                     MethodMemberIndex::PropertyGetter(p) => {
@@ -2621,6 +2641,62 @@ impl<'a> DLL<'a> {
                     }
                 }
             }
+        }
+
+        // NOTE: method ref indexes are the same as member ref indexes
+        // field refs come after method refs in the member ref table, so their indexes are (f + method_ref.len())
+
+        let method_def_or_ref = |u: UserMethod| match u {
+            UserMethod::Definition(m) => index::MethodDefOrRef::MethodDef(index_map[&m]),
+            UserMethod::Reference(r) => index::MethodDefOrRef::MemberRef(r.0 + 1),
+        };
+
+        tables.method_impl.extend(
+            overrides
+                .into_iter()
+                .map(|(parent, body, decl)| MethodImpl {
+                    class: parent,
+                    method_body: method_def_or_ref(body),
+                    method_declaration: method_def_or_ref(decl),
+                }),
+        );
+
+        macro_rules! type_to_parent {
+            ($t:expr) => {
+                match convert::write::index($t, build_ctx!())? {
+                    index::TypeDefOrRef::TypeDef(d) => index::MemberRefParent::TypeDef(d),
+                    index::TypeDefOrRef::TypeRef(r) => index::MemberRefParent::TypeRef(r),
+                    index::TypeDefOrRef::TypeSpec(s) => index::MemberRefParent::TypeSpec(s),
+                    _ => unreachable!(),
+                }
+            };
+        }
+
+        tables
+            .member_ref
+            .reserve(res.method_references.len() + res.field_references.len());
+        for m in &res.method_references {
+            tables.member_ref.push(MemberRef {
+                class: match &m.parent {
+                    MethodReferenceParent::Type(t) => type_to_parent!(t),
+                    MethodReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
+                    MethodReferenceParent::VarargMethod(m) => {
+                        index::MemberRefParent::MethodDef(index_map[&m])
+                    }
+                },
+                name: heap_idx!(strings, m.name),
+                signature: convert::write::method_ref(&m.signature, build_ctx!())?,
+            });
+        }
+        for f in &res.field_references {
+            tables.member_ref.push(MemberRef {
+                class: match &f.parent {
+                    FieldReferenceParent::Type(t) => type_to_parent!(t),
+                    FieldReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
+                },
+                name: heap_idx!(strings, f.name),
+                signature: convert::write::field_ref(f, build_ctx!())?,
+            });
         }
 
         tables.type_ref.reserve(res.type_references.len());

@@ -99,6 +99,7 @@ pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: FieldReferenceParent,
     pub name: &'a str,
+    pub custom_modifiers: Vec<CustomTypeModifier>,
     pub return_type: MemberType,
 }
 name_display!(ExternalFieldReference<'_>);

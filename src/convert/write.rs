@@ -8,11 +8,11 @@ use crate::{
         },
         signature::{
             encoded::{CustomMod, Param, ParamType, RetType, RetTypeType, Type as SType},
-            kinds::{MethodDefSig, StandAloneMethodSig},
+            kinds::{FieldSig, MethodDefSig, MethodRefSig, StandAloneMethodSig},
         },
     },
     dll::Result,
-    resolved::{signature::*, types::*},
+    resolved::{members::ExternalFieldReference, signature::*, types::*},
 };
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use scroll_buffer::DynamicBuffer;
@@ -153,13 +153,12 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
                 .iter()
                 .map(|p| parameter_sig(p, ctx))
                 .collect::<Result<_>>()?,
-            varargs: match &sig.varargs {
-                Some(p) => p
-                    .iter()
-                    .map(|p| parameter_sig(p, ctx))
-                    .collect::<Result<_>>()?,
-                None => vec![],
-            },
+            varargs: sig
+                .varargs
+                .iter()
+                .flatten()
+                .map(|p| parameter_sig(p, ctx))
+                .collect::<Result<_>>()?,
         })),
         _ => unreachable!(),
     })
@@ -189,10 +188,10 @@ pub fn parameter(p: &Parameter, ctx: &mut Context) -> Result<Blob> {
     into_blob(parameter_sig(p, ctx)?, ctx)
 }
 
-fn ret_type_sig(p: &ReturnType, ctx: &mut Context) -> Result<RetType> {
+fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
-        custom_modifiers(&p.0),
-        match &p.1 {
+        custom_modifiers(&r.0),
+        match &r.1 {
             Some(ParameterType::Value(v)) => RetTypeType::Type(v.as_sig(ctx)?),
             Some(ParameterType::Ref(r)) => RetTypeType::ByRef(r.as_sig(ctx)?),
             Some(ParameterType::TypedReference) => RetTypeType::TypedByRef,
@@ -201,13 +200,13 @@ fn ret_type_sig(p: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     ))
 }
 
-fn method_def_sig(p: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> {
+fn method_def_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> {
     Ok(MethodDefSig {
-        has_this: p.instance,
-        explicit_this: p.explicit_this,
-        calling_convention: p.calling_convention,
-        ret_type: ret_type_sig(&p.return_type, ctx)?,
-        params: p
+        has_this: sig.instance,
+        explicit_this: sig.explicit_this,
+        calling_convention: sig.calling_convention,
+        ret_type: ret_type_sig(&sig.return_type, ctx)?,
+        params: sig
             .parameters
             .iter()
             .map(|p| parameter_sig(p, ctx))
@@ -215,8 +214,35 @@ fn method_def_sig(p: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> 
     })
 }
 
-pub fn method_def(p: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
-    into_blob(method_def_sig(p, ctx)?, ctx)
+pub fn method_def(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
+    into_blob(method_def_sig(sig, ctx)?, ctx)
+}
+
+fn method_ref_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodRefSig> {
+    Ok(MethodRefSig {
+        method_def: method_def_sig(sig, ctx)?,
+        varargs: sig
+            .varargs
+            .iter()
+            .flatten()
+            .map(|p| parameter_sig(p, ctx))
+            .collect::<Result<_>>()?,
+    })
+}
+
+pub fn method_ref(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
+    into_blob(method_ref_sig(sig, ctx)?, ctx)
+}
+
+fn field_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
+    Ok(FieldSig(
+        custom_modifiers(&f.custom_modifiers),
+        f.return_type.as_sig(ctx)?,
+    ))
+}
+
+pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {
+    into_blob(field_sig(f, ctx)?, ctx)
 }
 
 pub fn idx_with_modifiers(

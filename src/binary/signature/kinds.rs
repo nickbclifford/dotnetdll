@@ -179,25 +179,37 @@ impl TryFromCtx<'_> for MethodRefSig {
         ))
     }
 }
-impl TryIntoCtx for MethodRefSig {
-    type Error = scroll::Error;
+macro_rules! ref_sig_impl {
+    ($self:ident, $into:ident, $writer:ident) => {{
+        let total_len = $self.method_def.params.len() + $self.varargs.len();
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let total_len = self.method_def.params.len() + self.varargs.len();
+        let conv = $self.method_def.calling_convention;
 
-        let conv = self.method_def.calling_convention;
-
-        let offset = &mut write_method_def(into, self.method_def, total_len)?;
+        let offset = &mut $writer($into, $self.method_def, total_len)?;
 
         if conv == CallingConvention::Vararg {
-            into.gwrite_with(ELEMENT_TYPE_SENTINEL, offset, scroll::LE)?;
+            $into.gwrite_with(ELEMENT_TYPE_SENTINEL, offset, scroll::LE)?;
 
-            for v in self.varargs {
-                into.gwrite(v, offset)?;
+            for v in $self.varargs {
+                $into.gwrite(v, offset)?;
             }
         }
 
         Ok(*offset)
+    }};
+}
+impl TryIntoCtx for MethodRefSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+        ref_sig_impl!(self, into, write_method_def)
+    }
+}
+impl TryIntoCtx<(), DynamicBuffer> for MethodRefSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+        ref_sig_impl!(self, into, write_method_def_dyn)
     }
 }
 
@@ -330,23 +342,19 @@ impl TryFromCtx<'_> for FieldSig {
         Ok((FieldSig(mods, from.gread(offset)?), *offset))
     }
 }
-impl TryIntoCtx for FieldSig {
-    type Error = scroll::Error;
+try_into_ctx!(FieldSig, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
+    into.gwrite_with(0x6_u8, offset, scroll::LE)?;
 
-        into.gwrite_with(0x6_u8, offset, scroll::LE)?;
-
-        for m in self.0 {
-            into.gwrite(m, offset)?;
-        }
-
-        into.gwrite(self.1, offset)?;
-
-        Ok(*offset)
+    for m in self.0 {
+        into.gwrite(m, offset)?;
     }
-}
+
+    into.gwrite(self.1, offset)?;
+
+    Ok(*offset)
+});
 
 #[derive(Debug)]
 pub struct PropertySig {
