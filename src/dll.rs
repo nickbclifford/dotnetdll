@@ -19,8 +19,8 @@ use object::{
     write::Error as ObjectWriteError,
 };
 use scroll::{Error as ScrollError, Pread};
-use std::collections::HashMap;
 use scroll_buffer::DynamicBuffer;
+use std::collections::HashMap;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -2051,7 +2051,9 @@ impl<'a> DLL<'a> {
         use resolved::{
             assembly::HashAlgorithm,
             generic::Variance,
-            members::{BodyFormat, BodyManagement, VtableLayout},
+            members::{
+                BodyFormat, BodyManagement, CharacterSet, UnmanagedCallingConvention, VtableLayout,
+            },
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
         };
@@ -2095,12 +2097,24 @@ impl<'a> DLL<'a> {
                     specs: &mut tables.type_spec,
                     type_cache: &mut type_cache,
                     blob_cache: &mut blob_cache,
-                    blob_scratch: &mut blob_scratch
+                    blob_scratch: &mut blob_scratch,
                 }
             };
         }
 
         // TODO: all attributes
+
+        macro_rules! write_security {
+            ($s:expr, $owner:expr) => {{
+                if let Some(s) = $s {
+                    tables.decl_security.push(DeclSecurity {
+                        action: s.action,
+                        parent: $owner,
+                        permission_set: heap_idx!(blobs, s.value),
+                    });
+                }
+            }};
+        }
 
         if let Some(a) = &res.assembly {
             tables.assembly.push(Assembly {
@@ -2118,6 +2132,8 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, a.name),
                 culture: opt_heap!(strings, a.culture),
             });
+
+            write_security!(&a.security, index::HasDeclSecurity::Assembly(1));
         }
 
         tables.assembly_ref.reserve(res.assembly_references.len());
@@ -2212,23 +2228,16 @@ impl<'a> DLL<'a> {
                 let new_idx = tables.generic_param.len().into();
                 tables.generic_param.push(GenericParam {
                     number: $g.sequence as u16,
-                    flags: {
-                        let mut mask = match $g.variance {
-                            Variance::Invariant => 0x0,
-                            Variance::Covariant => 0x1,
-                            Variance::Contravariant => 0x2,
-                        };
-                        if $g.special_constraint.reference_type {
-                            mask |= 0x04;
-                        }
-                        if $g.special_constraint.value_type {
-                            mask |= 0x08;
-                        }
-                        if $g.special_constraint.has_default_constructor {
-                            mask |= 0x10;
-                        }
-                        mask
-                    },
+                    flags: match $g.variance {
+                        Variance::Invariant => 0x0,
+                        Variance::Covariant => 0x1,
+                        Variance::Contravariant => 0x2,
+                    } | build_bitmask!(
+                        $g.special_constraint,
+                        reference_type => 0x04,
+                        value_type => 0x08,
+                        has_default_constructor => 0x10
+                    ),
                     owner: $owner,
                     name: heap_idx!(strings, $g.name),
                 });
@@ -2286,7 +2295,17 @@ impl<'a> DLL<'a> {
                 build_generic!(g, index::TypeOrMethodDef::TypeDef(idx));
             }
 
-            // TODO: security, implements, overrides
+            tables.interface_impl.reserve(t.implements.len());
+            for (_, i) in &t.implements {
+                tables.interface_impl.push(InterfaceImpl {
+                    class: idx.into(),
+                    interface: convert::write::source_index(i, build_ctx!())?,
+                });
+            }
+
+            write_security!(&t.security, index::HasDeclSecurity::TypeDef(idx));
+
+            // TODO: overrides
 
             match t.flags.layout {
                 Layout::Sequential(Some(s)) => {
@@ -2313,8 +2332,36 @@ impl<'a> DLL<'a> {
                 });
             }
 
+            macro_rules! write_pinvoke {
+                ($p:expr, $owner:expr) => {{
+                    if let Some(p) = $p {
+                        tables.impl_map.push(ImplMap {
+                            mapping_flags: build_bitmask!(p,
+                                no_mangle => 0x1, supports_last_error => 0x40
+                            ) | match p.character_set {
+                                CharacterSet::NotSpecified => 0x0,
+                                CharacterSet::Ansi => 0x2,
+                                CharacterSet::Unicode => 0x4,
+                                CharacterSet::Auto => 0x6,
+                            } | match p.calling_convention {
+                                UnmanagedCallingConvention::Platformapi => 0x100,
+                                UnmanagedCallingConvention::Cdecl => 0x200,
+                                UnmanagedCallingConvention::Stdcall => 0x300,
+                                UnmanagedCallingConvention::Thiscall => 0x400,
+                                UnmanagedCallingConvention::Fastcall => 0x500,
+                            },
+                            member_forwarded: $owner,
+                            import_name: heap_idx!(strings, p.import_name),
+                            import_scope: (p.import_scope.0 + 1).into(),
+                        });
+                    }
+                }}
+            }
+
             tables.field.reserve(t.fields.len());
             for f in &t.fields {
+                let field_idx = tables.field.len() + 1;
+
                 tables.field.push(Field {
                     flags: {
                         let mut mask = build_bitmask!(f,
@@ -2343,7 +2390,9 @@ impl<'a> DLL<'a> {
                     signature: convert::write::blob_index(&f.return_type, build_ctx!())?,
                 });
 
-                // TODO: pinvoke, marshal, default, rva
+                write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(field_idx));
+
+                // TODO: marshal, default, rva
             }
 
             let mut all_methods: Vec<_> = t
@@ -2543,7 +2592,9 @@ impl<'a> DLL<'a> {
                     build_generic!(g, index::TypeOrMethodDef::MethodDef(def_index));
                 }
 
-                // TODO: pinvoke, security
+                write_pinvoke!(&m.pinvoke, index::MemberForwarded::MethodDef(def_index));
+
+                write_security!(&m.security, index::HasDeclSecurity::MethodDef(def_index));
 
                 tables.param.reserve(m.parameter_metadata.len());
                 for (idx, p) in m.parameter_metadata.iter().enumerate() {

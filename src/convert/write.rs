@@ -15,15 +15,15 @@ use crate::{
     resolved::{signature::*, types::*},
 };
 use scroll::{ctx::TryIntoCtx, Pwrite};
-use std::collections::HashMap;
 use scroll_buffer::DynamicBuffer;
+use std::collections::HashMap;
 
 pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
     pub specs: &'a mut Vec<TypeSpec>,
     pub type_cache: &'a mut HashMap<u64, TypeDefOrRef>,
     pub blob_cache: &'a mut HashMap<u64, Blob>,
-    pub blob_scratch: &'a mut DynamicBuffer
+    pub blob_scratch: &'a mut DynamicBuffer,
 }
 
 pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
@@ -89,7 +89,10 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
     })
 }
 
-pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
+pub fn into_blob(
+    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>,
+    ctx: &mut Context,
+) -> Result<Blob> {
     ctx.blob_scratch.clear();
 
     ctx.blob_scratch.pwrite(sig, 0)?;

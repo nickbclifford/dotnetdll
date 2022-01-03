@@ -513,9 +513,7 @@ try_into_ctx!(Param, |self, into| {
             into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
             into.gwrite(t, offset)?
         }
-        ParamType::TypedByRef => {
-            into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?
-        }
+        ParamType::TypedByRef => into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?,
     };
 
     Ok(*offset)
@@ -567,9 +565,7 @@ try_into_ctx!(RetType, |self, into| {
             into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
             into.gwrite(t, offset)?
         }
-        RetTypeType::TypedByRef => {
-            into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?
-        }
+        RetTypeType::TypedByRef => into.gwrite_with(ELEMENT_TYPE_TYPEDBYREF, offset, scroll::LE)?,
         RetTypeType::Void => into.gwrite_with(ELEMENT_TYPE_VOID, offset, scroll::LE)?,
     };
 
