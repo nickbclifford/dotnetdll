@@ -18,6 +18,37 @@ mod utils {
         }}
     }
 
+    macro_rules! try_into_ctx {
+        ($t:ty, |$s:ident, $buf:ident| $e:expr) => {
+            try_into_ctx!(() => $t, |$s, $buf, _ctx| $e);
+        };
+        ($ctx:ty => $t:ty, |$s:ident, $buf:ident, $ctx_i:ident| $e:expr) => {
+            impl TryIntoCtx<$ctx> for $t {
+                type Error = scroll::Error;
+
+                fn try_into_ctx(
+                    $s,
+                    $buf: &mut [u8],
+                    $ctx_i: $ctx,
+                ) -> std::result::Result<usize, Self::Error> {
+                    $e
+                }
+            }
+
+            impl TryIntoCtx<$ctx, scroll_buffer::DynamicBuffer> for $t {
+                type Error = scroll::Error;
+
+                fn try_into_ctx(
+                    $s,
+                    $buf: &mut scroll_buffer::DynamicBuffer,
+                    $ctx_i: $ctx,
+                ) -> std::result::Result<usize, Self::Error> {
+                    $e
+                }
+            }
+        };
+    }
+
     use std::hash::*;
 
     pub fn hash(val: impl Hash) -> u64 {
@@ -115,7 +146,7 @@ mod tests {
     fn compression() {
         use signature::compressed::*;
 
-        macro_rules! test_case {
+        macro_rules! case {
             ($ty:ident($val:expr) => [$($byte:literal),+]) => {
                 let $ty(val) = [$($byte),+].pread(0).unwrap();
                 assert_eq!(val, $val);
@@ -127,16 +158,16 @@ mod tests {
             }
         }
 
-        test_case!(Unsigned(0x03) => [0x03]);
-        test_case!(Unsigned(0x3FFF) => [0xBF, 0xFF]);
-        test_case!(Unsigned(0x4000) => [0xC0, 0x00, 0x40, 0x00]);
+        case!(Unsigned(0x03) => [0x03]);
+        case!(Unsigned(0x3FFF) => [0xBF, 0xFF]);
+        case!(Unsigned(0x4000) => [0xC0, 0x00, 0x40, 0x00]);
 
-        test_case!(Signed(3) => [0x06]);
-        test_case!(Signed(-3) => [0x7B]);
-        test_case!(Signed(64) => [0x80, 0x80]);
-        test_case!(Signed(-8192) => [0x80, 0x01]);
-        test_case!(Signed(268435455) => [0xDF, 0xFF, 0xFF, 0xFE]);
-        test_case!(Signed(-268435456) => [0xC0, 0x00, 0x00, 0x01]);
+        case!(Signed(3) => [0x06]);
+        case!(Signed(-3) => [0x7B]);
+        case!(Signed(64) => [0x80, 0x80]);
+        case!(Signed(-8192) => [0x80, 0x01]);
+        case!(Signed(268435455) => [0xDF, 0xFF, 0xFF, 0xFE]);
+        case!(Signed(-268435456) => [0xC0, 0x00, 0x00, 0x01]);
     }
 
     #[test]

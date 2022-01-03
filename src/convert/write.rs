@@ -16,12 +16,14 @@ use crate::{
 };
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use std::collections::HashMap;
+use scroll_buffer::DynamicBuffer;
 
 pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
     pub specs: &'a mut Vec<TypeSpec>,
     pub type_cache: &'a mut HashMap<u64, TypeDefOrRef>,
     pub blob_cache: &'a mut HashMap<u64, Blob>,
+    pub blob_scratch: &'a mut DynamicBuffer
 }
 
 pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
@@ -87,17 +89,16 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
     })
 }
 
-pub fn into_blob(sig: impl TryIntoCtx<Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
-    // TODO: scroll expanding buffer, maybe preallocated scratch buffer?
-    let mut bytes = vec![];
+pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
+    ctx.blob_scratch.clear();
 
-    bytes.pwrite(sig, 0)?;
+    ctx.blob_scratch.pwrite(sig, 0)?;
 
-    Ok(ctx.blobs.write(&bytes)?)
+    Ok(ctx.blobs.write(ctx.blob_scratch.get())?)
 }
 
 pub(super) fn into_index(
-    sig: impl TryIntoCtx<Error = scroll::Error>,
+    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>,
     ctx: &mut Context,
 ) -> Result<TypeDefOrRef> {
     let len = ctx.specs.len();
@@ -227,12 +228,12 @@ pub fn idx_with_modifiers(
         let mods = custom_modifiers(mods);
 
         struct Wrapper(Vec<CustomMod>, SType);
-        impl TryIntoCtx for Wrapper {
+        impl TryIntoCtx<(), DynamicBuffer> for Wrapper {
             type Error = scroll::Error;
 
             fn try_into_ctx(
                 self,
-                buf: &mut [u8],
+                buf: &mut DynamicBuffer,
                 _: (),
             ) -> std::result::Result<usize, Self::Error> {
                 let offset = &mut 0;

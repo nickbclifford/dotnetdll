@@ -3,6 +3,7 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
+use scroll_buffer::DynamicBuffer;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum CallingConvention {
@@ -57,11 +58,18 @@ fn build_method_def(
     ))
 }
 
-fn write_method_def(
-    into: &mut [u8],
-    def: MethodDefSig,
-    num_params: usize,
-) -> scroll::Result<usize> {
+macro_rules! write_method_def {
+    (|$into:ident, $def:ident, $num_params:ident| $e:expr) => {
+        fn write_method_def($into: &mut [u8], $def: MethodDefSig, $num_params: usize) -> scroll::Result<usize> {
+            $e
+        }
+        fn write_method_def_dyn($into: &mut DynamicBuffer, $def: MethodDefSig, $num_params: usize) -> scroll::Result<usize> {
+            $e
+        }
+    }
+}
+
+write_method_def!(|into, def, num_params| {
     let offset = &mut 0;
 
     use CallingConvention::*;
@@ -93,7 +101,7 @@ fn write_method_def(
     }
 
     Ok(*offset)
-}
+});
 
 impl TryFromCtx<'_> for MethodDefSig {
     type Error = scroll::Error;
@@ -112,6 +120,14 @@ impl TryIntoCtx for MethodDefSig {
     fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
         let len = self.params.len();
         write_method_def(into, self, len)
+    }
+}
+impl TryIntoCtx<(), DynamicBuffer> for MethodDefSig {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+        let len = self.params.len();
+        write_method_def_dyn(into, self, len)
     }
 }
 
@@ -252,52 +268,48 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         ))
     }
 }
-impl TryIntoCtx for StandAloneMethodSig {
-    type Error = scroll::Error;
+try_into_ctx!(StandAloneMethodSig, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
-
-        let mut tag: u8 = 0;
-        if self.has_this {
-            tag |= 0x20;
-        }
-        if self.explicit_this {
-            tag |= 0x40;
-        }
-        use StandAloneCallingConvention::*;
-        tag |= match self.calling_convention {
-            DefaultManaged => 0,
-            Cdecl => 1,
-            Stdcall => 2,
-            Thiscall => 3,
-            Fastcall => 4,
-            Vararg => 5,
-            DefaultUnmanaged => 9,
-        };
-        into.gwrite_with(tag, offset, scroll::LE)?;
-
-        into.gwrite(
-            compressed::Unsigned((self.params.len() + self.varargs.len()) as u32),
-            offset,
-        )?;
-
-        into.gwrite(self.ret_type, offset)?;
-
-        for p in self.params {
-            into.gwrite(p, offset)?;
-        }
-
-        if self.calling_convention == Vararg && !self.varargs.is_empty() {
-            into.gwrite_with(0x41_u8, offset, scroll::LE)?;
-            for v in self.varargs {
-                into.gwrite(v, offset)?;
-            }
-        }
-
-        Ok(*offset)
+    let mut tag: u8 = 0;
+    if self.has_this {
+        tag |= 0x20;
     }
-}
+    if self.explicit_this {
+        tag |= 0x40;
+    }
+    use StandAloneCallingConvention::*;
+    tag |= match self.calling_convention {
+        DefaultManaged => 0,
+        Cdecl => 1,
+        Stdcall => 2,
+        Thiscall => 3,
+        Fastcall => 4,
+        Vararg => 5,
+        DefaultUnmanaged => 9,
+    };
+    into.gwrite_with(tag, offset, scroll::LE)?;
+
+    into.gwrite(
+        compressed::Unsigned((self.params.len() + self.varargs.len()) as u32),
+        offset,
+    )?;
+
+    into.gwrite(self.ret_type, offset)?;
+
+    for p in self.params {
+        into.gwrite(p, offset)?;
+    }
+
+    if self.calling_convention == Vararg && !self.varargs.is_empty() {
+        into.gwrite_with(0x41_u8, offset, scroll::LE)?;
+        for v in self.varargs {
+            into.gwrite(v, offset)?;
+        }
+    }
+
+    Ok(*offset)
+});
 
 #[derive(Debug)]
 pub struct FieldSig(pub Vec<CustomMod>, pub Type);

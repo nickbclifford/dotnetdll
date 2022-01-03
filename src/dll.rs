@@ -20,6 +20,7 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread};
 use std::collections::HashMap;
+use scroll_buffer::DynamicBuffer;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -2085,6 +2086,7 @@ impl<'a> DLL<'a> {
 
         let mut type_cache = HashMap::new();
         let mut blob_cache = HashMap::new();
+        let mut blob_scratch = DynamicBuffer::new();
 
         macro_rules! build_ctx {
             () => {
@@ -2093,6 +2095,7 @@ impl<'a> DLL<'a> {
                     specs: &mut tables.type_spec,
                     type_cache: &mut type_cache,
                     blob_cache: &mut blob_cache,
+                    blob_scratch: &mut blob_scratch
                 }
             };
         }

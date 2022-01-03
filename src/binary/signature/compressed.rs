@@ -32,28 +32,24 @@ impl TryFromCtx<'_> for Unsigned {
         ))
     }
 }
-impl TryIntoCtx for Unsigned {
-    type Error = scroll::Error;
+try_into_ctx!(Unsigned, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
-
-        if self.0 <= 0x7F {
-            into.gwrite_with(self.0 as u8, offset, scroll::BE)?;
-        } else if 0x80 <= self.0 && self.0 <= 0x3FFF {
-            into.gwrite_with(self.0 as u16 | (1 << 15), offset, scroll::BE)?;
-        } else if self.0 > 0x1FFF_FFFF {
-            throw!(
-                "invalid unsigned compressed integer {:#010x}, range is 0..=0x1FFFFFFF",
-                self.0
-            );
-        } else {
-            into.gwrite_with(self.0 | (0b11 << 30), offset, scroll::BE)?;
-        }
-
-        Ok(*offset)
+    if self.0 <= 0x7F {
+        into.gwrite_with(self.0 as u8, offset, scroll::BE)?;
+    } else if 0x80 <= self.0 && self.0 <= 0x3FFF {
+        into.gwrite_with(self.0 as u16 | (1 << 15), offset, scroll::BE)?;
+    } else if self.0 > 0x1FFF_FFFF {
+        throw!(
+            "invalid unsigned compressed integer {:#010x}, range is 0..=0x1FFFFFFF",
+            self.0
+        );
+    } else {
+        into.gwrite_with(self.0 | (0b11 << 30), offset, scroll::BE)?;
     }
-}
+
+    Ok(*offset)
+});
 
 #[derive(Debug)]
 pub struct Signed(pub i32);
@@ -118,38 +114,34 @@ fn into_twos_complement(bits: usize, mut source: i32) -> u32 {
     result
 }
 
-impl TryIntoCtx for Signed {
-    type Error = scroll::Error;
+try_into_ctx!(Signed, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
-
-        if -(1 << 6) <= self.0 && self.0 <= ((1 << 6) - 1) {
-            let value = into_twos_complement(7, self.0);
-            let mut rotated = ((value << 1) | (value >> 6)) as u8;
-            rotated.view_bits_mut::<Lsb0>().set(7, false);
-            into.gwrite_with(rotated, offset, scroll::BE)?;
-        } else if -(1 << 13) <= self.0 && self.0 <= ((1 << 13) - 1) {
-            let value = into_twos_complement(14, self.0);
-            let mut rotated = ((value << 1) | (value >> 13)) as u16;
-            let view = rotated.view_bits_mut::<Lsb0>();
-            view.set(15, true);
-            view.set(14, false);
-            into.gwrite_with(rotated, offset, scroll::BE)?;
-        } else if -(1 << 28) <= self.0 && self.0 <= ((1 << 28) - 1) {
-            let value = into_twos_complement(29, self.0);
-            let mut rotated = (value << 1) | (value >> 28);
-            let view = rotated.view_bits_mut::<Lsb0>();
-            view.set(31, true);
-            view.set(30, true);
-            view.set(29, false);
-            into.gwrite_with(rotated, offset, scroll::BE)?;
-        } else {
-            throw!(
-                "invalid signed compressed integer {}, range is (-2^28)..=(2^28 - 1)",
-                self.0
-            );
-        }
-        Ok(*offset)
+    if -(1 << 6) <= self.0 && self.0 <= ((1 << 6) - 1) {
+        let value = into_twos_complement(7, self.0);
+        let mut rotated = ((value << 1) | (value >> 6)) as u8;
+        rotated.view_bits_mut::<Lsb0>().set(7, false);
+        into.gwrite_with(rotated, offset, scroll::BE)?;
+    } else if -(1 << 13) <= self.0 && self.0 <= ((1 << 13) - 1) {
+        let value = into_twos_complement(14, self.0);
+        let mut rotated = ((value << 1) | (value >> 13)) as u16;
+        let view = rotated.view_bits_mut::<Lsb0>();
+        view.set(15, true);
+        view.set(14, false);
+        into.gwrite_with(rotated, offset, scroll::BE)?;
+    } else if -(1 << 28) <= self.0 && self.0 <= ((1 << 28) - 1) {
+        let value = into_twos_complement(29, self.0);
+        let mut rotated = (value << 1) | (value >> 28);
+        let view = rotated.view_bits_mut::<Lsb0>();
+        view.set(31, true);
+        view.set(30, true);
+        view.set(29, false);
+        into.gwrite_with(rotated, offset, scroll::BE)?;
+    } else {
+        throw!(
+            "invalid signed compressed integer {}, range is (-2^28)..=(2^28 - 1)",
+            self.0
+        );
     }
-}
+    Ok(*offset)
+});

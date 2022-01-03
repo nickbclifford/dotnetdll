@@ -62,7 +62,7 @@ impl TryIntoCtx for Header {
             } => {
                 into.gwrite_with(flags | 0x3 | (3 << 12), offset, scroll::LE)?;
                 into.gwrite_with(max_stack, offset, scroll::LE)?;
-                into.gwrite_with(size, offset, scroll::LE)?;
+                into.gwrite_with(size as u32, offset, scroll::LE)?;
                 into.gwrite_with(local_var_sig_tok, offset, scroll::LE)?;
             }
         }
