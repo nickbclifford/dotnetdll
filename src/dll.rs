@@ -2413,7 +2413,7 @@ impl<'a> DLL<'a> {
                 .methods
                 .iter()
                 .enumerate()
-                .map(|(i, m)| (MethodMemberIndex::Method(i), m))
+                .map(|(i, m)| (MethodMemberIndex::Method(i), None, m))
                 .collect();
 
             tables.property.reserve(t.properties.len());
@@ -2424,6 +2424,8 @@ impl<'a> DLL<'a> {
                 });
             }
             for (prop_idx, p) in t.properties.iter().enumerate() {
+                let association = Some(index::HasSemantics::Property(tables.property.len() + 1));
+
                 tables.property.push(Property {
                     flags: {
                         let mut mask = build_bitmask!(p,
@@ -2462,7 +2464,8 @@ impl<'a> DLL<'a> {
                             p.setter
                                 .as_ref()
                                 .map(|g| (MethodMemberIndex::PropertySetter(prop_idx), g)),
-                        ),
+                        )
+                        .map(|(i, m)| (i, association, m)),
                 );
             }
 
@@ -2474,6 +2477,8 @@ impl<'a> DLL<'a> {
                 });
             }
             for (event_idx, e) in t.events.iter().enumerate() {
+                let association = Some(index::HasSemantics::Event(tables.event.len() + 1));
+
                 tables.event.push(Event {
                     event_flags: build_bitmask!(e,
                         special_name => 0x0200,
@@ -2504,13 +2509,14 @@ impl<'a> DLL<'a> {
                             },
                             o,
                         )
-                    })),
+                    }))
+                    .map(|(i, m)| (i, association, m)),
                 );
             }
 
             index_map.reserve(all_methods.len());
             tables.method_def.reserve(all_methods.len());
-            for (member_idx, m) in all_methods {
+            for (member_idx, assoc, m) in all_methods {
                 let def_index = tables.method_def.len() + 1;
                 index_map.insert(
                     MethodIndex {
@@ -2520,36 +2526,20 @@ impl<'a> DLL<'a> {
                     def_index,
                 );
 
-                let semantics = match member_idx {
-                    MethodMemberIndex::PropertyGetter(p) => {
-                        Some((index::HasSemantics::Property(p + 1), 0x0002))
-                    }
-                    MethodMemberIndex::PropertySetter(p) => {
-                        Some((index::HasSemantics::Property(p + 1), 0x0001))
-                    }
-                    MethodMemberIndex::PropertyOther { property, .. } => {
-                        Some((index::HasSemantics::Property(property + 1), 0x0004))
-                    }
-                    MethodMemberIndex::EventAdd(e) => {
-                        Some((index::HasSemantics::Event(e + 1), 0x0008))
-                    }
-                    MethodMemberIndex::EventRemove(e) => {
-                        Some((index::HasSemantics::Event(e + 1), 0x0010))
-                    }
-                    MethodMemberIndex::EventRaise(e) => {
-                        Some((index::HasSemantics::Event(e + 1), 0x0020))
-                    }
-                    MethodMemberIndex::EventOther { event, .. } => {
-                        Some((index::HasSemantics::Event(event + 1), 0x0004))
-                    }
-                    _ => None, // regular methods don't need this
-                };
-
-                if let Some((idx, mask)) = semantics {
+                if let Some(association) = assoc {
                     tables.method_semantics.push(MethodSemantics {
-                        semantics: mask,
+                        semantics: match member_idx {
+                            MethodMemberIndex::PropertyGetter(_) => 0x0002,
+                            MethodMemberIndex::PropertySetter(_) => 0x0001,
+                            MethodMemberIndex::PropertyOther { .. } => 0x0004,
+                            MethodMemberIndex::EventAdd(_) => 0x0008,
+                            MethodMemberIndex::EventRemove(_) => 0x0010,
+                            MethodMemberIndex::EventRaise(_) => 0x0020,
+                            MethodMemberIndex::EventOther { .. } => 0x0004,
+                            _ => unreachable!(),
+                        },
                         method: def_index.into(),
-                        association: idx,
+                        association,
                     });
                 }
 
@@ -2681,7 +2671,7 @@ impl<'a> DLL<'a> {
                     MethodReferenceParent::Type(t) => type_to_parent!(t),
                     MethodReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
                     MethodReferenceParent::VarargMethod(m) => {
-                        index::MemberRefParent::MethodDef(index_map[&m])
+                        index::MemberRefParent::MethodDef(index_map[m])
                     }
                 },
                 name: heap_idx!(strings, m.name),
