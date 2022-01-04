@@ -666,41 +666,37 @@ impl TryFromCtx<'_> for NativeIntrinsic {
         Ok((val, *offset))
     }
 }
-impl TryIntoCtx for NativeIntrinsic {
-    type Error = scroll::Error;
+try_into_ctx!(NativeIntrinsic, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
+    use NativeIntrinsic::*;
+    into.gwrite_with(
+        match self {
+            Boolean => NATIVE_TYPE_BOOLEAN,
+            Int8 => NATIVE_TYPE_I1,
+            UInt8 => NATIVE_TYPE_U1,
+            Int16 => NATIVE_TYPE_I2,
+            UInt16 => NATIVE_TYPE_U2,
+            Int32 => NATIVE_TYPE_I4,
+            UInt32 => NATIVE_TYPE_U4,
+            Int64 => NATIVE_TYPE_I8,
+            UInt64 => NATIVE_TYPE_U8,
+            Float32 => NATIVE_TYPE_R4,
+            Float64 => NATIVE_TYPE_R8,
+            LPStr => NATIVE_TYPE_LPSTR,
+            LPWStr => NATIVE_TYPE_LPWSTR,
+            IntPtr => NATIVE_TYPE_INT,
+            UIntPtr => NATIVE_TYPE_UINT,
+            Function => NATIVE_TYPE_FUNC,
+            BStr => 0x13,
+            COMIUnknown => 0x19,
+            COMInterface => 0x1c,
+            AsAny => 0x28,
+            LPUTF8Str => 0x30,
+        },
+        offset,
+        scroll::LE,
+    )?;
 
-        use NativeIntrinsic::*;
-        into.gwrite_with(
-            match self {
-                Boolean => NATIVE_TYPE_BOOLEAN,
-                Int8 => NATIVE_TYPE_I1,
-                UInt8 => NATIVE_TYPE_U1,
-                Int16 => NATIVE_TYPE_I2,
-                UInt16 => NATIVE_TYPE_U2,
-                Int32 => NATIVE_TYPE_I4,
-                UInt32 => NATIVE_TYPE_U4,
-                Int64 => NATIVE_TYPE_I8,
-                UInt64 => NATIVE_TYPE_U8,
-                Float32 => NATIVE_TYPE_R4,
-                Float64 => NATIVE_TYPE_R8,
-                LPStr => NATIVE_TYPE_LPSTR,
-                LPWStr => NATIVE_TYPE_LPWSTR,
-                IntPtr => NATIVE_TYPE_INT,
-                UIntPtr => NATIVE_TYPE_UINT,
-                Function => NATIVE_TYPE_FUNC,
-                BStr => 0x13,
-                COMIUnknown => 0x19,
-                COMInterface => 0x1c,
-                AsAny => 0x28,
-                LPUTF8Str => 0x30,
-            },
-            offset,
-            scroll::LE,
-        )?;
-
-        Ok(*offset)
-    }
-}
+    Ok(*offset)
+});

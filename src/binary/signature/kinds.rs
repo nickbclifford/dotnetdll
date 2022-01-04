@@ -561,7 +561,7 @@ impl TryIntoCtx for MethodSpec {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MarshalSpec {
     Primitive(NativeIntrinsic),
     Array {
@@ -610,42 +610,38 @@ impl TryFromCtx<'_> for MarshalSpec {
         ))
     }
 }
-impl TryIntoCtx for MarshalSpec {
-    type Error = scroll::Error;
+try_into_ctx!(MarshalSpec, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
+    match self {
+        MarshalSpec::Primitive(n) => {
+            into.gwrite(n, offset)?;
+        }
+        MarshalSpec::Array {
+            element_type,
+            length_parameter,
+            additional_elements,
+        } => {
+            match element_type {
+                Some(t) => into.gwrite(t, offset)?,
+                None => into.gwrite_with(NATIVE_TYPE_MAX, offset, scroll::LE)?,
+            };
 
-        match self {
-            MarshalSpec::Primitive(n) => {
-                into.gwrite(n, offset)?;
+            if additional_elements.is_some() && length_parameter.is_none() {
+                throw!(
+                    "length parameter must be specified if additional elements is specified"
+                );
             }
-            MarshalSpec::Array {
-                element_type,
-                length_parameter,
-                additional_elements,
-            } => {
-                match element_type {
-                    Some(t) => into.gwrite(t, offset)?,
-                    None => into.gwrite_with(NATIVE_TYPE_MAX, offset, scroll::LE)?,
-                };
 
-                if additional_elements.is_some() && length_parameter.is_none() {
-                    throw!(
-                        "length parameter must be specified if additional elements is specified"
-                    );
-                }
+            if let Some(p) = length_parameter {
+                into.gwrite(compressed::Unsigned(p as u32), offset)?;
+            }
 
-                if let Some(p) = length_parameter {
-                    into.gwrite(compressed::Unsigned(p as u32), offset)?;
-                }
-
-                if let Some(n) = additional_elements {
-                    into.gwrite(compressed::Unsigned(n as u32), offset)?;
-                }
+            if let Some(n) = additional_elements {
+                into.gwrite(compressed::Unsigned(n as u32), offset)?;
             }
         }
-
-        Ok(*offset)
     }
-}
+
+    Ok(*offset)
+});

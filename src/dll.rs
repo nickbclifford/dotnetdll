@@ -2094,7 +2094,7 @@ impl<'a> DLL<'a> {
 
         let mut type_cache = HashMap::new();
         let mut blob_cache = HashMap::new();
-        let mut blob_scratch = DynamicBuffer::new();
+        let mut blob_scratch = DynamicBuffer::with_increment(8);
 
         macro_rules! build_ctx {
             () => {
@@ -2372,6 +2372,17 @@ impl<'a> DLL<'a> {
                 }}
             }
 
+            macro_rules! write_marshal {
+                ($spec:expr, $owner:expr) => {{
+                    if let Some(s) = $spec {
+                        tables.field_marshal.push(FieldMarshal {
+                            parent: $owner,
+                            native_type: convert::write::into_blob(s, build_ctx!())?,
+                        });
+                    }
+                }};
+            }
+
             tables.field.reserve(t.fields.len());
             for f in &t.fields {
                 let field_idx = tables.field.len() + 1;
@@ -2405,8 +2416,9 @@ impl<'a> DLL<'a> {
                 });
 
                 write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(field_idx));
+                write_marshal!(f.marshal, index::HasFieldMarshal::Field(field_idx));
 
-                // TODO: marshal, default, rva
+                // TODO: default, rva
             }
 
             let mut all_methods: Vec<_> = t
@@ -2609,6 +2621,8 @@ impl<'a> DLL<'a> {
                 tables.param.reserve(m.parameter_metadata.len());
                 for (idx, p) in m.parameter_metadata.iter().enumerate() {
                     if let Some(p) = p {
+                        let param_idx = tables.param.len() + 1;
+
                         tables.param.push(Param {
                             flags: {
                                 let mut mask = build_bitmask!(p,
@@ -2627,7 +2641,9 @@ impl<'a> DLL<'a> {
                             name: heap_idx!(strings, p.name),
                         });
 
-                        // TODO: default, marshal
+                        write_marshal!(p.marshal, index::HasFieldMarshal::Param(param_idx));
+
+                        // TODO: default
                     }
                 }
             }
