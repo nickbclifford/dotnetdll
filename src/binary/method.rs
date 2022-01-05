@@ -3,6 +3,7 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
+use scroll_buffer::DynamicBuffer;
 
 #[derive(Debug)]
 pub enum Header {
@@ -43,10 +44,10 @@ impl TryFromCtx<'_> for Header {
         ))
     }
 }
-impl TryIntoCtx for Header {
+impl TryIntoCtx<(), DynamicBuffer> for Header {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         use Header::*;
@@ -71,7 +72,7 @@ impl TryIntoCtx for Header {
     }
 }
 
-#[derive(Debug, Pread, Pwrite)]
+#[derive(Debug, Pread)]
 pub struct Exception {
     pub flags: u32,
     pub try_offset: u32,
@@ -79,6 +80,22 @@ pub struct Exception {
     pub handler_offset: u32,
     pub handler_length: u32,
     pub class_token_or_filter: u32,
+}
+impl TryIntoCtx<(), DynamicBuffer> for Exception {
+    type Error = scroll::Error;
+
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+        let offset = &mut 0;
+
+        into.gwrite_with(self.flags, offset, scroll::LE)?;
+        into.gwrite_with(self.try_offset, offset, scroll::LE)?;
+        into.gwrite_with(self.try_length, offset, scroll::LE)?;
+        into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
+        into.gwrite_with(self.handler_length, offset, scroll::LE)?;
+        into.gwrite_with(self.class_token_or_filter, offset, scroll::LE)?;
+
+        Ok(*offset)
+    }
 }
 
 #[derive(Debug)]
@@ -90,7 +107,7 @@ pub enum SectionKind {
 #[derive(Debug)]
 pub struct DataSection {
     pub section: SectionKind,
-    more_sections: bool,
+    pub more_sections: bool,
 }
 
 impl TryFromCtx<'_> for DataSection {
@@ -152,10 +169,10 @@ impl TryFromCtx<'_> for DataSection {
         ))
     }
 }
-impl TryIntoCtx for DataSection {
+impl TryIntoCtx<(), DynamicBuffer> for DataSection {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         use SectionKind::*;
@@ -205,7 +222,7 @@ impl TryIntoCtx for DataSection {
 
                 for clause in e {
                     if is_fat {
-                        into.gwrite_with(clause, offset, scroll::LE)?;
+                        into.gwrite(clause, offset)?;
                     } else {
                         into.gwrite_with(clause.flags as u16, offset, scroll::LE)?;
                         into.gwrite_with(clause.try_offset as u16, offset, scroll::LE)?;
@@ -282,10 +299,10 @@ impl TryFromCtx<'_> for Method {
         ))
     }
 }
-impl TryIntoCtx for Method {
+impl TryIntoCtx<(), DynamicBuffer> for Method {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite(self.header, offset)?;

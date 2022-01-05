@@ -1,4 +1,5 @@
 use super::TypeKind;
+use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
 use crate::{
     binary::{
         heap::{BlobWriter, HeapWriter},
@@ -278,4 +279,31 @@ pub fn idx_with_modifiers(
 
         into_index(Wrapper(mods, sig), ctx)
     }
+}
+
+fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSig> {
+    Ok(LocalVarSig(
+        vars.iter()
+            .map(|v| {
+                Ok(match v {
+                    LocalVariable::TypedReference => LocalVar::TypedByRef,
+                    LocalVariable::Variable {
+                        custom_modifiers: cmod,
+                        pinned,
+                        by_ref,
+                        var_type,
+                    } => LocalVar::Variable {
+                        custom_modifiers: custom_modifiers(cmod),
+                        pinned: *pinned,
+                        by_ref: *by_ref,
+                        var_type: var_type.as_sig(ctx)?,
+                    },
+                })
+            })
+            .collect::<Result<_>>()?,
+    ))
+}
+
+pub fn local_vars(vars: &[LocalVariable], ctx: &mut Context) -> Result<Blob> {
+    into_blob(local_var_sig(vars, ctx)?, ctx)
 }

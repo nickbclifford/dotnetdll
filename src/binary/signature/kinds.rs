@@ -479,10 +479,10 @@ impl TryFromCtx<'_> for LocalVarSig {
         Ok((LocalVarSig(vars), *offset))
     }
 }
-impl TryIntoCtx for LocalVarSig {
+impl TryIntoCtx<(), DynamicBuffer> for LocalVarSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         // tag
@@ -628,9 +628,7 @@ try_into_ctx!(MarshalSpec, |self, into| {
             };
 
             if additional_elements.is_some() && length_parameter.is_none() {
-                throw!(
-                    "length parameter must be specified if additional elements is specified"
-                );
+                throw!("length parameter must be specified if additional elements is specified");
             }
 
             if let Some(p) = length_parameter {

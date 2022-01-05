@@ -18,7 +18,7 @@ use object::{
     },
     write::Error as ObjectWriteError,
 };
-use scroll::{Error as ScrollError, Pread};
+use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 use DLLError::*;
@@ -2055,6 +2055,7 @@ impl<'a> DLL<'a> {
         use object::write::pe::*;
         use resolved::{
             assembly::HashAlgorithm,
+            body,
             generic::Variance,
             members::{
                 BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue,
@@ -2065,11 +2066,102 @@ impl<'a> DLL<'a> {
             types::{Layout, ResolutionScope, TypeImplementation},
         };
 
-        macro_rules! u32 {
-            ($e:expr) => {
-                U32Bytes::new(LittleEndian, $e)
+        // PE characteristics
+        // TODO
+        let is_32_bit = false;
+        let is_executable = true;
+
+        // writer setup
+        let mut buffer = vec![];
+        let mut writer = Writer::new(!is_32_bit, 0x200, 0x200, &mut buffer);
+
+        let mut num_sections = 1; // .text
+        if is_executable {
+            // add .idata and .reloc
+            num_sections += 2;
+        }
+
+        // begin reservations
+
+        writer.reserve_dos_header_and_stub();
+        writer.reserve_nt_headers(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
+        writer.reserve_section_headers(num_sections);
+
+        let mut text = vec![];
+
+        // add import information
+        let imports = if is_executable {
+            let import_rva = writer.virtual_len();
+
+            let mut idata = Vec::with_capacity(0x100);
+            idata.extend(b"mscoree.dll\0");
+
+            macro_rules! current_rva {
+                () => {
+                    import_rva + idata.len() as u32
+                };
+            }
+
+            let hint_name_rva = current_rva!();
+            idata.extend(b"\0\0_CorExeMain\0");
+
+            let import_lookup_rva = current_rva!();
+            let mut lookup_table: Vec<u8> = vec![];
+            if is_32_bit {
+                lookup_table.extend(hint_name_rva.to_le_bytes());
+                lookup_table.extend([0; 4]);
+            } else {
+                lookup_table.extend((hint_name_rva as u64).to_le_bytes());
+                lookup_table.extend([0; 8]);
+            }
+            // write lookup table
+            idata.extend_from_slice(&lookup_table);
+
+            // write IAT
+            let iat_rva = current_rva!();
+            idata.extend(lookup_table);
+            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IAT, iat_rva, 8);
+
+            macro_rules! u32 {
+                ($v:expr) => {
+                    U32Bytes::new(LittleEndian, $v)
+                };
+            }
+
+            // write import directory entries
+            let directory_rva = current_rva!();
+            idata.extend_from_slice(object::pod::bytes_of(&pe::ImageImportDescriptor {
+                original_first_thunk: u32!(import_lookup_rva),
+                time_date_stamp: u32!(0),
+                forwarder_chain: u32!(0),
+                name: u32!(import_rva),
+                first_thunk: u32!(iat_rva),
+            }));
+            idata.extend([0; 20]);
+            let section = writer.reserve_idata_section(idata.len() as u32);
+            // the writer sets the data dir to the whole section by default
+            // since we don't start the section with the import directory, we need to
+            // manually overwrite it with the directory RVA (set size to just cover the entries)
+            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IMPORT, directory_rva, 40);
+
+            // write entry point to beginning of text section
+            text.extend([0xff, 0x25]);
+            text.extend(iat_rva.to_le_bytes());
+
+            Some((idata, section))
+        } else {
+            None
+        };
+
+        let text_rva = writer.virtual_len();
+        macro_rules! current_rva {
+            () => {
+                text_rva + text.len() as u32
             };
         }
+
+        // TODO: write metadata into text
+        // field RVAs, method bodies, heaps, metadata
 
         macro_rules! heap_idx {
             ($heap:ident, $val:expr) => {
@@ -2268,6 +2360,7 @@ impl<'a> DLL<'a> {
         }
 
         let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
+        let mut bodies = Vec::new();
 
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
@@ -2467,7 +2560,14 @@ impl<'a> DLL<'a> {
                 write_marshal!(f.marshal, index::HasFieldMarshal::Field(field_idx));
                 write_default!(&f.default, index::HasConstant::Field(field_idx));
 
-                // TODO: rva
+                // TODO: change member type/semantics so that we don't copy the whole file on accident
+                if let Some(v) = f.start_of_initial_value {
+                    tables.field_rva.push(FieldRva {
+                        rva: current_rva!(),
+                        field: field_idx.into(),
+                    });
+                    text.extend_from_slice(v);
+                }
             }
 
             let mut all_methods: Vec<_> = t
@@ -2605,8 +2705,13 @@ impl<'a> DLL<'a> {
                     });
                 }
 
+                // all methods must be entered in the index_map before we start writing bodies
+                // so just set all RVAs to 0 right now and we'll go back and get them later
+                if let Some(b) = &m.body {
+                    bodies.push((tables.method_def.len(), b));
+                }
                 tables.method_def.push(MethodDef {
-                    rva: todo!(),
+                    rva: 0,
                     impl_flags: {
                         let mut mask = build_bitmask!(m,
                             forward_ref => 0x0010,
@@ -2691,7 +2796,7 @@ impl<'a> DLL<'a> {
                         });
 
                         write_marshal!(p.marshal, index::HasFieldMarshal::Param(param_idx));
-                        write_default!(p.default, index::HasConstant::Param(param_idx));
+                        write_default!(&p.default, index::HasConstant::Param(param_idx));
                     }
                 }
             }
@@ -2704,6 +2809,90 @@ impl<'a> DLL<'a> {
             UserMethod::Definition(m) => index::MethodDefOrRef::MethodDef(index_map[&m]),
             UserMethod::Reference(r) => index::MethodDefOrRef::MemberRef(r.0 + 1),
         };
+
+        for (def_idx, body) in bodies {
+            tables.method_def[def_idx].rva = current_rva!();
+
+            let instructions: Vec<crate::binary::il::Instruction> = todo!();
+            let body_size = instructions.iter().map(|i| i.bytesize()).sum();
+
+            let mut sections: Vec<_> = body
+                .data_sections
+                .iter()
+                .map(|d| {
+                    Ok(method::DataSection {
+                        section: match d {
+                            body::DataSection::Unrecognized { fat, size } => {
+                                method::SectionKind::Unrecognized {
+                                    is_fat: *fat,
+                                    length: *size,
+                                }
+                            }
+                            body::DataSection::ExceptionHandlers(_) => todo!(),
+                        },
+                        more_sections: true,
+                    })
+                })
+                .collect::<Result<_>>()?;
+            if let Some(last) = sections.last_mut() {
+                last.more_sections = false;
+            }
+
+            let m = method::Method {
+                header: if body_size < 64
+                    && body.header.maximum_stack_size <= 8
+                    && body.header.local_variables.is_empty()
+                    && !body.header.initialize_locals
+                    && body.data_sections.is_empty()
+                {
+                    method::Header::Tiny { size: body_size }
+                } else {
+                    let mut flags = 0x3;
+                    if !body.data_sections.is_empty() {
+                        flags |= 0x8;
+                    }
+                    if body.header.initialize_locals {
+                        flags |= 0x10;
+                    }
+
+                    let mut local_var_sig_tok = 0;
+                    if !body.header.local_variables.is_empty() {
+                        tables.stand_alone_sig.push(StandAloneSig {
+                            signature: convert::write::local_vars(
+                                &body.header.local_variables,
+                                build_ctx!(),
+                            )?,
+                        });
+
+                        let mut buf = [0u8; 4];
+                        buf.pwrite(
+                            index::Token {
+                                target: index::TokenTarget::Table(
+                                    metadata::table::Kind::StandAloneSig,
+                                ),
+                                index: tables.stand_alone_sig.len(),
+                            },
+                            0,
+                        )?;
+                        local_var_sig_tok = u32::from_le_bytes(buf);
+                    }
+
+                    method::Header::Fat {
+                        flags,
+                        max_stack: body.header.maximum_stack_size as u16,
+                        size: body_size,
+                        local_var_sig_tok,
+                    }
+                },
+                body: instructions,
+                data_sections: sections,
+            };
+
+            let mut buf = DynamicBuffer::with_increment(16);
+            buf.pwrite(m, 0)?;
+
+            text.extend_from_slice(buf.get());
+        }
 
         tables.method_impl.extend(
             overrides
@@ -2769,90 +2958,6 @@ impl<'a> DLL<'a> {
                 type_namespace: opt_heap!(strings, r.namespace),
             });
         }
-
-        // PE characteristics
-        // TODO
-        let is_32_bit = false;
-        let is_executable = true;
-
-        // writer setup
-        let mut buffer = vec![];
-        let mut writer = Writer::new(!is_32_bit, 0x200, 0x200, &mut buffer);
-
-        let mut num_sections = 1; // .text
-        if is_executable {
-            // add .idata and .reloc
-            num_sections += 2;
-        }
-
-        // begin reservations
-
-        writer.reserve_dos_header_and_stub();
-        writer.reserve_nt_headers(pe::IMAGE_NUMBEROF_DIRECTORY_ENTRIES);
-        writer.reserve_section_headers(num_sections);
-
-        let mut text = vec![];
-
-        // add import information
-        let imports = if is_executable {
-            let import_rva = writer.virtual_len();
-
-            let mut idata = Vec::with_capacity(0x100);
-            idata.extend(b"mscoree.dll\0");
-
-            macro_rules! current_rva {
-                () => {
-                    import_rva + idata.len() as u32
-                };
-            }
-
-            let hint_name_rva = current_rva!();
-            idata.extend(b"\0\0_CorExeMain\0");
-
-            let import_lookup_rva = current_rva!();
-            let mut lookup_table: Vec<u8> = vec![];
-            if is_32_bit {
-                lookup_table.extend(hint_name_rva.to_le_bytes());
-                lookup_table.extend([0; 4]);
-            } else {
-                lookup_table.extend((hint_name_rva as u64).to_le_bytes());
-                lookup_table.extend([0; 8]);
-            }
-            // write lookup table
-            idata.extend_from_slice(&lookup_table);
-
-            // write IAT
-            let iat_rva = current_rva!();
-            idata.extend(lookup_table);
-            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IAT, iat_rva, 8);
-
-            // write import directory entries
-            let directory_rva = current_rva!();
-            idata.extend_from_slice(object::pod::bytes_of(&pe::ImageImportDescriptor {
-                original_first_thunk: u32!(import_lookup_rva),
-                time_date_stamp: u32!(0),
-                forwarder_chain: u32!(0),
-                name: u32!(import_rva),
-                first_thunk: u32!(iat_rva),
-            }));
-            idata.extend([0; 20]);
-            let section = writer.reserve_idata_section(idata.len() as u32);
-            // the writer sets the data dir to the whole section by default
-            // since we don't start the section with the import directory, we need to
-            // manually overwrite it with the directory RVA (set size to just cover the entries)
-            writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IMPORT, directory_rva, 40);
-
-            // write entry point to beginning of text section
-            text.extend([0xff, 0x25]);
-            text.extend(iat_rva.to_le_bytes());
-
-            Some((idata, section))
-        } else {
-            None
-        };
-
-        // TODO: write metadata into text
-        // field RVAs, method bodies, heaps, metadata
 
         let text_range = writer.reserve_text_section(text.len() as u32);
 

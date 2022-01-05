@@ -375,7 +375,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
         trait InstructionField: Sized {
             fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self>;
-            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()>;
+            fn write(self, into: &mut scroll_buffer::DynamicBuffer, offset: &mut usize) -> scroll::Result<()>;
             fn bytesize(&self) -> usize;
         }
 
@@ -385,7 +385,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                     from.gread_with(offset, scroll::LE)
                 }
 
-                fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+                fn write(self, into: &mut scroll_buffer::DynamicBuffer, offset: &mut usize) -> scroll::Result<()> {
                     into.gwrite_with(self, offset, scroll::LE)?;
                     Ok(())
                 }
@@ -401,7 +401,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                 from.gread(offset)
             }
 
-            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+            fn write(self, into: &mut scroll_buffer::DynamicBuffer, offset: &mut usize) -> scroll::Result<()> {
                 into.gwrite(self, offset)?;
                 Ok(())
             }
@@ -420,7 +420,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                 Ok(result)
             }
 
-            fn write(self, into: &mut [u8], offset: &mut usize) -> scroll::Result<()> {
+            fn write(self, into: &mut scroll_buffer::DynamicBuffer, offset: &mut usize) -> scroll::Result<()> {
                 into.gwrite_with(self.len() as u32, offset, scroll::LE)?;
                 for i in self {
                     into.gwrite_with(i, offset, scroll::LE)?;
@@ -470,10 +470,10 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                 Ok((val, *offset))
             }
         }
-        impl scroll::ctx::TryIntoCtx for Instruction {
+        impl scroll::ctx::TryIntoCtx<(), scroll_buffer::DynamicBuffer> for Instruction {
             type Error = scroll::Error;
 
-            fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+            fn try_into_ctx(self, into: &mut scroll_buffer::DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
                 let offset = &mut 0;
 
                 match self {

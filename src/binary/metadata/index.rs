@@ -45,27 +45,23 @@ impl TryFromCtx<'_> for Token {
         ))
     }
 }
-impl TryIntoCtx for Token {
-    type Error = scroll::Error;
+try_into_ctx!(Token, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
+    let tag = match self.target {
+        TokenTarget::Table(k) => k.to_u8().unwrap(),
+        TokenTarget::UserString => 0x70,
+    };
 
-        let tag = match self.target {
-            TokenTarget::Table(k) => k.to_u8().unwrap(),
-            TokenTarget::UserString => 0x70,
-        };
+    // we know that the index is only 3 bytes long, so we can safely OR the tag into the top
+    into.gwrite_with(
+        ((tag as u32) << 24) | (self.index as u32),
+        offset,
+        scroll::LE,
+    )?;
 
-        // we know that the index is only 3 bytes long, so we can safely OR the tag into the top
-        into.gwrite_with(
-            ((tag as u32) << 24) | (self.index as u32),
-            offset,
-            scroll::LE,
-        )?;
-
-        Ok(*offset)
-    }
-}
+    Ok(*offset)
+});
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes<'a> {
