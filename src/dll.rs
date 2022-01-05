@@ -2057,8 +2057,9 @@ impl<'a> DLL<'a> {
             assembly::HashAlgorithm,
             generic::Variance,
             members::{
-                BodyFormat, BodyManagement, CharacterSet, FieldReferenceParent,
-                MethodReferenceParent, UnmanagedCallingConvention, UserMethod, VtableLayout,
+                BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue,
+                FieldReferenceParent, MethodReferenceParent, UnmanagedCallingConvention,
+                UserMethod, VtableLayout,
             },
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
@@ -2383,6 +2384,53 @@ impl<'a> DLL<'a> {
                 }};
             }
 
+            macro_rules! write_default {
+                ($d:expr, $owner:expr) => {{
+                    if let Some(c) = $d {
+                        use crate::binary::signature::encoded::*;
+                        use ConstantValue::*;
+
+                        macro_rules! blob {
+                            ($v:expr) => {
+                                heap_idx!(blobs, &$v.to_le_bytes())
+                            };
+                        }
+                        let (constant_type, value) = match c {
+                            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(if *b { 1u8 } else { 0u8 })),
+                            Char(u) => (ELEMENT_TYPE_CHAR, blob!(u)),
+                            Int8(i) => (ELEMENT_TYPE_I1, blob!(i)),
+                            UInt8(u) => (ELEMENT_TYPE_U1, blob!(u)),
+                            Int16(i) => (ELEMENT_TYPE_I2, blob!(i)),
+                            UInt16(u) => (ELEMENT_TYPE_U2, blob!(u)),
+                            Int32(i) => (ELEMENT_TYPE_I4, blob!(i)),
+                            UInt32(u) => (ELEMENT_TYPE_U4, blob!(u)),
+                            Int64(i) => (ELEMENT_TYPE_I8, blob!(i)),
+                            UInt64(u) => (ELEMENT_TYPE_U8, blob!(u)),
+                            Float32(f) => (ELEMENT_TYPE_R4, blob!(f)),
+                            Float64(f) => (ELEMENT_TYPE_R8, blob!(f)),
+                            String(cs) => (
+                                ELEMENT_TYPE_STRING,
+                                heap_idx!(
+                                    blobs,
+                                    &cs.iter()
+                                        .map(|c| c.to_le_bytes())
+                                        .flatten()
+                                        .collect::<Vec<_>>()
+                                ),
+                            ),
+                            Null => (ELEMENT_TYPE_CLASS, blob!(0u32)),
+                        };
+
+                        tables.constant.push(Constant {
+                            constant_type,
+                            padding: 0,
+                            parent: $owner,
+                            value,
+                        });
+                    }
+                }};
+            }
+
             tables.field.reserve(t.fields.len());
             for f in &t.fields {
                 let field_idx = tables.field.len() + 1;
@@ -2417,8 +2465,9 @@ impl<'a> DLL<'a> {
 
                 write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(field_idx));
                 write_marshal!(f.marshal, index::HasFieldMarshal::Field(field_idx));
+                write_default!(&f.default, index::HasConstant::Field(field_idx));
 
-                // TODO: default, rva
+                // TODO: rva
             }
 
             let mut all_methods: Vec<_> = t
@@ -2436,7 +2485,8 @@ impl<'a> DLL<'a> {
                 });
             }
             for (prop_idx, p) in t.properties.iter().enumerate() {
-                let association = Some(index::HasSemantics::Property(tables.property.len() + 1));
+                let table_idx = tables.property.len() + 1;
+                let association = Some(index::HasSemantics::Property(table_idx));
 
                 tables.property.push(Property {
                     flags: {
@@ -2452,7 +2502,7 @@ impl<'a> DLL<'a> {
                     property_type: convert::write::parameter(&p.property_type, build_ctx!())?,
                 });
 
-                // TODO: default
+                write_default!(&p.default, index::HasConstant::Property(table_idx));
 
                 all_methods.extend(
                     p.other
@@ -2615,7 +2665,6 @@ impl<'a> DLL<'a> {
                 }
 
                 write_pinvoke!(&m.pinvoke, index::MemberForwarded::MethodDef(def_index));
-
                 write_security!(&m.security, index::HasDeclSecurity::MethodDef(def_index));
 
                 tables.param.reserve(m.parameter_metadata.len());
@@ -2642,8 +2691,7 @@ impl<'a> DLL<'a> {
                         });
 
                         write_marshal!(p.marshal, index::HasFieldMarshal::Param(param_idx));
-
-                        // TODO: default
+                        write_default!(p.default, index::HasConstant::Param(param_idx));
                     }
                 }
             }
