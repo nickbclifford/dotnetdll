@@ -77,12 +77,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     type FieldsMap = HashMap<Ident, Vec<Field>>;
 
     // given a prefix variant and valid suffix targets, get fields from src_map and build combinations in dest_map
-    fn build_targets(
-        src_map: &FieldsMap,
-        dest_map: &mut FieldsMap,
-        prefix: &Variant,
-        targets: Vec<TargetIdent>,
-    ) {
+    fn build_targets(src_map: &FieldsMap, dest_map: &mut FieldsMap, prefix: &Variant, targets: Vec<TargetIdent>) {
         let mut result: Vec<Ident> = vec![];
 
         for t in targets {
@@ -105,8 +100,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
             // cannot be bothered to generalize this
             // Unaligned cannot be composed with Volatile for these instructions
             // ECMA-335, III.2.6 (page 322)
-            if prefix.ident == "Unaligned" && (t_str.contains("Ldsfld") || t_str.contains("Stsfld"))
-            {
+            if prefix.ident == "Unaligned" && (t_str.contains("Ldsfld") || t_str.contains("Stsfld")) {
                 continue;
             }
 
@@ -117,10 +111,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         }
     }
 
-    let normal_map: FieldsMap = normal
-        .iter()
-        .map(|v| (v.ident.clone(), fields(v)))
-        .collect();
+    let normal_map: FieldsMap = normal.iter().map(|v| (v.ident.clone(), fields(v))).collect();
 
     let mut prefixes_map = FieldsMap::new();
 
@@ -139,22 +130,14 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
             let id: Ident = c_attr.parse_args().unwrap();
 
             // for composition, the attribute argument is the only valid target
-            build_targets(
-                &prefixes_map,
-                &mut composed_map,
-                v,
-                vec![TargetIdent::Wildcard(id)],
-            );
+            build_targets(&prefixes_map, &mut composed_map, v, vec![TargetIdent::Wildcard(id)]);
         }
     }
 
     // builds unit variant if no fields, else builds tuple variant
     // impl IntoIterator avoids unnecessary Vec construction
     // impl ToTokens allows for usage with both variant definition and construction
-    fn make_variant(
-        id: &Ident,
-        iter: impl IntoIterator<Item = impl quote::ToTokens>,
-    ) -> proc_macro2::TokenStream {
+    fn make_variant(id: &Ident, iter: impl IntoIterator<Item = impl quote::ToTokens>) -> proc_macro2::TokenStream {
         let mut peek = iter.into_iter().peekable();
         if peek.peek().is_none() {
             quote! { #id }
@@ -170,9 +153,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
     // builds a sorted iterator of variants
     // they look much better in docs when sorted
-    fn build_sorted_variants(
-        map: &FieldsMap,
-    ) -> impl Iterator<Item = proc_macro2::TokenStream> + '_ {
+    fn build_sorted_variants(map: &FieldsMap) -> impl Iterator<Item = proc_macro2::TokenStream> + '_ {
         let mut sorted: Vec<_> = map.iter().collect();
         sorted.sort_by_key(|e| e.0);
         sorted.into_iter().map(|(i, f)| make_variant(i, f))
@@ -199,20 +180,14 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         // construct variant with InstructionField trait impl
         let parse = make_variant(
             id,
-            fields
-                .iter()
-                .map(|_| quote! { InstructionField::parse(from, offset)? }),
+            fields.iter().map(|_| quote! { InstructionField::parse(from, offset)? }),
         );
 
         let byte_writer = quote! { (#byte as u8) };
 
         // put match arm in correct bucket
         let (size, bucket, mut to_write) = if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
-            (
-                2_usize,
-                &mut extended_parses,
-                vec![quote! { 0xFE_u8 }, byte_writer],
-            )
+            (2_usize, &mut extended_parses, vec![quote! { 0xFE_u8 }, byte_writer])
         } else {
             (1_usize, &mut parses, vec![byte_writer])
         };
@@ -238,26 +213,30 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         // builds match arms for each valid suffix
         // the Vec construction is necessary to avoid lifetime problems
         let build_suffixes = |input_map: &FieldsMap, suffix_lookup: &FieldsMap| -> Vec<_> {
-            input_map.keys().filter_map(|id| {
-                let variant_name = id.to_string();
-                // only build for the current prefix
-                if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
-                    // remove the prefix name from the full variant to get the suffix name
-                    let bare_ident = Ident::new(bare, Span::call_site());
+            input_map
+                .keys()
+                .filter_map(|id| {
+                    let variant_name = id.to_string();
+                    // only build for the current prefix
+                    if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
+                        // remove the prefix name from the full variant to get the suffix name
+                        let bare_ident = Ident::new(bare, Span::call_site());
 
-                    // lookup number of fields on the suffix, build bindings for them
-                    let field_bindings: Vec<_> = (0..suffix_lookup[&bare_ident].len()).map(build_ident('f')).collect();
+                        // lookup number of fields on the suffix, build bindings for them
+                        let field_bindings: Vec<_> =
+                            (0..suffix_lookup[&bare_ident].len()).map(build_ident('f')).collect();
 
-                    let left = make_variant(&bare_ident, field_bindings.iter());
-                    // concat all the bindings together to build the final instruction
-                    let right = make_variant(id, prefix_bindings.iter().chain(field_bindings.iter()));
-                    Some(quote! {
-                        Instruction::#left => Instruction::#right
-                    })
-                } else {
-                    None
-                }
-            }).collect()
+                        let left = make_variant(&bare_ident, field_bindings.iter());
+                        // concat all the bindings together to build the final instruction
+                        let right = make_variant(id, prefix_bindings.iter().chain(field_bindings.iter()));
+                        Some(quote! {
+                            Instruction::#left => Instruction::#right
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
 
         let normal_suffixes = build_suffixes(&prefixes_map, &normal_map);
@@ -308,8 +287,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         let var = make_variant(&id, fields.iter());
 
         // include the base instruction size, then the bytesize of each field
-        let sizes = std::iter::once(quote! { #base_size })
-            .chain(fields.into_iter().map(|f| quote! { #f.bytesize() }));
+        let sizes = std::iter::once(quote! { #base_size }).chain(fields.into_iter().map(|f| quote! { #f.bytesize() }));
         // join with pluses to add
         quote! { Instruction::#var => #(#sizes)+* }
     });
@@ -360,11 +338,9 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     });
 
     // builds type names for InstructionField impls
-    let nums = [
-        "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
-    ]
-    .iter()
-    .map(|n| Ident::new(n, Span::call_site()));
+    let nums = ["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64"]
+        .iter()
+        .map(|n| Ident::new(n, Span::call_site()));
 
     quote! {
         use scroll::{Pread, Pwrite};

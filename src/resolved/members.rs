@@ -115,11 +115,7 @@ impl ResolvedDebug for FieldSource {
 
         match self {
             Definition(i) => {
-                format!(
-                    "{}.{}",
-                    res[i.parent_type].nested_type_name(res),
-                    res[*i].name
-                )
+                format!("{}.{}", res[i.parent_type].nested_type_name(res), res[*i].name)
             }
             Reference(i) => {
                 use FieldReferenceParent::*;
@@ -440,11 +436,7 @@ impl ResolvedDebug for MethodSource {
             Generic(g) => format!(
                 "({})<{}>",
                 g.base.show(res),
-                g.parameters
-                    .iter()
-                    .map(|p| p.show(res))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                g.parameters.iter().map(|p| p.show(res)).collect::<Vec<_>>().join(", ")
             ),
         }
     }
@@ -486,11 +478,7 @@ impl ResolvedDebug for Event<'_> {
         format!(
             "{} {}{}event {} {}",
             self.add_listener.accessibility,
-            if self.add_listener.static_member {
-                "static "
-            } else {
-                ""
-            },
+            if self.add_listener.static_member { "static " } else { "" },
             if self.add_listener.abstract_member {
                 "abstract "
             } else if self.add_listener.virtual_member {

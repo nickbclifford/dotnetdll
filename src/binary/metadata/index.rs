@@ -54,11 +54,7 @@ try_into_ctx!(Token, |self, into| {
     };
 
     // we know that the index is only 3 bytes long, so we can safely OR the tag into the top
-    into.gwrite_with(
-        ((tag as u32) << 24) | (self.index as u32),
-        offset,
-        scroll::LE,
-    )?;
+    into.gwrite_with(((tag as u32) << 24) | (self.index as u32), offset, scroll::LE)?;
 
     Ok(*offset)
 });
@@ -100,10 +96,7 @@ macro_rules! heap_index {
         impl<'a> TryFromCtx<'a, Sizes<'a>> for $name {
             type Error = scroll::Error;
 
-            fn try_from_ctx(
-                from: &'a [u8],
-                sizes: Sizes<'a>,
-            ) -> Result<(Self, usize), Self::Error> {
+            fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
                 let offset = &mut 0;
 
                 let idx = if sizes.heap[$idx] {

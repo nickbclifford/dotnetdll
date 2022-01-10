@@ -333,27 +333,33 @@ impl<'a> DLL<'a> {
                     } else {
                         throw!(
                             "invalid enclosing type index {} for nested class declaration of type {}",
-                            nest_idx, t.name
+                            nest_idx,
+                            t.name
                         );
                     }
                 }
-                None => throw!(
-                    "invalid type index {} for nested class declaration",
-                    nest_idx
-                ),
+                None => throw!("invalid type index {} for nested class declaration", nest_idx),
             }
         }
 
         let fields_len = tables.field.len();
         let method_len = tables.method_def.len();
 
-        let owned_fields = tables.type_def.iter().enumerate().map(|e| {
-            Ok(range_index!(enumerated e => range field_list in type_def, indexes field with len fields_len))
-        }).collect::<Result<Vec<_>>>()?;
+        let owned_fields = tables
+            .type_def
+            .iter()
+            .enumerate()
+            .map(|e| Ok(range_index!(enumerated e => range field_list in type_def, indexes field with len fields_len)))
+            .collect::<Result<Vec<_>>>()?;
 
-        let owned_methods = tables.type_def.iter().enumerate().map(|e| {
-            Ok(range_index!(enumerated e => range method_list in type_def, indexes method_def with len method_len))
-        }).collect::<Result<Vec<_>>>()?;
+        let owned_methods = tables
+            .type_def
+            .iter()
+            .enumerate()
+            .map(|e| {
+                Ok(range_index!(enumerated e => range method_list in type_def, indexes method_def with len method_len))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let files: Vec<_> = tables
             .file
@@ -450,11 +456,7 @@ impl<'a> DLL<'a> {
                                     type_def: if t_idx < types_len {
                                         TypeIndex(t_idx)
                                     } else {
-                                        throw!(
-                                            "invalid type definition index {} in exported type {}",
-                                            t_idx,
-                                            name
-                                        )
+                                        throw!("invalid type definition index {} in exported type {}", t_idx, name)
                                     },
                                     file: FileIndex(idx),
                                 }
@@ -468,11 +470,7 @@ impl<'a> DLL<'a> {
                             if idx < assembly_refs.len() {
                                 TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
                             } else {
-                                throw!(
-                                    "invalid assembly reference index {} in exported type {}",
-                                    idx,
-                                    name
-                                )
+                                throw!("invalid assembly reference index {} in exported type {}", idx, name)
                             }
                         }
                         Implementation::ExportedType(t) => {
@@ -480,25 +478,19 @@ impl<'a> DLL<'a> {
                             if idx < export_len {
                                 TypeImplementation::Nested(ExportedTypeIndex(idx))
                             } else {
-                                throw!(
-                                    "invalid nested type index {} in exported type {}",
-                                    idx,
-                                    name
-                                );
+                                throw!("invalid nested type index {} in exported type {}", idx, name);
                             }
                         }
-                        Implementation::Null => throw!(
-                            "invalid null implementation index for exported type {}",
-                            name
-                        ),
+                        Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
                     },
                 })
             })
             .collect::<Result<_>>()?;
 
-        let module_row = tables.module.first().ok_or_else(|| {
-            scroll::Error::Custom("missing required module metadata table".to_string())
-        })?;
+        let module_row = tables
+            .module
+            .first()
+            .ok_or_else(|| scroll::Error::Custom("missing required module metadata table".to_string()))?;
         let module = module::Module {
             attributes: vec![],
             name: heap_idx!(strings, module_row.name),
@@ -541,11 +533,7 @@ impl<'a> DLL<'a> {
                             if idx < module_refs.len() {
                                 ResolutionScope::ExternalModule(ModuleRefIndex(idx))
                             } else {
-                                throw!(
-                                    "invalid module reference index {} for type reference {}",
-                                    idx,
-                                    name
-                                )
+                                throw!("invalid module reference index {} for type reference {}", idx, name)
                             }
                         }
                         BinRS::AssemblyRef(a) => {
@@ -554,11 +542,7 @@ impl<'a> DLL<'a> {
                             if idx < assembly_refs.len() {
                                 ResolutionScope::Assembly(AssemblyRefIndex(idx))
                             } else {
-                                throw!(
-                                    "invalid assembly reference index {} for type reference {}",
-                                    idx,
-                                    name
-                                )
+                                throw!("invalid assembly reference index {} for type reference {}", idx, name)
                             }
                         }
                         BinRS::TypeRef(t) => {
@@ -566,11 +550,7 @@ impl<'a> DLL<'a> {
                             if idx < type_ref_len {
                                 ResolutionScope::Nested(TypeRefIndex(idx))
                             } else {
-                                throw!(
-                                    "invalid nested type index {} for type reference {}",
-                                    idx,
-                                    name
-                                );
+                                throw!("invalid nested type index {} for type reference {}", idx, name);
                             }
                         }
                         BinRS::Null => ResolutionScope::Exported,
@@ -683,10 +663,7 @@ impl<'a> DLL<'a> {
                 Some(&field) => {
                     get_field!(field).offset = Some(layout.offset as usize);
                 }
-                None => throw!(
-                    "bad parent field index {} for field layout specification",
-                    idx
-                ),
+                None => throw!("bad parent field index {} for field layout specification", idx),
             }
         }
 
@@ -719,8 +696,7 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, m.name);
 
-                let sig =
-                    convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+                let sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
                 let num_method_params = sig.parameters.len();
 
                 parent_methods.push(Method {
@@ -786,10 +762,7 @@ impl<'a> DLL<'a> {
         // since before then we know member index is a Method(usize)
         macro_rules! get_method {
             ($unwrap:expr) => {{
-                let MethodIndex {
-                    parent_type,
-                    member,
-                } = $unwrap;
+                let MethodIndex { parent_type, member } = $unwrap;
                 &mut types[parent_type.0].methods[match member {
                     MethodMemberIndex::Method(i) => i,
                     _ => unreachable!(),
@@ -838,11 +811,7 @@ impl<'a> DLL<'a> {
                     if idx < module_refs.len() {
                         ModuleRefIndex(idx)
                     } else {
-                        throw!(
-                            "invalid module reference index {} for PInvoke import {}",
-                            idx,
-                            name
-                        )
+                        throw!("invalid module reference index {} for PInvoke import {}", idx, name)
                     }
                 },
             });
@@ -940,10 +909,7 @@ impl<'a> DLL<'a> {
                             .enumerate()
                             .filter_map(|(c_idx, c)| {
                                 if c.owner.0 - 1 == idx {
-                                    let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(
-                                        c.constraint,
-                                        &ctx
-                                    ));
+                                    let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(c.constraint, &ctx));
                                     Some(Ok((
                                         c_idx,
                                         GenericConstraint {
@@ -980,11 +946,7 @@ impl<'a> DLL<'a> {
                     let idx = i - 1;
                     let method = match methods.get(idx) {
                         Some(&m) => get_method!(m),
-                        None => throw!(
-                            "invalid method index {} for generic parameter {}",
-                            idx,
-                            name
-                        ),
+                        None => throw!("invalid method index {} for generic parameter {}", idx, name),
                     };
 
                     method.generic_parameters.push(make_generic!());
@@ -1075,11 +1037,7 @@ impl<'a> DLL<'a> {
 
             let parent_props = match types.get_mut(type_idx) {
                 Some(t) => &mut t.properties,
-                None => throw!(
-                    "invalid parent type index {} for property map {}",
-                    type_idx,
-                    map_idx
-                ),
+                None => throw!("invalid parent type index {} for property map {}", type_idx, map_idx),
             };
 
             for (p_idx, prop) in range_index!(
@@ -1141,14 +1099,14 @@ impl<'a> DLL<'a> {
                     if t == 0 {
                         Null
                     } else {
-                        throw!("invalid class reference {:#010x} for constant {}, only null references allowed", t, idx)
+                        throw!(
+                            "invalid class reference {:#010x} for constant {}, only null references allowed",
+                            t,
+                            idx
+                        )
                     }
                 }
-                bad => throw!(
-                    "unrecognized element type {:#04x} for constant {}",
-                    bad,
-                    idx
-                ),
+                bad => throw!("unrecognized element type {:#04x} for constant {}", bad, idx),
             });
 
             match c.parent {
@@ -1170,11 +1128,7 @@ impl<'a> DLL<'a> {
                                 .unwrap()
                                 .default = value;
                         }
-                        None => throw!(
-                            "invalid parameter parent index {} for constant {}",
-                            p_idx,
-                            idx
-                        ),
+                        None => throw!("invalid parameter parent index {} for constant {}", p_idx, idx),
                     }
                 }
                 HasConstant::Property(i) => {
@@ -1184,11 +1138,7 @@ impl<'a> DLL<'a> {
                         Some(&(parent, internal)) => {
                             types[parent].properties[internal].default = value;
                         }
-                        None => throw!(
-                            "invalid property parent index {} for constant {}",
-                            f_idx,
-                            idx
-                        ),
+                        None => throw!("invalid property parent index {} for constant {}", f_idx, idx),
                     }
                 }
                 HasConstant::Null => throw!("invalid null parent index for constant {}", idx),
@@ -1302,10 +1252,7 @@ impl<'a> DLL<'a> {
                 HasSemantics::Event(i) => {
                     let idx = i - 1;
                     let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
-                        scroll::Error::Custom(format!(
-                            "invalid event index {} for method semantics",
-                            idx
-                        ))
+                        scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
                     })?;
                     let event = &mut parent.events[internal_idx];
 
@@ -1323,10 +1270,7 @@ impl<'a> DLL<'a> {
                 HasSemantics::Property(i) => {
                     let idx = i - 1;
                     let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
-                        scroll::Error::Custom(format!(
-                            "invalid property index {} for method semantics",
-                            idx
-                        ))
+                        scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
                     })?;
                     let property = &mut parent.properties[internal_idx];
 
@@ -1432,8 +1376,7 @@ impl<'a> DLL<'a> {
                     Err(_) => return None,
                 };
 
-                let mut signature =
-                    filter_map_try!(convert::read::managed_method(ref_sig.method_def, &ctx));
+                let mut signature = filter_map_try!(convert::read::managed_method(ref_sig.method_def, &ctx));
                 if signature.calling_convention == CallingConvention::Vararg {
                     signature.varargs = Some(filter_map_try!(ref_sig
                         .varargs
@@ -1588,14 +1531,14 @@ impl<'a> DLL<'a> {
                             Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
                             None => throw!(
                                 "invalid member reference index {} for constructor of custom attribute {}",
-                                r_idx, idx
-                            )
+                                r_idx,
+                                idx
+                            ),
                         }
                     }
-                    CustomAttributeType::Null => throw!(
-                        "invalid null index for constructor of custom attribute {}",
-                        idx
-                    ),
+                    CustomAttributeType::Null => {
+                        throw!("invalid null index for constructor of custom attribute {}", idx)
+                    }
                 },
                 value: optional_idx!(blobs, a.value),
             };
@@ -1609,13 +1552,11 @@ impl<'a> DLL<'a> {
                     let g = $g;
                     match g.owner {
                         TypeOrMethodDef::TypeDef(t) => {
-                            let $capt = &mut res.type_definitions[t - 1].generic_parameters
-                                [g.number as usize];
+                            let $capt = &mut res.type_definitions[t - 1].generic_parameters[g.number as usize];
                             $do;
                         }
                         TypeOrMethodDef::MethodDef(m) => {
-                            let $capt =
-                                &mut res[methods[m - 1]].generic_parameters[g.number as usize];
+                            let $capt = &mut res[methods[m - 1]].generic_parameters[g.number as usize];
                             $do;
                         }
                         TypeOrMethodDef::Null => unreachable!(),
@@ -1904,14 +1845,9 @@ impl<'a> DLL<'a> {
                             vec![]
                         } else {
                             let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
-                            if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
-                                && tok.index <= sig_len
-                            {
-                                let vars: LocalVarSig = heap_idx!(
-                                    blobs,
-                                    tables.stand_alone_sig[tok.index - 1].signature
-                                )
-                                .pread(0)?;
+                            if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig)) && tok.index <= sig_len {
+                                let vars: LocalVarSig =
+                                    heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature).pread(0)?;
 
                                 vars.0
                                     .into_iter()
@@ -1926,9 +1862,7 @@ impl<'a> DLL<'a> {
                                             } => LocalVariable::Variable {
                                                 custom_modifiers: custom_modifiers
                                                     .into_iter()
-                                                    .map(|c| {
-                                                        convert::read::custom_modifier(c, &ctx)
-                                                    })
+                                                    .map(|c| convert::read::custom_modifier(c, &ctx))
                                                     .collect::<Result<_>>()?,
                                                 pinned,
                                                 by_ref,
@@ -1938,11 +1872,7 @@ impl<'a> DLL<'a> {
                                     })
                                     .collect::<Result<Vec<_>>>()?
                             } else {
-                                throw!(
-                                    "invalid local variable signature token {:?} for method {}",
-                                    tok,
-                                    name
-                                );
+                                throw!("invalid local variable signature token {:?} for method {}", tok, name);
                             }
                         };
                         Header {
@@ -1972,8 +1902,9 @@ impl<'a> DLL<'a> {
                         use crate::binary::method::SectionKind;
                         Ok(match d.section {
                             SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
-                                e.into_iter().map(|h| {
-                                    macro_rules! get_offset {
+                                e.into_iter()
+                                    .map(|h| {
+                                        macro_rules! get_offset {
                                         ($byte:expr, $name:literal) => {{
                                             let max = instr_offsets.iter().max().unwrap();
 
@@ -1994,36 +1925,37 @@ impl<'a> DLL<'a> {
                                         }}
                                     }
 
-                                    let kind = match h.flags {
-                                        0 => ExceptionKind::TypedException(
-                                            convert::read::type_token(
+                                        let kind = match h.flags {
+                                            0 => ExceptionKind::TypedException(convert::read::type_token(
                                                 h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
-                                                &ctx
-                                            )?
-                                        ),
-                                        1 => ExceptionKind::Filter {
-                                            offset: get_offset!(h.class_token_or_filter, "filter")
-                                        },
-                                        2 => ExceptionKind::Finally,
-                                        4 => ExceptionKind::Fault,
-                                        bad => throw!("invalid exception clause type {:#06x}", bad)
-                                    };
+                                                &ctx,
+                                            )?),
+                                            1 => ExceptionKind::Filter {
+                                                offset: get_offset!(h.class_token_or_filter, "filter"),
+                                            },
+                                            2 => ExceptionKind::Finally,
+                                            4 => ExceptionKind::Fault,
+                                            bad => throw!("invalid exception clause type {:#06x}", bad),
+                                        };
 
-                                    let try_offset = get_offset!(h.try_offset, "try");
-                                    let handler_offset = get_offset!(h.handler_offset, "handler");
+                                        let try_offset = get_offset!(h.try_offset, "try");
+                                        let handler_offset = get_offset!(h.handler_offset, "handler");
 
-                                    Ok(Exception {
-                                        kind,
-                                        try_offset,
-                                        try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
-                                        handler_offset,
-                                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset
+                                        Ok(Exception {
+                                            kind,
+                                            try_offset,
+                                            try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
+                                            handler_offset,
+                                            handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
+                                                - handler_offset,
+                                        })
                                     })
-                                }).collect::<Result<_>>()?,
+                                    .collect::<Result<_>>()?,
                             ),
-                            SectionKind::Unrecognized {
-                                is_fat, length
-                            } => DataSection::Unrecognized { fat: is_fat, size: length },
+                            SectionKind::Unrecognized { is_fat, length } => DataSection::Unrecognized {
+                                fat: is_fat,
+                                size: length,
+                            },
                         })
                     })
                     .collect::<Result<_>>()?;
@@ -2031,9 +1963,7 @@ impl<'a> DLL<'a> {
                 let instrs = raw_instrs
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, i)| {
-                        convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx)
-                    })
+                    .map(|(idx, i)| convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx))
                     .collect::<Result<_>>()?;
 
                 res[methods[idx]].body = Some(Method {
@@ -2058,9 +1988,8 @@ impl<'a> DLL<'a> {
             body,
             generic::Variance,
             members::{
-                BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue,
-                FieldReferenceParent, FieldSource, MethodReferenceParent,
-                UnmanagedCallingConvention, UserMethod, VtableLayout,
+                BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue, FieldReferenceParent, FieldSource,
+                MethodReferenceParent, UnmanagedCallingConvention, UserMethod, VtableLayout,
             },
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
@@ -2284,9 +2213,7 @@ impl<'a> DLL<'a> {
             });
         }
 
-        tables
-            .manifest_resource
-            .reserve(res.manifest_resources.len());
+        tables.manifest_resource.reserve(res.manifest_resources.len());
         for r in &res.manifest_resources {
             tables.manifest_resource.push(ManifestResource {
                 offset: r.offset as u32,
@@ -2297,9 +2224,7 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, r.name),
                 implementation: match r.implementation {
                     Some(Implementation::File(f)) => index::Implementation::File(f.0 + 1),
-                    Some(Implementation::Assembly(a)) => {
-                        index::Implementation::AssemblyRef(a.0 + 1)
-                    }
+                    Some(Implementation::Assembly(a)) => index::Implementation::AssemblyRef(a.0 + 1),
                     None => index::Implementation::Null,
                 },
             });
@@ -2381,12 +2306,7 @@ impl<'a> DLL<'a> {
                     Some(t) => convert::write::source_index(t, build_ctx!())?,
                     None => metadata::index::TypeDefOrRef::Null,
                 },
-                field_list: if t.fields.is_empty() {
-                    0
-                } else {
-                    tables.field.len() + 1
-                }
-                .into(),
+                field_list: if t.fields.is_empty() { 0 } else { tables.field.len() + 1 }.into(),
                 method_list: if t.methods.is_empty() {
                     0
                 } else {
@@ -2506,10 +2426,7 @@ impl<'a> DLL<'a> {
                                 ELEMENT_TYPE_STRING,
                                 heap_idx!(
                                     blobs,
-                                    &cs.iter()
-                                        .map(|c| c.to_le_bytes())
-                                        .flatten()
-                                        .collect::<Vec<_>>()
+                                    &cs.iter().map(|c| c.to_le_bytes()).flatten().collect::<Vec<_>>()
                                 ),
                             ),
                             Null => (ELEMENT_TYPE_CLASS, blob!(0u32)),
@@ -2661,10 +2578,7 @@ impl<'a> DLL<'a> {
                 all_methods.extend(
                     [
                         (MethodMemberIndex::EventAdd(event_idx), &e.add_listener),
-                        (
-                            MethodMemberIndex::EventRemove(event_idx),
-                            &e.remove_listener,
-                        ),
+                        (MethodMemberIndex::EventRemove(event_idx), &e.remove_listener),
                     ]
                     .into_iter()
                     .chain(
@@ -2869,10 +2783,8 @@ impl<'a> DLL<'a> {
                 };
 
                 match i {
-                    Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o)
-                    | BltUn(o) | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => {
-                        convert_offset(o)
-                    }
+                    Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
+                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => convert_offset(o),
                     Switch(os) => os.iter_mut().for_each(convert_offset),
                     _ => continue,
                 }
@@ -2897,10 +2809,7 @@ impl<'a> DLL<'a> {
                     }
                 }
 
-                make_short!(
-                    Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse,
-                    Brtrue, Leave
-                );
+                make_short!(Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave);
             }
 
             let body_size = instructions.iter().map(|i| i.bytesize()).sum();
@@ -2910,12 +2819,10 @@ impl<'a> DLL<'a> {
                 .iter()
                 .map(|d| {
                     let section = match d {
-                        body::DataSection::Unrecognized { fat, size } => {
-                            method::SectionKind::Unrecognized {
-                                is_fat: *fat,
-                                length: *size,
-                            }
-                        }
+                        body::DataSection::Unrecognized { fat, size } => method::SectionKind::Unrecognized {
+                            is_fat: *fat,
+                            length: *size,
+                        },
                         body::DataSection::ExceptionHandlers(es) => {
                             let exs = es
                                 .iter()
@@ -2927,13 +2834,7 @@ impl<'a> DLL<'a> {
                                     match &e.kind {
                                         TypedException(t) => {
                                             let mut buf = [0; 4];
-                                            buf.pwrite(
-                                                index::Token::from(convert::write::index(
-                                                    t,
-                                                    build_ctx!(),
-                                                )?),
-                                                0,
-                                            )?;
+                                            buf.pwrite(index::Token::from(convert::write::index(t, build_ctx!())?), 0)?;
                                             class_token_or_filter = u32::from_le_bytes(buf);
                                         }
                                         Filter { offset } => {
@@ -2945,15 +2846,11 @@ impl<'a> DLL<'a> {
                                     let convert_pair = |off: usize, len: usize| {
                                         (
                                             offsets[off] as u32,
-                                            instructions[off..=off + len]
-                                                .iter()
-                                                .map(|i| i.bytesize() as u32)
-                                                .sum(),
+                                            instructions[off..=off + len].iter().map(|i| i.bytesize() as u32).sum(),
                                         )
                                     };
 
-                                    let (try_offset, try_length) =
-                                        convert_pair(e.try_offset, e.try_length);
+                                    let (try_offset, try_length) = convert_pair(e.try_offset, e.try_length);
                                     let (handler_offset, handler_length) =
                                         convert_pair(e.handler_offset, e.handler_length);
 
@@ -3005,18 +2902,13 @@ impl<'a> DLL<'a> {
                     let mut local_var_sig_tok = 0;
                     if !body.header.local_variables.is_empty() {
                         tables.stand_alone_sig.push(StandAloneSig {
-                            signature: convert::write::local_vars(
-                                &body.header.local_variables,
-                                build_ctx!(),
-                            )?,
+                            signature: convert::write::local_vars(&body.header.local_variables, build_ctx!())?,
                         });
 
                         let mut buf = [0u8; 4];
                         buf.pwrite(
                             index::Token {
-                                target: index::TokenTarget::Table(
-                                    metadata::table::Kind::StandAloneSig,
-                                ),
+                                target: index::TokenTarget::Table(metadata::table::Kind::StandAloneSig),
                                 index: tables.stand_alone_sig.len(),
                             },
                             0,
@@ -3041,15 +2933,13 @@ impl<'a> DLL<'a> {
             text.extend_from_slice(buf.get());
         }
 
-        tables.method_impl.extend(
-            overrides
-                .into_iter()
-                .map(|(parent, body, decl)| MethodImpl {
-                    class: parent,
-                    method_body: user_method(body),
-                    method_declaration: user_method(decl),
-                }),
-        );
+        tables
+            .method_impl
+            .extend(overrides.into_iter().map(|(parent, body, decl)| MethodImpl {
+                class: parent,
+                method_body: user_method(body),
+                method_declaration: user_method(decl),
+            }));
 
         macro_rules! type_to_parent {
             ($t:expr) => {
@@ -3070,9 +2960,7 @@ impl<'a> DLL<'a> {
                 class: match &m.parent {
                     MethodReferenceParent::Type(t) => type_to_parent!(t),
                     MethodReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
-                    MethodReferenceParent::VarargMethod(m) => {
-                        index::MemberRefParent::MethodDef(method_index_map[m])
-                    }
+                    MethodReferenceParent::VarargMethod(m) => index::MemberRefParent::MethodDef(method_index_map[m]),
                 },
                 name: heap_idx!(strings, m.name),
                 signature: convert::write::method_ref(&m.signature, build_ctx!())?,
@@ -3094,9 +2982,7 @@ impl<'a> DLL<'a> {
             tables.type_ref.push(TypeRef {
                 resolution_scope: match r.scope {
                     ResolutionScope::Nested(t) => index::ResolutionScope::TypeRef(t.0 + 1),
-                    ResolutionScope::ExternalModule(m) => {
-                        index::ResolutionScope::ModuleRef(m.0 + 1)
-                    }
+                    ResolutionScope::ExternalModule(m) => index::ResolutionScope::ModuleRef(m.0 + 1),
                     ResolutionScope::CurrentModule => index::ResolutionScope::Module(1),
                     ResolutionScope::Assembly(a) => index::ResolutionScope::AssemblyRef(a.0 + 1),
                     ResolutionScope::Exported => index::ResolutionScope::Null,
@@ -3119,9 +3005,7 @@ impl<'a> DLL<'a> {
         writer.write_dos_header_and_stub()?;
         writer.write_nt_headers(NtHeaders {
             machine: pe::IMAGE_FILE_MACHINE_AMD64,
-            time_date_stamp: match std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-            {
+            time_date_stamp: match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
                 Ok(d) => d.as_secs() as u32,
                 _ => 0,
             },
@@ -3134,11 +3018,7 @@ impl<'a> DLL<'a> {
             },
             major_linker_version: 6,
             minor_linker_version: 0,
-            address_of_entry_point: if is_executable {
-                text_range.virtual_address
-            } else {
-                0
-            },
+            address_of_entry_point: if is_executable { text_range.virtual_address } else { 0 },
             image_base: 0x0040_0000,
             major_operating_system_version: 5,
             minor_operating_system_version: 0,

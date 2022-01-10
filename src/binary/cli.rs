@@ -53,9 +53,7 @@ impl<'a> TryFromCtx<'a> for Metadata<'a> {
         let flags = from.gread_with(offset, scroll::LE)?;
         let n_streams: u16 = from.gread_with(offset, scroll::LE)?;
 
-        let headers = (0..n_streams)
-            .map(|_| from.gread(offset))
-            .collect::<Result<_, _>>()?;
+        let headers = (0..n_streams).map(|_| from.gread(offset)).collect::<Result<_, _>>()?;
 
         Ok((
             Metadata {

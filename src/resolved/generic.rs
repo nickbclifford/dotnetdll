@@ -50,10 +50,7 @@ impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
             write!(
                 buf,
                 "<{}>",
-                self.iter()
-                    .map(|p| p.name)
-                    .collect::<Vec<&str>>()
-                    .join(", ")
+                self.iter().map(|p| p.name).collect::<Vec<&str>>().join(", ")
             )
             .unwrap();
         }
@@ -62,10 +59,7 @@ impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
     }
 }
 
-pub fn show_constraints<T: ResolvedDebug>(
-    v: &[Generic<'_, T>],
-    res: &Resolution,
-) -> Option<String> {
+pub fn show_constraints<T: ResolvedDebug>(v: &[Generic<'_, T>], res: &Resolution) -> Option<String> {
     if v.iter()
         .any(|g| !(g.special_constraint.is_empty() && g.type_constraints.is_empty()))
     {
@@ -82,11 +76,7 @@ pub fn show_constraints<T: ResolvedDebug>(
                     if g.special_constraint.has_default_constructor {
                         constraints.push("new()".to_string());
                     }
-                    constraints.extend(
-                        g.type_constraints
-                            .iter()
-                            .map(|t| t.constraint_type.show(res)),
-                    );
+                    constraints.extend(g.type_constraints.iter().map(|t| t.constraint_type.show(res)));
 
                     if constraints.is_empty() {
                         String::new()

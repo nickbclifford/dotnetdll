@@ -75,13 +75,7 @@ impl<T: std::fmt::Debug> ResolvedDebug for MethodSignature<T> {
             buf.push_str("static ");
         }
 
-        write!(
-            buf,
-            "{} ({})",
-            self.return_type.show(res),
-            self.show_parameters(res)
-        )
-        .unwrap();
+        write!(buf, "{} ({})", self.return_type.show(res), self.show_parameters(res)).unwrap();
 
         buf
     }

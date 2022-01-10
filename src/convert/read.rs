@@ -9,10 +9,7 @@ use crate::{
         },
         signature::{
             encoded::*,
-            kinds::{
-                MethodDefSig, MethodSpec as MethodSpecSig, StandAloneCallingConvention,
-                StandAloneMethodSig,
-            },
+            kinds::{MethodDefSig, MethodSpec as MethodSpecSig, StandAloneCallingConvention, StandAloneMethodSig},
         },
     },
     dll::{DLLError, Result},
@@ -45,26 +42,17 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -
             if idx < ctx.def_len {
                 Ok(UserType::Definition(TypeIndex(idx)))
             } else {
-                Err(format!(
-                    "invalid type definition index {} for user type",
-                    idx
-                ))
+                Err(format!("invalid type definition index {} for user type", idx))
             }
         }
         Table(Kind::TypeRef) => {
             if idx < ctx.ref_len {
                 Ok(UserType::Reference(TypeRefIndex(idx)))
             } else {
-                Err(format!(
-                    "invalid type reference index {} for user type",
-                    idx
-                ))
+                Err(format!("invalid type reference index {} for user type", idx))
             }
         }
-        bad => Err(format!(
-            "bad metadata token target {:?} for a user type",
-            bad
-        )),
+        bad => Err(format!("bad metadata token target {:?} for a user type", bad)),
     }
     .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
 }
@@ -83,10 +71,7 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
         Ok(BaseType::Type(TypeSource::Generic(GenericInstantiation {
             base_kind: kind,
             base: user_type(tok, ctx)?,
-            parameters: types
-                .into_iter()
-                .map(|t| T::from_sig(t, ctx))
-                .collect::<Result<_>>()?,
+            parameters: types.into_iter().map(|t| T::from_sig(t, ctx)).collect::<Result<_>>()?,
         })))
     };
 
@@ -136,9 +121,9 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
         TypeDefOrRef::TypeDef(i) => {
             let idx = i - 1;
             if idx < ctx.def_len {
-                Ok(T::from_base(BaseType::Type(TypeSource::User(
-                    UserType::Definition(TypeIndex(idx)),
-                ))))
+                Ok(T::from_base(BaseType::Type(TypeSource::User(UserType::Definition(
+                    TypeIndex(idx),
+                )))))
             } else {
                 throw!("invalid type definition index {} while parsing a type", idx)
             }
@@ -146,9 +131,9 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
         TypeDefOrRef::TypeRef(i) => {
             let idx = i - 1;
             if idx < ctx.ref_len {
-                Ok(T::from_base(BaseType::Type(TypeSource::User(
-                    UserType::Reference(TypeRefIndex(idx)),
-                ))))
+                Ok(T::from_base(BaseType::Type(TypeSource::User(UserType::Reference(
+                    TypeRefIndex(idx),
+                )))))
             } else {
                 throw!("invalid type reference index {} while parsing a type", idx)
             }
@@ -164,10 +149,7 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
     }
 }
 
-pub fn idx_with_mod<T: TypeKind>(
-    idx: TypeDefOrRef,
-    ctx: &Context,
-) -> Result<(Vec<CustomTypeModifier>, T)> {
+pub fn idx_with_mod<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<(Vec<CustomTypeModifier>, T)> {
     if let TypeDefOrRef::TypeSpec(i) = idx {
         let t_idx = i - 1;
         match ctx.specs.get(t_idx) {
@@ -233,12 +215,8 @@ macro_rules! def_method_sig {
                         .map(|c| custom_modifier(c, ctx))
                         .collect::<Result<_>>()?,
                     match sig.ret_type.1 {
-                        RetTypeType::Type(t) => {
-                            Some(ParameterType::Value(MethodType::from_sig(t, ctx)?))
-                        }
-                        RetTypeType::ByRef(t) => {
-                            Some(ParameterType::Ref(MethodType::from_sig(t, ctx)?))
-                        }
+                        RetTypeType::Type(t) => Some(ParameterType::Value(MethodType::from_sig(t, ctx)?)),
+                        RetTypeType::ByRef(t) => Some(ParameterType::Ref(MethodType::from_sig(t, ctx)?)),
                         RetTypeType::TypedByRef => Some(ParameterType::TypedReference),
                         RetTypeType::Void => None,
                     },
@@ -299,11 +277,7 @@ fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     }
 }
 
-fn method_source<'r, 'data>(
-    tok: Token,
-    ctx: &Context<'r, 'data>,
-    m_ctx: &MethodContext<'r>,
-) -> Result<MethodSource> {
+fn method_source<'r, 'data>(tok: Token, ctx: &Context<'r, 'data>, m_ctx: &MethodContext<'r>) -> Result<MethodSource> {
     use TokenTarget::*;
     Ok(match tok.target {
         Table(Kind::MethodSpec) => {
@@ -380,13 +354,11 @@ pub fn instruction<'r, 'data>(
                     let idx = $t.index - 1;
                     match ctx.sigs.get(idx) {
                         Some(s) => {
-                            let sig: StandAloneMethodSig =
-                                ctx.blobs.at_index(s.signature)?.pread(0)?;
+                            let sig: StandAloneMethodSig = ctx.blobs.at_index(s.signature)?.pread(0)?;
                             let mut parsed = maybe_unmanaged_method(sig.clone(), ctx)?;
                             if matches!(
                                 sig.calling_convention,
-                                StandAloneCallingConvention::Vararg
-                                    | StandAloneCallingConvention::Cdecl
+                                StandAloneCallingConvention::Vararg | StandAloneCallingConvention::Cdecl
                             ) {
                                 parsed.varargs = Some(
                                     sig.varargs
@@ -596,12 +568,7 @@ pub fn instruction<'r, 'data>(
             .try_into()
             .ok()
             .and_then(|other: usize| all_offsets.iter().position(|&o| o == other))
-            .ok_or_else(|| {
-                DLLError::CLI(scroll::Error::Custom(format!(
-                    "invalid instruction offset {}",
-                    i
-                )))
-            })
+            .ok_or_else(|| DLLError::CLI(scroll::Error::Custom(format!("invalid instruction offset {}", i))))
     };
 
     Ok(match instruction {
@@ -615,9 +582,7 @@ pub fn instruction<'r, 'data>(
         Bge(i) => Instruction::BranchGreaterOrEqual(NumberSign::Signed, convert_offset(i)?),
         BgeS(i) => Instruction::BranchGreaterOrEqual(NumberSign::Signed, convert_offset(i as i32)?),
         BgeUn(i) => Instruction::BranchGreaterOrEqual(NumberSign::Unsigned, convert_offset(i)?),
-        BgeUnS(i) => {
-            Instruction::BranchGreaterOrEqual(NumberSign::Unsigned, convert_offset(i as i32)?)
-        }
+        BgeUnS(i) => Instruction::BranchGreaterOrEqual(NumberSign::Unsigned, convert_offset(i as i32)?),
         Bgt(i) => Instruction::BranchGreater(NumberSign::Signed, convert_offset(i)?),
         BgtS(i) => Instruction::BranchGreater(NumberSign::Signed, convert_offset(i as i32)?),
         BgtUn(i) => Instruction::BranchGreater(NumberSign::Unsigned, convert_offset(i)?),
@@ -625,9 +590,7 @@ pub fn instruction<'r, 'data>(
         Ble(i) => Instruction::BranchLessOrEqual(NumberSign::Signed, convert_offset(i)?),
         BleS(i) => Instruction::BranchLessOrEqual(NumberSign::Signed, convert_offset(i as i32)?),
         BleUn(i) => Instruction::BranchLessOrEqual(NumberSign::Unsigned, convert_offset(i)?),
-        BleUnS(i) => {
-            Instruction::BranchLessOrEqual(NumberSign::Unsigned, convert_offset(i as i32)?)
-        }
+        BleUnS(i) => Instruction::BranchLessOrEqual(NumberSign::Unsigned, convert_offset(i as i32)?),
         Blt(i) => Instruction::BranchLess(NumberSign::Signed, convert_offset(i)?),
         BltS(i) => Instruction::BranchLess(NumberSign::Signed, convert_offset(i as i32)?),
         BltUn(i) => Instruction::BranchLess(NumberSign::Unsigned, convert_offset(i)?),

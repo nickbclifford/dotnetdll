@@ -110,16 +110,10 @@ impl TryIntoCtx for Header {
         self.tables.field_layout.sort_by_key(|r| r.field);
         self.tables.field_marshal.sort_by_key(|r| r.parent);
         self.tables.field_rva.sort_by_key(|r| r.field);
-        self.tables
-            .generic_param
-            .sort_by_key(|r| (r.owner, r.number));
-        self.tables
-            .generic_param_constraint
-            .sort_by_key(|r| r.owner);
+        self.tables.generic_param.sort_by_key(|r| (r.owner, r.number));
+        self.tables.generic_param_constraint.sort_by_key(|r| r.owner);
         self.tables.impl_map.sort_by_key(|r| r.member_forwarded);
-        self.tables
-            .interface_impl
-            .sort_by_key(|r| (r.class, r.interface));
+        self.tables.interface_impl.sort_by_key(|r| (r.class, r.interface));
         self.tables.method_impl.sort_by_key(|r| r.class);
         self.tables.method_semantics.sort_by_key(|r| r.association);
         self.tables.nested_class.sort_by_key(|r| r.nested_class);

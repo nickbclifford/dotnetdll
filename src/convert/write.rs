@@ -10,8 +10,8 @@ use crate::{
         signature::{
             encoded::{CustomMod, Param, ParamType, RetType, RetTypeType, Type as SType},
             kinds::{
-                FieldSig, LocalVar, LocalVarSig, MethodDefSig, MethodRefSig,
-                MethodSpec as MethodSpecSig, StandAloneMethodSig,
+                FieldSig, LocalVar, LocalVarSig, MethodDefSig, MethodRefSig, MethodSpec as MethodSpecSig,
+                StandAloneMethodSig,
             },
         },
     },
@@ -76,11 +76,7 @@ pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<
         TypeSource::User(u) => user_index(*u),
         TypeSource::Generic(g) => {
             let base = user_index(g.base).into();
-            let params = g
-                .parameters
-                .iter()
-                .map(|g| g.as_sig(ctx))
-                .collect::<Result<_>>()?;
+            let params = g.parameters.iter().map(|g| g.as_sig(ctx)).collect::<Result<_>>()?;
             into_index(
                 match g.base_kind {
                     InstantiationKind::Class => SType::GenericInstClass(base, params),
@@ -99,10 +95,7 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
     })
 }
 
-pub fn into_blob(
-    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>,
-    ctx: &mut Context,
-) -> Result<Blob> {
+pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
     ctx.blob_scratch.clear();
 
     ctx.blob_scratch.pwrite(sig, 0)?;
@@ -158,10 +151,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     })
 }
 
-fn maybe_unmanaged_method(
-    sig: &MaybeUnmanagedMethod,
-    ctx: &mut Context,
-) -> Result<StandAloneMethodSig> {
+fn maybe_unmanaged_method(sig: &MaybeUnmanagedMethod, ctx: &mut Context) -> Result<StandAloneMethodSig> {
     Ok(StandAloneMethodSig {
         has_this: sig.instance,
         explicit_this: sig.explicit_this,
@@ -262,11 +252,7 @@ pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> 
     into_blob(field_sig(f, ctx)?, ctx)
 }
 
-pub fn idx_with_modifiers(
-    t: &impl TypeKind,
-    mods: &[CustomTypeModifier],
-    ctx: &mut Context,
-) -> Result<TypeDefOrRef> {
+pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {
     if let Some(BaseType::Type(TypeSource::User(u))) = t.as_base() {
         Ok(user_index(*u))
     } else {
@@ -277,11 +263,7 @@ pub fn idx_with_modifiers(
         impl TryIntoCtx<(), DynamicBuffer> for Wrapper {
             type Error = scroll::Error;
 
-            fn try_into_ctx(
-                self,
-                buf: &mut DynamicBuffer,
-                _: (),
-            ) -> std::result::Result<usize, Self::Error> {
+            fn try_into_ctx(self, buf: &mut DynamicBuffer, _: ()) -> std::result::Result<usize, Self::Error> {
                 let offset = &mut 0;
 
                 for m in self.0 {
@@ -335,11 +317,7 @@ pub struct MethodContext<'a, T, U> {
 pub fn instruction(
     instruction: &Instruction,
     ctx: &mut Context,
-    m_ctx: &mut MethodContext<
-        '_,
-        impl Fn(UserMethod) -> MethodDefOrRef,
-        impl Fn(FieldSource) -> Token,
-    >,
+    m_ctx: &mut MethodContext<'_, impl Fn(UserMethod) -> MethodDefOrRef, impl Fn(FieldSource) -> Token>,
 ) -> Result<BInstruction> {
     use Instruction::*;
     use NumberSign::*;
@@ -686,10 +664,9 @@ pub fn instruction(
             skip_null_check: true,
             method,
         } => BInstruction::NocheckCallvirt(check_mask(false, true, false), method_source!(method)),
-        CallVirtualConstrained { constraint, method } => BInstruction::ConstrainedCallvirt(
-            constraint.as_idx(ctx)?.into(),
-            method_source!(method),
-        ),
+        CallVirtualConstrained { constraint, method } => {
+            BInstruction::ConstrainedCallvirt(constraint.as_idx(ctx)?.into(), method_source!(method))
+        }
         CallVirtualTail(m) => BInstruction::TailCallvirt(method_source!(m)),
         CastClass {
             skip_type_check: false,
@@ -698,10 +675,7 @@ pub fn instruction(
         CastClass {
             skip_type_check: true,
             cast_type,
-        } => BInstruction::NocheckCastclass(
-            check_mask(true, false, false),
-            cast_type.as_idx(ctx)?.into(),
-        ),
+        } => BInstruction::NocheckCastclass(check_mask(true, false, false), cast_type.as_idx(ctx)?.into()),
         CopyObject(t) => BInstruction::Cpobj(t.as_idx(ctx)?.into()),
         InitializeForObject(t) => BInstruction::Initobj(t.as_idx(ctx)?.into()),
         IsInstance(t) => BInstruction::Isinst(t.as_idx(ctx)?.into()),
@@ -783,14 +757,8 @@ pub fn instruction(
             volatile: true,
             object_type,
         } => BInstruction::UnalignedVolatileLdobj((*a).into(), object_type.as_idx(ctx)?.into()),
-        LoadStaticField {
-            volatile: false,
-            field,
-        } => BInstruction::Ldsfld((m_ctx.field_source)(*field)),
-        LoadStaticField {
-            volatile: true,
-            field,
-        } => BInstruction::VolatileLdsfld((m_ctx.field_source)(*field)),
+        LoadStaticField { volatile: false, field } => BInstruction::Ldsfld((m_ctx.field_source)(*field)),
+        LoadStaticField { volatile: true, field } => BInstruction::VolatileLdsfld((m_ctx.field_source)(*field)),
         LoadStaticFieldAddress(f) => BInstruction::Ldsflda((m_ctx.field_source)(*f)),
         LoadString(s) => BInstruction::Ldstr(Token {
             target: TokenTarget::UserString,
@@ -879,14 +847,8 @@ pub fn instruction(
             volatile: true,
             object_type,
         } => BInstruction::UnalignedVolatileStobj((*a).into(), object_type.as_idx(ctx)?.into()),
-        StoreStaticField {
-            volatile: false,
-            field,
-        } => BInstruction::Stsfld((m_ctx.field_source)(*field)),
-        StoreStaticField {
-            volatile: true,
-            field,
-        } => BInstruction::VolatileStsfld((m_ctx.field_source)(*field)),
+        StoreStaticField { volatile: false, field } => BInstruction::Stsfld((m_ctx.field_source)(*field)),
+        StoreStaticField { volatile: true, field } => BInstruction::VolatileStsfld((m_ctx.field_source)(*field)),
         Throw => BInstruction::Throw,
         UnboxIntoAddress {
             skip_type_check: false,
@@ -895,10 +857,7 @@ pub fn instruction(
         UnboxIntoAddress {
             skip_type_check: true,
             unbox_type,
-        } => BInstruction::NocheckUnbox(
-            check_mask(true, false, false),
-            unbox_type.as_idx(ctx)?.into(),
-        ),
+        } => BInstruction::NocheckUnbox(check_mask(true, false, false), unbox_type.as_idx(ctx)?.into()),
         UnboxIntoValue(t) => BInstruction::UnboxAny(t.as_idx(ctx)?.into()),
     })
 }

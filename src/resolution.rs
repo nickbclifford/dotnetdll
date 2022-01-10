@@ -213,11 +213,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn set_property_getter(
-        &mut self,
-        property: PropertyIndex,
-        method: members::Method<'a>,
-    ) -> MethodIndex {
+    pub fn set_property_getter(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
         self[property].getter = Some(method);
         MethodIndex {
             parent_type: property.parent_type,
@@ -235,11 +231,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn set_property_setter(
-        &mut self,
-        property: PropertyIndex,
-        method: members::Method<'a>,
-    ) -> MethodIndex {
+    pub fn set_property_setter(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
         self[property].setter = Some(method);
         MethodIndex {
             parent_type: property.parent_type,
@@ -257,11 +249,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn push_property_other(
-        &mut self,
-        property: PropertyIndex,
-        method: members::Method<'a>,
-    ) -> MethodIndex {
+    pub fn push_property_other(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
         let methods = &mut self[property].other;
         methods.push(method);
         MethodIndex {
@@ -272,11 +260,7 @@ impl<'a> Resolution<'a> {
             },
         }
     }
-    pub fn property_other_index(
-        &self,
-        property: PropertyIndex,
-        index: usize,
-    ) -> Option<MethodIndex> {
+    pub fn property_other_index(&self, property: PropertyIndex, index: usize) -> Option<MethodIndex> {
         if index < self[property].other.len() {
             Some(MethodIndex {
                 parent_type: property.parent_type,
@@ -304,11 +288,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn set_event_raise(
-        &mut self,
-        event: EventIndex,
-        method: members::Method<'a>,
-    ) -> MethodIndex {
+    pub fn set_event_raise(&mut self, event: EventIndex, method: members::Method<'a>) -> MethodIndex {
         self[event].raise_event = Some(method);
         MethodIndex {
             parent_type: event.parent_type,
@@ -326,11 +306,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn push_event_other(
-        &mut self,
-        event: EventIndex,
-        method: members::Method<'a>,
-    ) -> MethodIndex {
+    pub fn push_event_other(&mut self, event: EventIndex, method: members::Method<'a>) -> MethodIndex {
         let methods = &mut self[event].other;
         methods.push(method);
         MethodIndex {

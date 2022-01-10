@@ -108,9 +108,7 @@ impl TryFromCtx<'_> for MethodDefSig {
 
     fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
         build_method_def(from, |len, offset| {
-            (0..len)
-                .map(|_| from.gread(offset))
-                .collect::<Result<_, _>>()
+            (0..len).map(|_| from.gread(offset)).collect::<Result<_, _>>()
         })
     }
 }
@@ -131,11 +129,7 @@ impl TryIntoCtx<(), DynamicBuffer> for MethodDefSig {
     }
 }
 
-fn build_params_with_varargs(
-    len: &mut u32,
-    from: &[u8],
-    offset: &mut usize,
-) -> scroll::Result<Vec<Param>> {
+fn build_params_with_varargs(len: &mut u32, from: &[u8], offset: &mut usize) -> scroll::Result<Vec<Param>> {
     let mut params = Vec::with_capacity(*len as usize);
     while *len > 0 {
         if from[*offset] == ELEMENT_TYPE_SENTINEL {
@@ -170,13 +164,7 @@ impl TryFromCtx<'_> for MethodRefSig {
             .map(|_| from.gread(&mut offset))
             .collect::<Result<_, _>>()?;
 
-        Ok((
-            MethodRefSig {
-                method_def,
-                varargs,
-            },
-            offset,
-        ))
+        Ok((MethodRefSig { method_def, varargs }, offset))
     }
 }
 macro_rules! ref_sig_impl {
@@ -263,9 +251,7 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         let ret_type = from.gread(offset)?;
 
         let params = build_params_with_varargs(&mut param_count, from, offset)?;
-        let varargs = (0..param_count)
-            .map(|_| from.gread(offset))
-            .collect::<Result<_, _>>()?;
+        let varargs = (0..param_count).map(|_| from.gread(offset)).collect::<Result<_, _>>()?;
 
         Ok((
             StandAloneMethodSig {
@@ -400,11 +386,7 @@ impl TryIntoCtx for PropertySig {
     fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        into.gwrite_with(
-            if self.has_this { 0x28_u8 } else { 0x8_u8 },
-            offset,
-            scroll::LE,
-        )?;
+        into.gwrite_with(if self.has_this { 0x28_u8 } else { 0x8_u8 }, offset, scroll::LE)?;
 
         into.gwrite(compressed::Unsigned(self.params.len() as u32), offset)?;
 
@@ -591,14 +573,8 @@ impl TryFromCtx<'_> for MarshalSpec {
         } else {
             Some(from.gread(offset)?)
         };
-        let length_parameter = from
-            .gread::<compressed::Unsigned>(offset)
-            .ok()
-            .map(|u| u.0 as usize);
-        let additional_elements = from
-            .gread::<compressed::Unsigned>(offset)
-            .ok()
-            .map(|u| u.0 as usize);
+        let length_parameter = from.gread::<compressed::Unsigned>(offset).ok().map(|u| u.0 as usize);
+        let additional_elements = from.gread::<compressed::Unsigned>(offset).ok().map(|u| u.0 as usize);
 
         Ok((
             Array {

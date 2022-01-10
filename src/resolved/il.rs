@@ -307,25 +307,13 @@ impl ResolvedDebug for Instruction {
             Call { tail_call, method } => {
                 format!("Call{}({})", modifiers!(tail!(tail_call)), method.show(res))
             }
-            CallIndirect {
-                tail_call,
-                signature,
-            } => format!(
-                "CallIndirect{}({})",
-                modifiers!(tail!(tail_call)),
-                signature.show(res)
-            ),
-            CopyMemoryBlock {
-                unaligned,
-                volatile,
-            } => format!(
-                "CopyMemoryBlock{}",
-                modifiers!(align!(unaligned), volatile!(volatile))
-            ),
-            InitializeMemoryBlock {
-                unaligned,
-                volatile,
-            } => format!(
+            CallIndirect { tail_call, signature } => {
+                format!("CallIndirect{}({})", modifiers!(tail!(tail_call)), signature.show(res))
+            }
+            CopyMemoryBlock { unaligned, volatile } => {
+                format!("CopyMemoryBlock{}", modifiers!(align!(unaligned), volatile!(volatile)))
+            }
+            InitializeMemoryBlock { unaligned, volatile } => format!(
                 "InitializeMemoryBlock{}",
                 modifiers!(align!(unaligned), volatile!(volatile))
             ),
@@ -358,11 +346,9 @@ impl ResolvedDebug for Instruction {
                 modifiers!(nonullcheck!(skip_null_check)),
                 method.show(res)
             ),
-            CallVirtualConstrained { constraint, method } => format!(
-                "CallVirtualConstrained({}, {})",
-                constraint.show(res),
-                method.show(res)
-            ),
+            CallVirtualConstrained { constraint, method } => {
+                format!("CallVirtualConstrained({}, {})", constraint.show(res), method.show(res))
+            }
             CallVirtualTail(m) => format!("CallVirtualTail({})", m.show(res)),
             CastClass {
                 skip_type_check,
@@ -381,10 +367,7 @@ impl ResolvedDebug for Instruction {
                 element_type,
             } => format!(
                 "LoadElement{}({})",
-                modifiers!(
-                    norangecheck!(skip_range_check),
-                    nonullcheck!(skip_null_check)
-                ),
+                modifiers!(norangecheck!(skip_range_check), nonullcheck!(skip_null_check)),
                 element_type.show(res)
             ),
             LoadElementPrimitive {
@@ -393,10 +376,7 @@ impl ResolvedDebug for Instruction {
                 element_type,
             } => format!(
                 "LoadElementPrimitive{}({:?})",
-                modifiers!(
-                    norangecheck!(skip_range_check),
-                    nonullcheck!(skip_null_check)
-                ),
+                modifiers!(norangecheck!(skip_range_check), nonullcheck!(skip_null_check)),
                 element_type
             ),
             LoadElementAddress {

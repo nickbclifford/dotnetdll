@@ -173,13 +173,7 @@ impl TryFromCtx<'_> for DataSection {
             SectionKind::Unrecognized { is_fat, length }
         };
 
-        Ok((
-            DataSection {
-                section,
-                more_sections,
-            },
-            *offset,
-        ))
+        Ok((DataSection { section, more_sections }, *offset))
     }
 }
 impl TryIntoCtx<(), DynamicBuffer> for DataSection {
@@ -197,16 +191,10 @@ impl TryIntoCtx<(), DynamicBuffer> for DataSection {
                 flags |= 0x1;
 
                 let should_be_fat = !es.iter().all(|e| {
-                    e.try_length < 256
-                        && e.handler_length < 256
-                        && e.try_offset < 65536
-                        && e.handler_offset < 65536
+                    e.try_length < 256 && e.handler_length < 256 && e.try_offset < 65536 && e.handler_offset < 65536
                 });
 
-                (
-                    should_be_fat,
-                    if should_be_fat { 24 } else { 12 } * es.len(),
-                )
+                (should_be_fat, if should_be_fat { 24 } else { 12 } * es.len())
             }
             Unrecognized { is_fat, length } => (*is_fat, *length),
         };
@@ -247,8 +235,7 @@ impl TryIntoCtx<(), DynamicBuffer> for DataSection {
                 }
             }
             Unrecognized {
-                length: section_length,
-                ..
+                length: section_length, ..
             } => {
                 // just skip any unknown sections
                 *offset += section_length;

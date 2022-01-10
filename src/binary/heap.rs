@@ -49,13 +49,9 @@ fn read_bytes(bytes: &[u8], idx: usize) -> Result<&[u8]> {
     bytes.pread_with(offset, size as usize)
 }
 
-heap_reader!(
-    StringsReader,
-    "#Strings",
-    index::String,
-    &'a str,
-    |self, idx| self.bytes.pread_with(idx.0, StrCtx::Delimiter(0))
-);
+heap_reader!(StringsReader, "#Strings", index::String, &'a str, |self, idx| self
+    .bytes
+    .pread_with(idx.0, StrCtx::Delimiter(0)));
 heap_reader!(BlobReader, "#Blob", index::Blob, &'a [u8], |self, idx| {
     read_bytes(self.bytes, idx.0)
 });
@@ -154,10 +150,7 @@ heap_writer!(
 );
 heap_writer!(
     BlobWriter,
-    (
-        vec![0],
-        HashMap::from([(hash(&[] as &Self::Value), 0.into())])
-    ),
+    (vec![0], HashMap::from([(hash(&[] as &Self::Value), 0.into())])),
     index::Blob,
     [u8],
     |self, value| {

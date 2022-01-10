@@ -268,8 +268,7 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
                     .find(|e| e.name == self.name && e.namespace == self.namespace)
                 {
                     Some(e) => match e.implementation {
-                        TypeImplementation::Nested(_) =>
-                            panic!("exported type ref scopes cannot be nested"),
+                        TypeImplementation::Nested(_) => panic!("exported type ref scopes cannot be nested"),
                         TypeImplementation::ModuleFile { file, .. } => res[file].name,
                         TypeImplementation::TypeForwarder(a) => res[a].name,
                     },
@@ -284,10 +283,7 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
 #[derive(Debug, Copy, Clone)]
 pub enum TypeImplementation {
     Nested(ExportedTypeIndex),
-    ModuleFile {
-        type_def: TypeIndex,
-        file: FileIndex,
-    },
+    ModuleFile { type_def: TypeIndex, file: FileIndex },
     TypeForwarder(AssemblyRefIndex),
 }
 
@@ -390,11 +386,7 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
             Generic(g) => format!(
                 "{}<{}>",
                 g.base.show(res),
-                g.parameters
-                    .iter()
-                    .map(|p| p.show(res))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                g.parameters.iter().map(|p| p.show(res)).collect::<Vec<_>>().join(", ")
             ),
         }
     }

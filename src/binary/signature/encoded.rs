@@ -308,9 +308,7 @@ impl TryFromCtx<'_> for Type {
                 let token = from.gread(offset)?;
 
                 let compressed::Unsigned(arg_count) = from.gread(offset)?;
-                let types = (0..arg_count)
-                    .map(|_| from.gread(offset))
-                    .collect::<Result<_, _>>()?;
+                let types = (0..arg_count).map(|_| from.gread(offset)).collect::<Result<_, _>>()?;
 
                 match next_tag {
                     ELEMENT_TYPE_CLASS => GenericInstClass(token, types),

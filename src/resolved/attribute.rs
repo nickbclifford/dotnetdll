@@ -88,10 +88,7 @@ fn process_def<'def, 'inst>(
             .fields
             .iter()
             .find(|f| f.name == "value__")
-            .ok_or(format!(
-                "cannot find underlying type for enum {}",
-                def.type_name()
-            ))
+            .ok_or(format!("cannot find underlying type for enum {}", def.type_name()))
             .and_then(|f| match &f.return_type {
                 MemberType::Base(b) => match &**b {
                     BaseType::Int8 => Ok(FieldOrPropType::Int8),
@@ -151,9 +148,7 @@ fn method_to_type<'def, 'inst>(
                 Float64 => FieldOrPropType::Float64,
                 String => FieldOrPropType::String,
                 Object => FieldOrPropType::Object,
-                Vector(_, v) => {
-                    FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?))
-                }
+                Vector(_, v) => FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?)),
                 bad => throw!("bad type {:?} in custom attribute constructor", bad),
             };
 
@@ -180,9 +175,10 @@ fn parse_named<'def, 'inst>(
         .map(|_| {
             let kind: u8 = src.gread_with(offset, scroll::LE)?;
             let f_type: FieldOrPropType = src.gread(offset)?;
-            let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
-                scroll::Error::Custom("null string name found when parsing".to_string())
-            })?;
+            let name = src
+                .gread::<SerString>(offset)?
+                .0
+                .ok_or_else(|| scroll::Error::Custom("null string name found when parsing".to_string()))?;
 
             let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
 
@@ -225,11 +221,7 @@ impl<'a> Attribute<'a> {
             UserMethod::Reference(r) => &resolution[*r].signature,
         };
 
-        let resolve = |s: &str| {
-            resolver
-                .find_type(s)
-                .map_err(|e| scroll::Error::Custom(e.to_string()))
-        };
+        let resolve = |s: &str| resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()));
 
         let fixed = sig
             .parameters
@@ -294,15 +286,11 @@ impl<'a> SecurityDeclaration<'a> {
         (0..num_attributes)
             .map(|_| {
                 let type_name = self.value.gread::<SerString>(offset)?.0.ok_or_else(|| {
-                    scroll::Error::Custom(
-                        "null attribute type name found when parsing security".to_string(),
-                    )
+                    scroll::Error::Custom("null attribute type name found when parsing security".to_string())
                 })?;
 
                 let fields = parse_named(self.value, offset, resolution, &|s| {
-                    resolver
-                        .find_type(s)
-                        .map_err(|e| scroll::Error::Custom(e.to_string()))
+                    resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
                 })?;
 
                 Ok(SecurityAttributeData { type_name, fields })
