@@ -1,20 +1,29 @@
 use super::TypeKind;
-use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
 use crate::{
     binary::{
-        heap::{BlobWriter, HeapWriter},
+        heap::{BlobWriter, HeapWriter, UserStringWriter},
+        il::Instruction as BInstruction,
         metadata::{
-            index::{Blob, TypeDefOrRef},
-            table::TypeSpec,
+            index::{Blob, MethodDefOrRef, Token, TokenTarget, TypeDefOrRef},
+            table::{Kind, MethodSpec, StandAloneSig, TypeSpec},
         },
         signature::{
             encoded::{CustomMod, Param, ParamType, RetType, RetTypeType, Type as SType},
-            kinds::{FieldSig, MethodDefSig, MethodRefSig, StandAloneMethodSig},
+            kinds::{
+                FieldSig, LocalVar, LocalVarSig, MethodDefSig, MethodRefSig,
+                MethodSpec as MethodSpecSig, StandAloneMethodSig,
+            },
         },
     },
     dll::Result,
-    resolved::{members::ExternalFieldReference, signature::*, types::*},
+    resolved::{
+        il::*,
+        members::{ExternalFieldReference, FieldSource, MethodSource, UserMethod},
+        signature::*,
+        types::*,
+    },
 };
+use paste::paste;
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
@@ -144,24 +153,31 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
                 None => None,
             },
         ),
-        FunctionPointer(sig) => SType::FnPtr(Box::new(StandAloneMethodSig {
-            has_this: sig.instance,
-            explicit_this: sig.explicit_this,
-            calling_convention: sig.calling_convention,
-            ret_type: ret_type_sig(&sig.return_type, ctx)?,
-            params: sig
-                .parameters
-                .iter()
-                .map(|p| parameter_sig(p, ctx))
-                .collect::<Result<_>>()?,
-            varargs: sig
-                .varargs
-                .iter()
-                .flatten()
-                .map(|p| parameter_sig(p, ctx))
-                .collect::<Result<_>>()?,
-        })),
+        FunctionPointer(sig) => SType::FnPtr(Box::new(maybe_unmanaged_method(sig, ctx)?)),
         _ => unreachable!(),
+    })
+}
+
+fn maybe_unmanaged_method(
+    sig: &MaybeUnmanagedMethod,
+    ctx: &mut Context,
+) -> Result<StandAloneMethodSig> {
+    Ok(StandAloneMethodSig {
+        has_this: sig.instance,
+        explicit_this: sig.explicit_this,
+        calling_convention: sig.calling_convention,
+        ret_type: ret_type_sig(&sig.return_type, ctx)?,
+        params: sig
+            .parameters
+            .iter()
+            .map(|p| parameter_sig(p, ctx))
+            .collect::<Result<_>>()?,
+        varargs: sig
+            .varargs
+            .iter()
+            .flatten()
+            .map(|p| parameter_sig(p, ctx))
+            .collect::<Result<_>>()?,
     })
 }
 
@@ -306,4 +322,583 @@ fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSi
 
 pub fn local_vars(vars: &[LocalVariable], ctx: &mut Context) -> Result<Blob> {
     into_blob(local_var_sig(vars, ctx)?, ctx)
+}
+
+pub struct MethodContext<'a, T, U> {
+    pub stand_alone_sigs: &'a mut Vec<StandAloneSig>,
+    pub method_specs: &'a mut Vec<MethodSpec>,
+    pub userstrings: &'a mut UserStringWriter,
+    pub user_method: &'a T,
+    pub field_source: &'a U,
+}
+
+pub fn instruction(
+    instruction: &Instruction,
+    ctx: &mut Context,
+    m_ctx: &mut MethodContext<
+        '_,
+        impl Fn(UserMethod) -> MethodDefOrRef,
+        impl Fn(FieldSource) -> Token,
+    >,
+) -> Result<BInstruction> {
+    use Instruction::*;
+    use NumberSign::*;
+
+    fn check_mask(skip_type: bool, skip_range: bool, skip_null: bool) -> u8 {
+        let mut mask = 0;
+        if skip_type {
+            mask |= 0x1;
+        }
+        if skip_range {
+            mask |= 0x2;
+        }
+        if skip_null {
+            mask |= 0x4;
+        }
+        mask
+    }
+
+    macro_rules! method_source {
+        ($m:ident) => {
+            match $m {
+                MethodSource::User(u) => (m_ctx.user_method)(*u).into(),
+                MethodSource::Generic(g) => {
+                    let idx = m_ctx.method_specs.len() + 1;
+
+                    m_ctx.method_specs.push(MethodSpec {
+                        method: (m_ctx.user_method)(g.base),
+                        instantiation: into_blob(
+                            MethodSpecSig(
+                                g.parameters
+                                    .iter()
+                                    .map(|t| t.as_sig(ctx))
+                                    .collect::<Result<Vec<_>>>()?,
+                            ),
+                            ctx,
+                        )?,
+                    });
+
+                    Token {
+                        target: TokenTarget::Table(Kind::MethodSpec),
+                        index: idx,
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! stand_alone_sig {
+        ($method_sig:ident) => {{
+            let sig = maybe_unmanaged_method($method_sig, ctx)?;
+            m_ctx.stand_alone_sigs.push(StandAloneSig {
+                signature: into_blob(sig, ctx)?,
+            });
+            Token {
+                target: TokenTarget::Table(Kind::StandAloneSig),
+                index: m_ctx.stand_alone_sigs.len(),
+            }
+        }};
+    }
+
+    macro_rules! short {
+        ($var:ident, $i:ty, $val:ident) => {
+            paste! {
+                match $i::try_from(*$val).ok() {
+                    Some(u) => BInstruction::[<$var S>](u),
+                    None => BInstruction::$var(*$val)
+                }
+            }
+        };
+    }
+
+    macro_rules! make_convert {
+        ($($src:ident => $dest:ident),+) => {
+            paste! {
+                macro_rules! convert {
+                    ($t:ident) => {
+                        match $t {
+                            $(ConversionType::$src => BInstruction::[<Conv $dest>]),+
+                        }
+                    }
+                }
+
+                macro_rules! convert_overflow {
+                    ($t:ident, $sign:ident) => {
+                        match ($t, $sign) {
+                            $(
+                                (ConversionType::$src, Signed) => BInstruction::[<ConvOvf $dest>],
+                            )+
+                            $(
+                                (ConversionType::$src, Unsigned) => BInstruction::[<ConvOvf $dest Un>]
+                            ),+
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    make_convert! {
+        Int8 => I1,
+        Int16 => I2,
+        Int32 => I4,
+        Int64 => I8,
+        UInt8 => U1,
+        UInt16 => U2,
+        UInt32 => U4,
+        UInt64 => U8,
+        IntPtr => I,
+        UIntPtr => U
+    }
+
+    macro_rules! indirect {
+        ($unaligned:ident, $volatile:ident, $ty:ident, $enum:ty => $instr:ident, { $($src:ident => $dest:ident),+ }) => {
+            paste! {
+                match ($unaligned, $volatile) {
+                    (None, false) => match $ty {
+                        $($enum::$src => BInstruction::[<$instr $dest>]),+
+                    },
+                    (None, true) => match $ty {
+                        $($enum::$src => BInstruction::[<Volatile $instr $dest>]),+
+                    },
+                    (Some(a), false) => match $ty {
+                        $($enum::$src => BInstruction::[<Unaligned $instr $dest>]((*a).into())),+
+                    },
+                    (Some(a), true) => match $ty {
+                        $($enum::$src => BInstruction::[<UnalignedVolatile $instr $dest>]((*a).into())),+
+                    }
+                }
+            }
+        }
+    }
+
+    macro_rules! element {
+        ($t:expr, $r:expr, $n:expr, $e:ident, $ty:ident => $prefix:ident, { $($src:ident => $dest:ident),+ }) => {
+            paste! {
+                match ($t, $r, $n) {
+                    (false, false, false) => match $e {
+                        $(
+                            $ty::$src => BInstruction::[<$prefix $dest>]
+                        ),+
+                    },
+                    (t, r, n) => match $e {
+                        $(
+                            $ty::$src => BInstruction::[<Nocheck $prefix $dest>](check_mask(t, r, n))
+                        ),+
+                    }
+                }
+            }
+        }
+    }
+
+    macro_rules! field {
+        ($u:ident, $v:ident, $f:ident, $instr:ident) => {{
+            let f = (m_ctx.field_source)(*$f);
+            paste! {
+                match ($u, $v) {
+                    (None, false) => BInstruction::$instr(f),
+                    (None, true) => BInstruction::[<Volatile $instr>](f),
+                    (Some(a), false) => BInstruction::[<Unaligned $instr>]((*a).into(), f),
+                    (Some(a), true) => BInstruction::[<UnalignedVolatile $instr>]((*a).into(), f),
+                }
+            }
+        }};
+    }
+
+    Ok(match instruction {
+        Add => BInstruction::Add,
+        AddOverflow(Signed) => BInstruction::AddOvf,
+        AddOverflow(Unsigned) => BInstruction::AddOvfUn,
+        And => BInstruction::And,
+        ArgumentList => BInstruction::Arglist,
+        BranchEqual(o) => BInstruction::Beq(*o as i32),
+        BranchGreaterOrEqual(Signed, o) => BInstruction::Bge(*o as i32),
+        BranchGreaterOrEqual(Unsigned, o) => BInstruction::BgeUn(*o as i32),
+        BranchGreater(Signed, o) => BInstruction::Bgt(*o as i32),
+        BranchGreater(Unsigned, o) => BInstruction::BgtUn(*o as i32),
+        BranchLessOrEqual(Signed, o) => BInstruction::Ble(*o as i32),
+        BranchLessOrEqual(Unsigned, o) => BInstruction::BleUn(*o as i32),
+        BranchLess(Signed, o) => BInstruction::Blt(*o as i32),
+        BranchLess(Unsigned, o) => BInstruction::BltUn(*o as i32),
+        BranchNotEqual(o) => BInstruction::BneUn(*o as i32),
+        Branch(o) => BInstruction::Br(*o as i32),
+        Breakpoint => BInstruction::Break,
+        BranchFalsy(o) => BInstruction::Brfalse(*o as i32),
+        BranchTruthy(o) => BInstruction::Brtrue(*o as i32),
+        Call {
+            tail_call: false,
+            method,
+        } => BInstruction::Call(method_source!(method)),
+        Call {
+            tail_call: true,
+            method,
+        } => BInstruction::TailCall(method_source!(method)),
+        CallIndirect {
+            tail_call: false,
+            signature,
+        } => BInstruction::Calli(stand_alone_sig!(signature)),
+        CallIndirect {
+            tail_call: true,
+            signature,
+        } => BInstruction::TailCalli(stand_alone_sig!(signature)),
+        CompareEqual => BInstruction::Ceq,
+        CompareGreater(Signed) => BInstruction::Cgt,
+        CompareGreater(Unsigned) => BInstruction::CgtUn,
+        CheckFinite => BInstruction::Ckfinite,
+        CompareLess(Signed) => BInstruction::Clt,
+        CompareLess(Unsigned) => BInstruction::CltUn,
+        Convert(t) => convert!(t),
+        ConvertOverflow(t, sign) => convert_overflow!(t, sign),
+        ConvertFloat32 => BInstruction::ConvR4,
+        ConvertFloat64 => BInstruction::ConvR8,
+        ConvertUnsignedToFloat => BInstruction::ConvRUn,
+        CopyMemoryBlock {
+            unaligned: None,
+            volatile: false,
+        } => BInstruction::Cpblk,
+        CopyMemoryBlock {
+            unaligned: None,
+            volatile: true,
+        } => BInstruction::VolatileCpblk,
+        CopyMemoryBlock {
+            unaligned: Some(a),
+            volatile: false,
+        } => BInstruction::UnalignedCpblk((*a).into()),
+        CopyMemoryBlock {
+            unaligned: Some(a),
+            volatile: true,
+        } => BInstruction::UnalignedVolatileCpblk((*a).into()),
+        Divide(Signed) => BInstruction::Div,
+        Divide(Unsigned) => BInstruction::DivUn,
+        Duplicate => BInstruction::Dup,
+        EndFilter => BInstruction::Endfilter,
+        EndFinally => BInstruction::Endfinally,
+        InitializeMemoryBlock {
+            unaligned: None,
+            volatile: false,
+        } => BInstruction::Initblk,
+        InitializeMemoryBlock {
+            unaligned: None,
+            volatile: true,
+        } => BInstruction::VolatileInitblk,
+        InitializeMemoryBlock {
+            unaligned: Some(a),
+            volatile: false,
+        } => BInstruction::UnalignedInitblk((*a).into()),
+        InitializeMemoryBlock {
+            unaligned: Some(a),
+            volatile: true,
+        } => BInstruction::UnalignedVolatileInitblk((*a).into()),
+        Jump(m) => BInstruction::Jmp(method_source!(m)),
+        LoadArgument(0) => BInstruction::Ldarg0,
+        LoadArgument(1) => BInstruction::Ldarg1,
+        LoadArgument(2) => BInstruction::Ldarg2,
+        LoadArgument(3) => BInstruction::Ldarg3,
+        LoadArgument(i) => short!(Ldarg, u8, i),
+        LoadArgumentAddress(i) => short!(Ldarga, u8, i),
+        LoadConstantInt32(0) => BInstruction::LdcI40,
+        LoadConstantInt32(1) => BInstruction::LdcI41,
+        LoadConstantInt32(2) => BInstruction::LdcI42,
+        LoadConstantInt32(3) => BInstruction::LdcI43,
+        LoadConstantInt32(4) => BInstruction::LdcI44,
+        LoadConstantInt32(5) => BInstruction::LdcI45,
+        LoadConstantInt32(6) => BInstruction::LdcI46,
+        LoadConstantInt32(7) => BInstruction::LdcI47,
+        LoadConstantInt32(8) => BInstruction::LdcI48,
+        LoadConstantInt32(-1) => BInstruction::LdcI4M1,
+        LoadConstantInt32(i) => short!(LdcI4, i8, i),
+        LoadConstantInt64(i) => BInstruction::LdcI8(*i),
+        LoadConstantFloat32(f) => BInstruction::LdcR4(*f),
+        LoadConstantFloat64(f) => BInstruction::LdcR8(*f),
+        LoadMethodPointer(m) => BInstruction::Ldftn(method_source!(m)),
+        LoadIndirect {
+            unaligned,
+            volatile,
+            value_type,
+        } => indirect!(unaligned, volatile, value_type, LoadType => Ldind, {
+            Int8 => I1,
+            Int16 => I2,
+            Int32 => I4,
+            Int64 => I8,
+            UInt8 => U1,
+            UInt16 => U2,
+            UInt32 => U4,
+            Float32 => R4,
+            Float64 => R8,
+            IntPtr => I,
+            Object => Ref
+        }),
+        LoadLocalVariable(0) => BInstruction::Ldloc0,
+        LoadLocalVariable(1) => BInstruction::Ldloc1,
+        LoadLocalVariable(2) => BInstruction::Ldloc2,
+        LoadLocalVariable(3) => BInstruction::Ldloc3,
+        LoadLocalVariable(i) => short!(Ldloc, u8, i),
+        LoadLocalVariableAddress(i) => short!(Ldloca, u8, i),
+        LoadNull => BInstruction::Ldnull,
+        Leave(o) => BInstruction::Leave(*o as i32),
+        LocalMemoryAllocate => BInstruction::Localloc,
+        Multiply => BInstruction::Mul,
+        MultiplyOverflow(Signed) => BInstruction::MulOvf,
+        MultiplyOverflow(Unsigned) => BInstruction::MulOvfUn,
+        Negate => BInstruction::Neg,
+        NoOperation => BInstruction::Nop,
+        Not => BInstruction::Not,
+        Or => BInstruction::Or,
+        Pop => BInstruction::Pop,
+        Remainder(Signed) => BInstruction::Rem,
+        Remainder(Unsigned) => BInstruction::RemUn,
+        Return => BInstruction::Ret,
+        ShiftLeft => BInstruction::Shl,
+        ShiftRight(Signed) => BInstruction::Shr,
+        ShiftRight(Unsigned) => BInstruction::ShrUn,
+        StoreArgument(i) => short!(Starg, u8, i),
+        StoreIndirect {
+            unaligned,
+            volatile,
+            value_type,
+        } => indirect!(unaligned, volatile, value_type, StoreType => Stind, {
+            Int8 => I1,
+            Int16 => I2,
+            Int32 => I4,
+            Int64 => I8,
+            Float32 => R4,
+            Float64 => R8,
+            IntPtr => I,
+            Object => Ref
+        }),
+        StoreLocal(0) => BInstruction::Stloc0,
+        StoreLocal(1) => BInstruction::Stloc1,
+        StoreLocal(2) => BInstruction::Stloc2,
+        StoreLocal(3) => BInstruction::Stloc3,
+        StoreLocal(i) => short!(Stloc, u8, i),
+        Subtract => BInstruction::Sub,
+        SubtractOverflow(Signed) => BInstruction::SubOvf,
+        SubtractOverflow(Unsigned) => BInstruction::SubOvfUn,
+        Switch(os) => BInstruction::Switch(os.iter().map(|&o| o as i32).collect()),
+        Xor => BInstruction::Xor,
+
+        Box(t) => BInstruction::Box(t.as_idx(ctx)?.into()),
+        CallVirtual {
+            skip_null_check: false,
+            method,
+        } => BInstruction::Callvirt(method_source!(method)),
+        CallVirtual {
+            skip_null_check: true,
+            method,
+        } => BInstruction::NocheckCallvirt(check_mask(false, true, false), method_source!(method)),
+        CallVirtualConstrained { constraint, method } => BInstruction::ConstrainedCallvirt(
+            constraint.as_idx(ctx)?.into(),
+            method_source!(method),
+        ),
+        CallVirtualTail(m) => BInstruction::TailCallvirt(method_source!(m)),
+        CastClass {
+            skip_type_check: false,
+            cast_type,
+        } => BInstruction::Castclass(cast_type.as_idx(ctx)?.into()),
+        CastClass {
+            skip_type_check: true,
+            cast_type,
+        } => BInstruction::NocheckCastclass(
+            check_mask(true, false, false),
+            cast_type.as_idx(ctx)?.into(),
+        ),
+        CopyObject(t) => BInstruction::Cpobj(t.as_idx(ctx)?.into()),
+        InitializeForObject(t) => BInstruction::Initobj(t.as_idx(ctx)?.into()),
+        IsInstance(t) => BInstruction::Isinst(t.as_idx(ctx)?.into()),
+        LoadElement {
+            skip_range_check: false,
+            skip_null_check: false,
+            element_type,
+        } => BInstruction::Ldelem(element_type.as_idx(ctx)?.into()),
+        LoadElement {
+            skip_range_check,
+            skip_null_check,
+            element_type,
+        } => BInstruction::NocheckLdelem(
+            check_mask(false, *skip_range_check, *skip_null_check),
+            element_type.as_idx(ctx)?.into(),
+        ),
+        LoadElementPrimitive {
+            skip_range_check,
+            skip_null_check,
+            element_type,
+        } => {
+            element!(false, *skip_range_check, *skip_null_check, element_type, LoadType => Ldelem, {
+                Int8 => I1,
+                Int16 => I2,
+                Int32 => I4,
+                Int64 => I8,
+                UInt8 => U1,
+                UInt16 => U2,
+                UInt32 => U4,
+                Float32 => R4,
+                Float64 => R8,
+                IntPtr => I,
+                Object => Ref
+            })
+        }
+        LoadElementAddress {
+            skip_type_check: false,
+            skip_range_check: false,
+            skip_null_check: false,
+            element_type,
+        } => BInstruction::Ldelema(element_type.as_idx(ctx)?.into()),
+        LoadElementAddress {
+            skip_type_check,
+            skip_range_check,
+            skip_null_check,
+            element_type,
+        } => BInstruction::NocheckLdelema(
+            check_mask(*skip_type_check, *skip_range_check, *skip_null_check),
+            element_type.as_idx(ctx)?.into(),
+        ),
+        LoadElementAddressReadonly(t) => BInstruction::ReadonlyLdelema(t.as_idx(ctx)?.into()),
+        LoadField {
+            unaligned,
+            volatile,
+            field,
+        } => field!(unaligned, volatile, field, Ldfld),
+        LoadFieldAddress(f) => BInstruction::Ldflda((m_ctx.field_source)(*f)),
+        LoadFieldSkipNullCheck(f) => {
+            BInstruction::NocheckLdfld(check_mask(false, false, true), (m_ctx.field_source)(*f))
+        }
+        LoadLength => BInstruction::Ldlen,
+        LoadObject {
+            unaligned: None,
+            volatile: false,
+            object_type,
+        } => BInstruction::Ldobj(object_type.as_idx(ctx)?.into()),
+        LoadObject {
+            unaligned: None,
+            volatile: true,
+            object_type,
+        } => BInstruction::VolatileLdobj(object_type.as_idx(ctx)?.into()),
+        LoadObject {
+            unaligned: Some(a),
+            volatile: false,
+            object_type,
+        } => BInstruction::UnalignedLdobj((*a).into(), object_type.as_idx(ctx)?.into()),
+        LoadObject {
+            unaligned: Some(a),
+            volatile: true,
+            object_type,
+        } => BInstruction::UnalignedVolatileLdobj((*a).into(), object_type.as_idx(ctx)?.into()),
+        LoadStaticField {
+            volatile: false,
+            field,
+        } => BInstruction::Ldsfld((m_ctx.field_source)(*field)),
+        LoadStaticField {
+            volatile: true,
+            field,
+        } => BInstruction::VolatileLdsfld((m_ctx.field_source)(*field)),
+        LoadStaticFieldAddress(f) => BInstruction::Ldsflda((m_ctx.field_source)(*f)),
+        LoadString(s) => BInstruction::Ldstr(Token {
+            target: TokenTarget::UserString,
+            index: m_ctx.userstrings.write(s)?,
+        }),
+        LoadTokenField(f) => BInstruction::Ldtoken((m_ctx.field_source)(*f)),
+        LoadTokenMethod(m) => BInstruction::Ldtoken(method_source!(m)),
+        LoadTokenType(t) => BInstruction::Ldtoken(t.as_idx(ctx)?.into()),
+        LoadVirtualMethodPointer {
+            skip_null_check: false,
+            method,
+        } => BInstruction::Ldvirtftn(method_source!(method)),
+        LoadVirtualMethodPointer {
+            skip_null_check: true,
+            method,
+        } => BInstruction::NocheckLdvirtftn(check_mask(false, false, true), method_source!(method)),
+        MakeTypedReference(t) => BInstruction::Mkrefany(t.as_idx(ctx)?.into()),
+        NewArray(t) => BInstruction::Newarr(t.as_idx(ctx)?.into()),
+        NewObject(m) => BInstruction::Newobj((m_ctx.user_method)(*m).into()),
+        ReadTypedReferenceType => BInstruction::Refanytype,
+        ReadTypedReferenceValue(t) => BInstruction::Refanyval(t.as_idx(ctx)?.into()),
+        Rethrow => BInstruction::Rethrow,
+        Sizeof(t) => BInstruction::Sizeof(t.as_idx(ctx)?.into()),
+        StoreElement {
+            skip_type_check: false,
+            skip_range_check: false,
+            skip_null_check: false,
+            element_type,
+        } => BInstruction::Stelem(element_type.as_idx(ctx)?.into()),
+        StoreElement {
+            skip_type_check,
+            skip_range_check,
+            skip_null_check,
+            element_type,
+        } => BInstruction::NocheckStelem(
+            check_mask(*skip_type_check, *skip_range_check, *skip_null_check),
+            element_type.as_idx(ctx)?.into(),
+        ),
+        StoreElementPrimitive {
+            skip_type_check,
+            skip_range_check,
+            skip_null_check,
+            element_type,
+        } => element!(
+            *skip_type_check,
+            *skip_range_check,
+            *skip_null_check,
+            element_type,
+            StoreType => Stelem,
+            {
+                Int8 => I1,
+                Int16 => I2,
+                Int32 => I4,
+                Int64 => I8,
+                Float32 => R4,
+                Float64 => R8,
+                IntPtr => I,
+                Object => Ref
+            }
+        ),
+        StoreField {
+            unaligned,
+            volatile,
+            field,
+        } => field!(unaligned, volatile, field, Stfld),
+        StoreFieldSkipNullCheck(f) => {
+            BInstruction::NocheckStfld(check_mask(false, false, true), (m_ctx.field_source)(*f))
+        }
+        StoreObject {
+            unaligned: None,
+            volatile: false,
+            object_type,
+        } => BInstruction::Stobj(object_type.as_idx(ctx)?.into()),
+        StoreObject {
+            unaligned: None,
+            volatile: true,
+            object_type,
+        } => BInstruction::VolatileStobj(object_type.as_idx(ctx)?.into()),
+        StoreObject {
+            unaligned: Some(a),
+            volatile: false,
+            object_type,
+        } => BInstruction::UnalignedStobj((*a).into(), object_type.as_idx(ctx)?.into()),
+        StoreObject {
+            unaligned: Some(a),
+            volatile: true,
+            object_type,
+        } => BInstruction::UnalignedVolatileStobj((*a).into(), object_type.as_idx(ctx)?.into()),
+        StoreStaticField {
+            volatile: false,
+            field,
+        } => BInstruction::Stsfld((m_ctx.field_source)(*field)),
+        StoreStaticField {
+            volatile: true,
+            field,
+        } => BInstruction::VolatileStsfld((m_ctx.field_source)(*field)),
+        Throw => BInstruction::Throw,
+        UnboxIntoAddress {
+            skip_type_check: false,
+            unbox_type,
+        } => BInstruction::Unbox(unbox_type.as_idx(ctx)?.into()),
+        UnboxIntoAddress {
+            skip_type_check: true,
+            unbox_type,
+        } => BInstruction::NocheckUnbox(
+            check_mask(true, false, false),
+            unbox_type.as_idx(ctx)?.into(),
+        ),
+        UnboxIntoValue(t) => BInstruction::UnboxAny(t.as_idx(ctx)?.into()),
+    })
 }

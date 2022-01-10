@@ -408,17 +408,6 @@ pub fn instruction<'r, 'data>(
         };
     }
 
-    macro_rules! callvirt {
-        ($token:ident | constraint $const:expr, nullcheck $null:expr, tailcall $tail:expr) => {
-            Instruction::CallVirtual {
-                constraint: $const,
-                skip_null_check: $null,
-                tail_call: $tail,
-                method: method_source($token, ctx, m_ctx)?,
-            }
-        };
-    }
-
     macro_rules! castclass {
         ($token:ident | typecheck $check:expr) => {
             Instruction::CastClass {
@@ -456,22 +445,9 @@ pub fn instruction<'r, 'data>(
         };
     }
 
-    macro_rules! ldelema {
-        ($t:ident | typecheck $type:expr, rangecheck $range:expr, nullcheck $null:expr, readonly $read:expr) => {
-            Instruction::LoadElementAddress {
-                skip_type_check: $type,
-                skip_range_check: $range,
-                skip_null_check: $null,
-                readonly: $read,
-                element_type: type_token($t, ctx)?,
-            }
-        };
-    }
-
     macro_rules! ldfld {
-        ($t:ident | nullcheck $null:expr, unaligned $align:expr, volatile $vol:expr) => {
+        ($t:ident | unaligned $align:expr, volatile $vol:expr) => {
             Instruction::LoadField {
-                skip_null_check: $null,
                 unaligned: $align,
                 volatile: $vol,
                 field: field_source($t, m_ctx)?,
@@ -546,9 +522,8 @@ pub fn instruction<'r, 'data>(
     }
 
     macro_rules! stfld {
-        ($t:ident | nullcheck $null:expr, unaligned $align:expr, volatile $vol:expr) => {
+        ($t:ident | unaligned $align:expr, volatile $vol:expr) => {
             Instruction::StoreField {
-                skip_null_check: $null,
                 unaligned: $align,
                 volatile: $vol,
                 field: field_source($t, m_ctx)?,
@@ -669,7 +644,10 @@ pub fn instruction<'r, 'data>(
         BrtrueS(i) => Instruction::BranchTruthy(convert_offset(i as i32)?),
         Call(t) => call!(t | tailcall false),
         Calli(t) => calli!(t | tailcall false),
-        Callvirt(t) => callvirt!(t | constraint None, nullcheck false, tailcall false),
+        Callvirt(t) => Instruction::CallVirtual {
+            skip_null_check: false,
+            method: method_source(t, ctx, m_ctx)?,
+        },
         Castclass(t) => castclass!(t | typecheck false),
         Ceq => Instruction::CompareEqual,
         Cgt => Instruction::CompareGreater(NumberSign::Signed),
@@ -677,159 +655,39 @@ pub fn instruction<'r, 'data>(
         Ckfinite => Instruction::CheckFinite,
         Clt => Instruction::CompareLess(NumberSign::Signed),
         CltUn => Instruction::CompareLess(NumberSign::Unsigned),
-        ConvI => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::IntPtr,
-            NumberSign::Signed,
-        ),
-        ConvI1 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::Int8,
-            NumberSign::Signed,
-        ),
-        ConvI2 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::Int16,
-            NumberSign::Signed,
-        ),
-        ConvI4 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::Int32,
-            NumberSign::Signed,
-        ),
-        ConvI8 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::Int64,
-            NumberSign::Signed,
-        ),
-        ConvOvfI => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::IntPtr,
-            NumberSign::Signed,
-        ),
-        ConvOvfI1 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int8,
-            NumberSign::Signed,
-        ),
-        ConvOvfI1Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int8,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfI2 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int16,
-            NumberSign::Signed,
-        ),
-        ConvOvfI2Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int16,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfI4 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int32,
-            NumberSign::Signed,
-        ),
-        ConvOvfI4Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int32,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfI8 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int64,
-            NumberSign::Signed,
-        ),
-        ConvOvfI8Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::Int64,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfIUn => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::IntPtr,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfU => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UIntPtr,
-            NumberSign::Signed,
-        ),
-        ConvOvfU1 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt8,
-            NumberSign::Signed,
-        ),
-        ConvOvfU1Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt8,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfU2 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt16,
-            NumberSign::Signed,
-        ),
-        ConvOvfU2Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt16,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfU4 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt32,
-            NumberSign::Signed,
-        ),
-        ConvOvfU4Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt32,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfU8 => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt64,
-            NumberSign::Signed,
-        ),
-        ConvOvfU8Un => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UInt64,
-            NumberSign::Unsigned,
-        ),
-        ConvOvfUUn => Instruction::Convert(
-            OverflowDetection::Check,
-            ConversionType::UIntPtr,
-            NumberSign::Unsigned,
-        ),
+        ConvI => Instruction::Convert(ConversionType::IntPtr),
+        ConvI1 => Instruction::Convert(ConversionType::Int8),
+        ConvI2 => Instruction::Convert(ConversionType::Int16),
+        ConvI4 => Instruction::Convert(ConversionType::Int32),
+        ConvI8 => Instruction::Convert(ConversionType::Int64),
+        ConvOvfI => Instruction::ConvertOverflow(ConversionType::IntPtr, NumberSign::Signed),
+        ConvOvfI1 => Instruction::ConvertOverflow(ConversionType::Int8, NumberSign::Signed),
+        ConvOvfI1Un => Instruction::ConvertOverflow(ConversionType::Int8, NumberSign::Unsigned),
+        ConvOvfI2 => Instruction::ConvertOverflow(ConversionType::Int16, NumberSign::Signed),
+        ConvOvfI2Un => Instruction::ConvertOverflow(ConversionType::Int16, NumberSign::Unsigned),
+        ConvOvfI4 => Instruction::ConvertOverflow(ConversionType::Int32, NumberSign::Signed),
+        ConvOvfI4Un => Instruction::ConvertOverflow(ConversionType::Int32, NumberSign::Unsigned),
+        ConvOvfI8 => Instruction::ConvertOverflow(ConversionType::Int64, NumberSign::Signed),
+        ConvOvfI8Un => Instruction::ConvertOverflow(ConversionType::Int64, NumberSign::Unsigned),
+        ConvOvfIUn => Instruction::ConvertOverflow(ConversionType::IntPtr, NumberSign::Unsigned),
+        ConvOvfU => Instruction::Convert(ConversionType::UIntPtr),
+        ConvOvfU1 => Instruction::ConvertOverflow(ConversionType::UInt8, NumberSign::Signed),
+        ConvOvfU1Un => Instruction::ConvertOverflow(ConversionType::UInt8, NumberSign::Unsigned),
+        ConvOvfU2 => Instruction::ConvertOverflow(ConversionType::UInt16, NumberSign::Signed),
+        ConvOvfU2Un => Instruction::ConvertOverflow(ConversionType::UInt16, NumberSign::Unsigned),
+        ConvOvfU4 => Instruction::ConvertOverflow(ConversionType::UInt32, NumberSign::Signed),
+        ConvOvfU4Un => Instruction::ConvertOverflow(ConversionType::UInt32, NumberSign::Unsigned),
+        ConvOvfU8 => Instruction::ConvertOverflow(ConversionType::UInt64, NumberSign::Signed),
+        ConvOvfU8Un => Instruction::ConvertOverflow(ConversionType::UInt64, NumberSign::Unsigned),
+        ConvOvfUUn => Instruction::ConvertOverflow(ConversionType::UIntPtr, NumberSign::Unsigned),
         ConvR4 => Instruction::ConvertFloat32,
         ConvR8 => Instruction::ConvertFloat64,
         ConvRUn => Instruction::ConvertUnsignedToFloat,
-        ConvU => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::UIntPtr,
-            NumberSign::Signed,
-        ),
-        ConvU1 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::UInt8,
-            NumberSign::Signed,
-        ),
-        ConvU2 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::UInt16,
-            NumberSign::Signed,
-        ),
-        ConvU4 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::UInt32,
-            NumberSign::Signed,
-        ),
-        ConvU8 => Instruction::Convert(
-            OverflowDetection::NoCheck,
-            ConversionType::UInt64,
-            NumberSign::Signed,
-        ),
+        ConvU => Instruction::Convert(ConversionType::UIntPtr),
+        ConvU1 => Instruction::Convert(ConversionType::UInt8),
+        ConvU2 => Instruction::Convert(ConversionType::UInt16),
+        ConvU4 => Instruction::Convert(ConversionType::UInt32),
+        ConvU8 => Instruction::Convert(ConversionType::UInt64),
         Cpblk => cpblk!(unaligned None, volatile false),
         Cpobj(t) => Instruction::CopyObject(type_token(t, ctx)?),
         Div => Instruction::Divide(NumberSign::Signed),
@@ -876,10 +734,13 @@ pub fn instruction<'r, 'data>(
         LdelemU1 => load_primitive!(UInt8),
         LdelemU2 => load_primitive!(UInt16),
         LdelemU4 => load_primitive!(UInt32),
-        Ldelema(t) => {
-            ldelema!(t | typecheck false, rangecheck false, nullcheck false, readonly false)
-        }
-        Ldfld(t) => ldfld!(t | nullcheck false, unaligned None, volatile false),
+        Ldelema(t) => Instruction::LoadElementAddress {
+            skip_type_check: false,
+            skip_range_check: false,
+            skip_null_check: false,
+            element_type: type_token(t, ctx)?,
+        },
+        Ldfld(t) => ldfld!(t | unaligned None, volatile false),
         Ldflda(t) => Instruction::LoadFieldAddress(field_source(t, m_ctx)?),
         Ldftn(t) => Instruction::LoadMethodPointer(method_source(t, ctx, m_ctx)?),
         LdindI => load_indirect!(IntPtr | unaligned None, volatile false),
@@ -967,7 +828,7 @@ pub fn instruction<'r, 'data>(
         StelemR4 => store_primitive!(Float32),
         StelemR8 => store_primitive!(Float64),
         StelemRef => store_primitive!(Object),
-        Stfld(t) => stfld!(t | nullcheck false, unaligned None, volatile false),
+        Stfld(t) => stfld!(t | unaligned None, volatile false),
         StindI => store_indirect!(IntPtr | unaligned None, volatile false),
         StindI1 => store_indirect!(Int8 | unaligned None, volatile false),
         StindI2 => store_indirect!(Int16 | unaligned None, volatile false),
@@ -992,12 +853,14 @@ pub fn instruction<'r, 'data>(
         Unbox(t) => unbox!(t | typecheck false),
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),
         Xor => Instruction::Xor,
-        ConstrainedCallvirt(c, t) => {
-            callvirt!(t | constraint Some(type_token(c, ctx)?), nullcheck false, tailcall false)
-        }
-        NocheckCallvirt(flags, t) => {
-            callvirt!(t | constraint None, nullcheck check_bitmask!(flags, 0x4), tailcall false)
-        }
+        ConstrainedCallvirt(c, t) => Instruction::CallVirtualConstrained {
+            constraint: type_token(c, ctx)?,
+            method: method_source(t, ctx, m_ctx)?,
+        },
+        NocheckCallvirt(flags, t) => Instruction::CallVirtual {
+            skip_null_check: check_bitmask!(flags, 0x4),
+            method: method_source(t, ctx, m_ctx)?,
+        },
         NocheckCastclass(flags, t) => castclass!(t | typecheck check_bitmask!(flags, 0x1)),
         NocheckLdelem(flags, t) => {
             ldelem!(t | rangecheck check_bitmask!(flags, 0x2), nullcheck check_bitmask!(flags, 0x4))
@@ -1013,14 +876,23 @@ pub fn instruction<'r, 'data>(
         NocheckLdelemU1(f) => load_primitive!(UInt8 | flags f),
         NocheckLdelemU2(f) => load_primitive!(UInt16 | flags f),
         NocheckLdelemU4(f) => load_primitive!(UInt32 | flags f),
-        NocheckLdelema(flags, t) => ldelema!(t |
-            typecheck check_bitmask!(flags, 0x1),
-            rangecheck check_bitmask!(flags, 0x2),
-            nullcheck check_bitmask!(flags, 0x4),
-            readonly false
-        ),
+        NocheckLdelema(flags, t) => Instruction::LoadElementAddress {
+            skip_type_check: check_bitmask!(flags, 0x1),
+            skip_range_check: check_bitmask!(flags, 0x2),
+            skip_null_check: check_bitmask!(flags, 0x4),
+            element_type: type_token(t, ctx)?,
+        },
         NocheckLdfld(flags, t) => {
-            ldfld!(t | nullcheck check_bitmask!(flags, 0x4), unaligned None, volatile false)
+            let field = field_source(t, m_ctx)?;
+            if check_bitmask!(flags, 0x4) {
+                Instruction::LoadFieldSkipNullCheck(field)
+            } else {
+                Instruction::LoadField {
+                    unaligned: None,
+                    volatile: false,
+                    field,
+                }
+            }
         }
         NocheckLdvirtftn(flags, t) => ldvirtftn!(t | nullcheck check_bitmask!(flags, 0x4)),
         NocheckStelem(flags, t) => stelem!(t |
@@ -1037,22 +909,26 @@ pub fn instruction<'r, 'data>(
         NocheckStelemR8(f) => store_primitive!(Float64 | flags f),
         NocheckStelemRef(f) => store_primitive!(Object | flags f),
         NocheckStfld(flags, t) => {
-            stfld!(t | nullcheck check_bitmask!(flags, 0x4), unaligned None, volatile false)
+            let field = field_source(t, m_ctx)?;
+            if check_bitmask!(flags, 0x4) {
+                Instruction::StoreFieldSkipNullCheck(field)
+            } else {
+                Instruction::StoreField {
+                    unaligned: None,
+                    volatile: false,
+                    field,
+                }
+            }
         }
         NocheckUnbox(flags, t) => unbox!(t | typecheck check_bitmask!(flags, 0x1)),
-        ReadonlyLdelema(t) => ldelema!(t |
-            typecheck false,
-            rangecheck false,
-            nullcheck false,
-            readonly true
-        ),
+        ReadonlyLdelema(t) => Instruction::LoadElementAddressReadonly(type_token(t, ctx)?),
         TailCall(t) => call!(t | tailcall true),
         TailCalli(t) => calli!(t | tailcall true),
-        TailCallvirt(t) => callvirt!(t | constraint None, nullcheck false, tailcall true),
+        TailCallvirt(t) => Instruction::CallVirtualTail(method_source(t, ctx, m_ctx)?),
         UnalignedCpblk(a) => cpblk!(unaligned alignment!(a), volatile false),
         UnalignedInitblk(a) => initblk!(unaligned alignment!(a), volatile false),
         UnalignedLdfld(a, t) => {
-            ldfld!(t | nullcheck false, unaligned alignment!(a), volatile false)
+            ldfld!(t | unaligned alignment!(a), volatile false)
         }
         UnalignedLdindI(a) => load_indirect!(IntPtr | unaligned alignment!(a), volatile false),
         UnalignedLdindI1(a) => load_indirect!(Int8 | unaligned alignment!(a), volatile false),
@@ -1067,7 +943,7 @@ pub fn instruction<'r, 'data>(
         UnalignedLdindU4(a) => load_indirect!(UInt32 | unaligned alignment!(a), volatile false),
         UnalignedLdobj(a, t) => ldobj!(t | unaligned alignment!(a), volatile false),
         UnalignedStfld(a, t) => {
-            stfld!(t | nullcheck false, unaligned alignment!(a), volatile false)
+            stfld!(t | unaligned alignment!(a), volatile false)
         }
         UnalignedStindI(a) => store_indirect!(IntPtr | unaligned alignment!(a), volatile false),
         UnalignedStindI1(a) => store_indirect!(Int8 | unaligned alignment!(a), volatile false),
@@ -1080,7 +956,7 @@ pub fn instruction<'r, 'data>(
         UnalignedStobj(a, t) => stobj!(t | unaligned alignment!(a), volatile false),
         VolatileCpblk => cpblk!(unaligned None, volatile true),
         VolatileInitblk => initblk!(unaligned None, volatile true),
-        VolatileLdfld(t) => ldfld!(t | nullcheck false, unaligned None, volatile true),
+        VolatileLdfld(t) => ldfld!(t | unaligned None, volatile true),
         VolatileLdindI => load_indirect!(IntPtr | unaligned None, volatile true),
         VolatileLdindI1 => load_indirect!(Int8 | unaligned None, volatile true),
         VolatileLdindI2 => load_indirect!(Int16 | unaligned None, volatile true),
@@ -1094,7 +970,7 @@ pub fn instruction<'r, 'data>(
         VolatileLdindU4 => load_indirect!(UInt32 | unaligned None, volatile true),
         VolatileLdobj(t) => ldobj!(t | unaligned None, volatile true),
         VolatileLdsfld(t) => ldsfld!(t | volatile true),
-        VolatileStfld(t) => stfld!(t | nullcheck false, unaligned None, volatile true),
+        VolatileStfld(t) => stfld!(t | unaligned None, volatile true),
         VolatileStindI => store_indirect!(IntPtr | unaligned None, volatile true),
         VolatileStindI1 => store_indirect!(Int8 | unaligned None, volatile true),
         VolatileStindI2 => store_indirect!(Int16 | unaligned None, volatile true),
@@ -1112,7 +988,7 @@ pub fn instruction<'r, 'data>(
             initblk!(unaligned alignment!(a), volatile true)
         }
         UnalignedVolatileLdfld(a, t) | VolatileUnalignedLdfld(a, t) => {
-            ldfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
+            ldfld!(t | unaligned alignment!(a), volatile true)
         }
         UnalignedVolatileLdindI(a) | VolatileUnalignedLdindI(a) => {
             load_indirect!(IntPtr | unaligned alignment!(a), volatile true)
@@ -1151,7 +1027,7 @@ pub fn instruction<'r, 'data>(
             ldobj!(t | unaligned alignment!(a), volatile true)
         }
         UnalignedVolatileStfld(a, t) | VolatileUnalignedStfld(a, t) => {
-            stfld!(t | nullcheck false, unaligned alignment!(a), volatile true)
+            stfld!(t | unaligned alignment!(a), volatile true)
         }
         UnalignedVolatileStindI(a) | VolatileUnalignedStindI(a) => {
             store_indirect!(IntPtr | unaligned alignment!(a), volatile true)

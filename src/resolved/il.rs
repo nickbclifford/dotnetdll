@@ -33,6 +33,16 @@ pub enum Alignment {
     Double,
     Quad,
 }
+impl From<Alignment> for u8 {
+    fn from(a: Alignment) -> Self {
+        use Alignment::*;
+        match a {
+            Byte => 1,
+            Double => 2,
+            Quad => 4,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum LoadType {
@@ -89,7 +99,8 @@ pub enum Instruction {
     CompareGreater(NumberSign),
     CheckFinite,
     CompareLess(NumberSign),
-    Convert(OverflowDetection, ConversionType, NumberSign),
+    Convert(ConversionType),
+    ConvertOverflow(ConversionType, NumberSign),
     ConvertFloat32,
     ConvertFloat64,
     ConvertUnsignedToFloat,
@@ -148,11 +159,14 @@ pub enum Instruction {
 
     Box(MethodType),
     CallVirtual {
-        constraint: Option<MethodType>,
         skip_null_check: bool,
-        tail_call: bool,
         method: MethodSource,
     },
+    CallVirtualConstrained {
+        constraint: MethodType,
+        method: MethodSource,
+    },
+    CallVirtualTail(MethodSource),
     CastClass {
         skip_type_check: bool,
         cast_type: MethodType,
@@ -174,16 +188,16 @@ pub enum Instruction {
         skip_type_check: bool,
         skip_range_check: bool,
         skip_null_check: bool,
-        readonly: bool,
         element_type: MethodType,
     },
+    LoadElementAddressReadonly(MethodType),
     LoadField {
-        skip_null_check: bool,
         unaligned: Option<Alignment>,
         volatile: bool,
         field: FieldSource,
     },
     LoadFieldAddress(FieldSource),
+    LoadFieldSkipNullCheck(FieldSource),
     LoadLength,
     LoadObject {
         unaligned: Option<Alignment>,
@@ -223,11 +237,11 @@ pub enum Instruction {
         element_type: StoreType,
     },
     StoreField {
-        skip_null_check: bool,
         unaligned: Option<Alignment>,
         volatile: bool,
         field: FieldSource,
     },
+    StoreFieldSkipNullCheck(FieldSource),
     StoreObject {
         unaligned: Option<Alignment>,
         volatile: bool,
@@ -261,14 +275,6 @@ impl ResolvedDebug for Instruction {
                     };
                 }
 
-                macro_rules! constraint {
-                    ($c:ident) => {
-                        if let Some(c) = $c {
-                            mods.push(format!("constraint {}", c.show(res)))
-                        }
-                    }
-                }
-
                 macro_rules! const_bool {
                     ($name:ident) => {
                         macro_rules! $name {
@@ -286,7 +292,6 @@ impl ResolvedDebug for Instruction {
                 const_bool!(notypecheck);
                 const_bool!(norangecheck);
                 const_bool!(nonullcheck);
-                const_bool!(readonly);
 
                 $($body;)*
 
@@ -346,19 +351,19 @@ impl ResolvedDebug for Instruction {
             ),
             Box(t) => format!("Box({})", t.show(res)),
             CallVirtual {
-                constraint,
                 skip_null_check,
-                tail_call,
                 method,
             } => format!(
                 "CallVirtual{}({})",
-                modifiers!(
-                    constraint!(constraint),
-                    nonullcheck!(skip_null_check),
-                    tail!(tail_call)
-                ),
+                modifiers!(nonullcheck!(skip_null_check)),
                 method.show(res)
             ),
+            CallVirtualConstrained { constraint, method } => format!(
+                "CallVirtualConstrained({}, {})",
+                constraint.show(res),
+                method.show(res)
+            ),
+            CallVirtualTail(m) => format!("CallVirtualTail({})", m.show(res)),
             CastClass {
                 skip_type_check,
                 cast_type,
@@ -398,33 +403,28 @@ impl ResolvedDebug for Instruction {
                 skip_type_check,
                 skip_range_check,
                 skip_null_check,
-                readonly,
                 element_type,
             } => format!(
                 "LoadElementAddress{}({})",
                 modifiers!(
                     notypecheck!(skip_type_check),
                     norangecheck!(skip_range_check),
-                    nonullcheck!(skip_null_check),
-                    readonly!(readonly)
+                    nonullcheck!(skip_null_check)
                 ),
                 element_type.show(res)
             ),
+            LoadElementAddressReadonly(t) => format!("LoadElementAddressReadonly({})", t.show(res)),
             LoadField {
-                skip_null_check,
                 unaligned,
                 volatile,
                 field,
             } => format!(
                 "LoadField{}({})",
-                modifiers!(
-                    nonullcheck!(skip_null_check),
-                    align!(unaligned),
-                    volatile!(volatile)
-                ),
+                modifiers!(align!(unaligned), volatile!(volatile)),
                 field.show(res)
             ),
             LoadFieldAddress(f) => format!("LoadFieldAddress({})", f.show(res)),
+            LoadFieldSkipNullCheck(f) => format!("LoadFieldSkipNullCheck({})", f.show(res)),
             LoadObject {
                 unaligned,
                 volatile,
@@ -486,19 +486,15 @@ impl ResolvedDebug for Instruction {
                 element_type
             ),
             StoreField {
-                skip_null_check,
                 unaligned,
                 volatile,
                 field,
             } => format!(
                 "StoreField{}({})",
-                modifiers!(
-                    nonullcheck!(skip_null_check),
-                    align!(unaligned),
-                    volatile!(volatile)
-                ),
+                modifiers!(align!(unaligned), volatile!(volatile)),
                 field.show(res)
             ),
+            StoreFieldSkipNullCheck(f) => format!("StoreFieldSkipNullCheck({})", f.show(res)),
             StoreObject {
                 unaligned,
                 volatile,

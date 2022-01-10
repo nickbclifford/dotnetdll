@@ -2059,8 +2059,8 @@ impl<'a> DLL<'a> {
             generic::Variance,
             members::{
                 BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue,
-                FieldReferenceParent, MethodReferenceParent, UnmanagedCallingConvention,
-                UserMethod, VtableLayout,
+                FieldReferenceParent, FieldSource, MethodReferenceParent,
+                UnmanagedCallingConvention, UserMethod, VtableLayout,
             },
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
@@ -2320,7 +2320,8 @@ impl<'a> DLL<'a> {
             });
         }
 
-        let mut index_map = HashMap::new();
+        let mut method_index_map = HashMap::new();
+        let mut field_index_map = HashMap::new();
 
         macro_rules! build_generic {
             ($g:expr, $owner:expr) => {{
@@ -2524,9 +2525,17 @@ impl<'a> DLL<'a> {
                 }};
             }
 
+            field_index_map.reserve(t.fields.len());
             tables.field.reserve(t.fields.len());
-            for f in &t.fields {
-                let field_idx = tables.field.len() + 1;
+            for (internal_idx, f) in t.fields.iter().enumerate() {
+                let table_idx = tables.field.len() + 1;
+                field_index_map.insert(
+                    FieldIndex {
+                        parent_type: TypeIndex(idx),
+                        field: internal_idx,
+                    },
+                    table_idx,
+                );
 
                 tables.field.push(Field {
                     flags: {
@@ -2556,15 +2565,15 @@ impl<'a> DLL<'a> {
                     signature: convert::write::blob_index(&f.return_type, build_ctx!())?,
                 });
 
-                write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(field_idx));
-                write_marshal!(f.marshal, index::HasFieldMarshal::Field(field_idx));
-                write_default!(&f.default, index::HasConstant::Field(field_idx));
+                write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(table_idx));
+                write_marshal!(f.marshal, index::HasFieldMarshal::Field(table_idx));
+                write_default!(&f.default, index::HasConstant::Field(table_idx));
 
                 // TODO: change member type/semantics so that we don't copy the whole file on accident
                 if let Some(v) = f.start_of_initial_value {
                     tables.field_rva.push(FieldRva {
                         rva: current_rva!(),
-                        field: field_idx.into(),
+                        field: table_idx.into(),
                     });
                     text.extend_from_slice(v);
                 }
@@ -2676,11 +2685,11 @@ impl<'a> DLL<'a> {
                 );
             }
 
-            index_map.reserve(all_methods.len());
+            method_index_map.reserve(all_methods.len());
             tables.method_def.reserve(all_methods.len());
             for (member_idx, assoc, m) in all_methods {
                 let def_index = tables.method_def.len() + 1;
-                index_map.insert(
+                method_index_map.insert(
                     MethodIndex {
                         parent_type: TypeIndex(idx),
                         member: member_idx,
@@ -2803,17 +2812,97 @@ impl<'a> DLL<'a> {
         }
 
         // NOTE: method ref indexes are the same as member ref indexes
-        // field refs come after method refs in the member ref table, so their indexes are (f + method_ref.len())
+        // field refs come after method refs in the member ref table, so their indexes are offset by method_ref.len()
 
-        let method_def_or_ref = |u: UserMethod| match u {
-            UserMethod::Definition(m) => index::MethodDefOrRef::MethodDef(index_map[&m]),
+        let user_method = |u: UserMethod| match u {
+            UserMethod::Definition(m) => index::MethodDefOrRef::MethodDef(method_index_map[&m]),
             UserMethod::Reference(r) => index::MethodDefOrRef::MemberRef(r.0 + 1),
+        };
+
+        let field_offset = res.method_references.len();
+        let field_source = |f: FieldSource| match f {
+            FieldSource::Definition(d) => index::Token {
+                target: index::TokenTarget::Table(Kind::Field),
+                index: field_index_map[&d],
+            },
+            FieldSource::Reference(r) => index::Token {
+                target: index::TokenTarget::Table(Kind::MemberRef),
+                index: r.0 + 1 + field_offset,
+            },
         };
 
         for (def_idx, body) in bodies {
             tables.method_def[def_idx].rva = current_rva!();
 
-            let instructions: Vec<crate::binary::il::Instruction> = todo!();
+            let ctx = build_ctx!();
+            let m_ctx = &mut convert::write::MethodContext {
+                stand_alone_sigs: &mut tables.stand_alone_sig,
+                method_specs: &mut tables.method_spec,
+                userstrings: &mut userstrings,
+                user_method: &user_method,
+                field_source: &field_source,
+            };
+
+            let mut instructions: Vec<_> = body
+                .body
+                .iter()
+                .map(|i| convert::write::instruction(i, ctx, m_ctx))
+                .collect::<Result<_>>()?;
+            let offsets: Vec<_> = instructions
+                .iter()
+                .scan(0, |state, i| {
+                    let my_offset = *state;
+                    *state += i.bytesize();
+                    Some(my_offset)
+                })
+                .collect();
+
+            // now that we have final bytesizes, we can fix offsets
+            for (i, &current_off) in instructions.iter_mut().zip(offsets.iter()) {
+                use crate::binary::il::Instruction::*;
+
+                let bytesize = i.bytesize();
+                let convert_offset = |o: &mut i32| {
+                    let base = current_off + bytesize;
+                    let target = offsets[*o as usize];
+                    *o = (target as i32) - (base as i32);
+                };
+
+                match i {
+                    Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o)
+                    | BltUn(o) | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => {
+                        convert_offset(o)
+                    }
+                    Switch(os) => os.iter_mut().for_each(convert_offset),
+                    _ => continue,
+                }
+
+                use paste::paste;
+
+                macro_rules! make_short {
+                    ($($ins:ident),+) => {
+                        match i {
+                            $(
+                                $ins(o) => match i8::try_from(*o) {
+                                    Ok(s) => {
+                                        paste! {
+                                            *i = [<$ins S>](s);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            )+
+                            _ => {}
+                        }
+                    }
+                }
+
+                make_short!(
+                    Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse,
+                    Brtrue, Leave
+                );
+            }
+
             let body_size = instructions.iter().map(|i| i.bytesize()).sum();
 
             let mut sections: Vec<_> = body
@@ -2899,8 +2988,8 @@ impl<'a> DLL<'a> {
                 .into_iter()
                 .map(|(parent, body, decl)| MethodImpl {
                     class: parent,
-                    method_body: method_def_or_ref(body),
-                    method_declaration: method_def_or_ref(decl),
+                    method_body: user_method(body),
+                    method_declaration: user_method(decl),
                 }),
         );
 
@@ -2924,7 +3013,7 @@ impl<'a> DLL<'a> {
                     MethodReferenceParent::Type(t) => type_to_parent!(t),
                     MethodReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
                     MethodReferenceParent::VarargMethod(m) => {
-                        index::MemberRefParent::MethodDef(index_map[m])
+                        index::MemberRefParent::MethodDef(method_index_map[m])
                     }
                 },
                 name: heap_idx!(strings, m.name),

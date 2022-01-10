@@ -544,10 +544,10 @@ impl TryFromCtx<'_> for MethodSpec {
         Ok((MethodSpec(types), *offset))
     }
 }
-impl TryIntoCtx for MethodSpec {
+impl TryIntoCtx<(), DynamicBuffer> for MethodSpec {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite_with(0x0a, offset, scroll::LE)?;

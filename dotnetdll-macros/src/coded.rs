@@ -47,6 +47,14 @@ pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::Toke
         }
     });
 
+    let token_match_arms = tables.iter().filter_map(|n| {
+        if n == "Unused" {
+            None
+        } else {
+            Some(quote! { #name::#n(i) => (Kind::#n, i) })
+        }
+    });
+
     quote! {
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         pub enum #name {
@@ -126,6 +134,20 @@ pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::Toke
                 match self {
                     #(#into_match_arms,)*
                     #name::Null => (0, 0)
+                }
+            }
+        }
+
+        impl From<#name> for Token {
+            fn from(i: #name) -> Self {
+                let (kind, index) = match i {
+                    #(#token_match_arms,)*
+                    #name::Null => (Kind::from_u8(0).unwrap(), 0) // whatever
+                };
+
+                Token {
+                    target: TokenTarget::Table(kind),
+                    index,
                 }
             }
         }
