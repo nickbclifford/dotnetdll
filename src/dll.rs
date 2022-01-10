@@ -2909,16 +2909,74 @@ impl<'a> DLL<'a> {
                 .data_sections
                 .iter()
                 .map(|d| {
-                    Ok(method::DataSection {
-                        section: match d {
-                            body::DataSection::Unrecognized { fat, size } => {
-                                method::SectionKind::Unrecognized {
-                                    is_fat: *fat,
-                                    length: *size,
-                                }
+                    let section = match d {
+                        body::DataSection::Unrecognized { fat, size } => {
+                            method::SectionKind::Unrecognized {
+                                is_fat: *fat,
+                                length: *size,
                             }
-                            body::DataSection::ExceptionHandlers(_) => todo!(),
-                        },
+                        }
+                        body::DataSection::ExceptionHandlers(es) => {
+                            let exs = es
+                                .iter()
+                                .map(|e| {
+                                    use body::ExceptionKind::*;
+
+                                    let mut class_token_or_filter = 0;
+
+                                    match &e.kind {
+                                        TypedException(t) => {
+                                            let mut buf = [0; 4];
+                                            buf.pwrite(
+                                                index::Token::from(convert::write::index(
+                                                    t,
+                                                    build_ctx!(),
+                                                )?),
+                                                0,
+                                            )?;
+                                            class_token_or_filter = u32::from_le_bytes(buf);
+                                        }
+                                        Filter { offset } => {
+                                            class_token_or_filter = *offset as u32;
+                                        }
+                                        _ => {}
+                                    }
+
+                                    let convert_pair = |off: usize, len: usize| {
+                                        (
+                                            offsets[off] as u32,
+                                            instructions[off..=off + len]
+                                                .iter()
+                                                .map(|i| i.bytesize() as u32)
+                                                .sum(),
+                                        )
+                                    };
+
+                                    let (try_offset, try_length) =
+                                        convert_pair(e.try_offset, e.try_length);
+                                    let (handler_offset, handler_length) =
+                                        convert_pair(e.handler_offset, e.handler_length);
+
+                                    Ok(method::Exception {
+                                        flags: match &e.kind {
+                                            TypedException(_) => 0x0,
+                                            Filter { .. } => 0x1,
+                                            Finally => 0x2,
+                                            Fault => 0x4,
+                                        },
+                                        try_offset,
+                                        try_length,
+                                        handler_offset,
+                                        handler_length,
+                                        class_token_or_filter,
+                                    })
+                                })
+                                .collect::<Result<_>>()?;
+                            method::SectionKind::Exceptions(exs)
+                        }
+                    };
+                    Ok(method::DataSection {
+                        section,
                         more_sections: true,
                     })
                 })

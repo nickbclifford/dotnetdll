@@ -87,11 +87,24 @@ impl TryIntoCtx<(), DynamicBuffer> for Exception {
     fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        into.gwrite_with(self.flags, offset, scroll::LE)?;
-        into.gwrite_with(self.try_offset, offset, scroll::LE)?;
-        into.gwrite_with(self.try_length, offset, scroll::LE)?;
-        into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
-        into.gwrite_with(self.handler_length, offset, scroll::LE)?;
+        if let (Ok(tlen), Ok(hlen), Ok(toff), Ok(hoff)) = (
+            u8::try_from(self.try_length),
+            u8::try_from(self.handler_length),
+            u16::try_from(self.try_offset),
+            u16::try_from(self.handler_offset),
+        ) {
+            into.gwrite_with(self.flags as u8, offset, scroll::LE)?;
+            into.gwrite_with(toff, offset, scroll::LE)?;
+            into.gwrite_with(tlen, offset, scroll::LE)?;
+            into.gwrite_with(hoff, offset, scroll::LE)?;
+            into.gwrite_with(hlen, offset, scroll::LE)?;
+        } else {
+            into.gwrite_with(self.try_offset, offset, scroll::LE)?;
+            into.gwrite_with(self.try_length, offset, scroll::LE)?;
+            into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
+            into.gwrite_with(self.handler_length, offset, scroll::LE)?;
+        }
+
         into.gwrite_with(self.class_token_or_filter, offset, scroll::LE)?;
 
         Ok(*offset)
