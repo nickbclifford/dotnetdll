@@ -2,7 +2,7 @@ use super::{
     binary::{
         cli::{Header, Metadata, RVASize},
         heap::*,
-        metadata, method,
+        metadata, method, stream,
     },
     convert,
     resolution::*,
@@ -78,11 +78,17 @@ impl<'a> DLL<'a> {
         let (sections, dir) = match FileKind::parse(bytes)? {
             FileKind::Pe32 => {
                 let file = PeFile32::parse(bytes)?;
-                (file.section_table(), file.data_directory(14))
+                (
+                    file.section_table(),
+                    file.data_directory(pe::IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR),
+                )
             }
             FileKind::Pe64 => {
                 let file = PeFile64::parse(bytes)?;
-                (file.section_table(), file.data_directory(14))
+                (
+                    file.section_table(),
+                    file.data_directory(pe::IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR),
+                )
             }
             _ => return Err(Other("invalid object type, must be PE32 or PE64")),
         };
@@ -1979,9 +1985,8 @@ impl<'a> DLL<'a> {
         Ok(res)
     }
 
-    // TODO
     pub fn write(res: &Resolution) -> Result<Vec<u8>> {
-        use metadata::{index, table::*};
+        use metadata::{header, index, table::*};
         use object::write::pe::*;
         use resolved::{
             assembly::HashAlgorithm,
@@ -1997,7 +2002,7 @@ impl<'a> DLL<'a> {
 
         // PE characteristics
         // TODO
-        let is_32_bit = false;
+        let is_32_bit = true;
         let is_executable = true;
 
         // writer setup
@@ -2088,9 +2093,6 @@ impl<'a> DLL<'a> {
                 text_rva + text.len() as u32
             };
         }
-
-        // TODO: write metadata into text
-        // field RVAs, method bodies, heaps, metadata
 
         macro_rules! heap_idx {
             ($heap:ident, $val:expr) => {
@@ -2238,6 +2240,8 @@ impl<'a> DLL<'a> {
             enc_base_id: 0.into(),
         });
 
+        // TODO: should we automatically push the <Module> type?
+
         tables.module_ref.reserve(res.module_references.len());
         for r in &res.module_references {
             tables.module_ref.push(ModuleRef {
@@ -2306,9 +2310,11 @@ impl<'a> DLL<'a> {
                     Some(t) => convert::write::source_index(t, build_ctx!())?,
                     None => metadata::index::TypeDefOrRef::Null,
                 },
-                field_list: if t.fields.is_empty() { 0 } else { tables.field.len() + 1 }.into(),
+                // for some reason, things break if I use 0 for null index instead of 1
+                // doesn't make any sense, but ildasm fully crashes otherwise
+                field_list: if t.fields.is_empty() { 1 } else { tables.field.len() + 1 }.into(),
                 method_list: if t.methods.is_empty() {
-                    0
+                    1
                 } else {
                     tables.method_def.len() + 1
                 }
@@ -2493,6 +2499,13 @@ impl<'a> DLL<'a> {
                         field: table_idx.into(),
                     });
                     text.extend_from_slice(v);
+                }
+
+                if let Some(o) = f.offset {
+                    tables.field_layout.push(FieldLayout {
+                        offset: o as u32,
+                        field: table_idx.into(),
+                    });
                 }
             }
 
@@ -2814,7 +2827,7 @@ impl<'a> DLL<'a> {
 
             let body_size = instructions.iter().map(|i| i.bytesize()).sum();
 
-            let mut sections: Vec<_> = body
+            let mut data_sections: Vec<_> = body
                 .data_sections
                 .iter()
                 .map(|d| {
@@ -2829,19 +2842,15 @@ impl<'a> DLL<'a> {
                                 .map(|e| {
                                     use body::ExceptionKind::*;
 
-                                    let mut class_token_or_filter = 0;
-
-                                    match &e.kind {
+                                    let class_token_or_filter = match &e.kind {
                                         TypedException(t) => {
                                             let mut buf = [0; 4];
                                             buf.pwrite(index::Token::from(convert::write::index(t, build_ctx!())?), 0)?;
-                                            class_token_or_filter = u32::from_le_bytes(buf);
+                                            u32::from_le_bytes(buf)
                                         }
-                                        Filter { offset } => {
-                                            class_token_or_filter = *offset as u32;
-                                        }
-                                        _ => {}
-                                    }
+                                        Filter { offset } => *offset as u32,
+                                        _ => 0,
+                                    };
 
                                     let convert_pair = |off: usize, len: usize| {
                                         (
@@ -2878,7 +2887,7 @@ impl<'a> DLL<'a> {
                     })
                 })
                 .collect::<Result<_>>()?;
-            if let Some(last) = sections.last_mut() {
+            if let Some(last) = data_sections.last_mut() {
                 last.more_sections = false;
             }
 
@@ -2899,8 +2908,7 @@ impl<'a> DLL<'a> {
                         flags |= 0x10;
                     }
 
-                    let mut local_var_sig_tok = 0;
-                    if !body.header.local_variables.is_empty() {
+                    let local_var_sig_tok = if !body.header.local_variables.is_empty() {
                         tables.stand_alone_sig.push(StandAloneSig {
                             signature: convert::write::local_vars(&body.header.local_variables, build_ctx!())?,
                         });
@@ -2913,8 +2921,10 @@ impl<'a> DLL<'a> {
                             },
                             0,
                         )?;
-                        local_var_sig_tok = u32::from_le_bytes(buf);
-                    }
+                        u32::from_le_bytes(buf)
+                    } else {
+                        0
+                    };
 
                     method::Header::Fat {
                         flags,
@@ -2924,7 +2934,7 @@ impl<'a> DLL<'a> {
                     }
                 },
                 body: instructions,
-                data_sections: sections,
+                data_sections,
             };
 
             let mut buf = DynamicBuffer::with_increment(16);
@@ -2991,6 +3001,145 @@ impl<'a> DLL<'a> {
                 type_namespace: opt_heap!(strings, r.namespace),
             });
         }
+
+        let entry_point_token = match res.entry_point {
+            Some(e) => {
+                let tok = match e {
+                    EntryPoint::Method(m) => index::Token {
+                        target: index::TokenTarget::Table(Kind::MethodDef),
+                        index: method_index_map[&m],
+                    },
+                    EntryPoint::File(f) => index::Token {
+                        target: index::TokenTarget::Table(Kind::File),
+                        index: f.0 + 1,
+                    },
+                };
+
+                let mut buf = [0u8; 4];
+                buf.pwrite(tok, 0)?;
+                u32::from_le_bytes(buf)
+            }
+            None => 0,
+        };
+
+        // begin writing
+
+        let strings_vec = strings.into_vec();
+        let guids_vec = guids.into_vec();
+        let blobs_vec = blobs.into_vec();
+        let userstrings_vec = userstrings.into_vec();
+
+        let header = header::Header {
+            reserved0: 0,
+            major_version: 2,
+            minor_version: 0,
+            heap_sizes: {
+                let mut mask = 0;
+
+                if strings_vec.len() >= (1usize << 16) {
+                    mask |= 0x01;
+                }
+                if guids_vec.len() >= (1usize << 16) {
+                    mask |= 0x02;
+                }
+                if blobs_vec.len() >= (1usize << 16) {
+                    mask |= 0x04;
+                }
+
+                mask
+            },
+            reserved1: 1,
+            valid: tables.valid_mask(),
+            sorted: Tables::sorted_mask(),
+            tables,
+        };
+
+        let mut header_buf = DynamicBuffer::with_increment(32);
+        header_buf.pwrite(header, 0)?;
+        let header_stream = header_buf.get();
+
+        const VERSION_STRING: &'static str = "Standard CLI 2005";
+
+        let streams: Vec<_> = [
+            (header_stream, "#~"),
+            (&strings_vec, StringsReader::NAME),
+            (&guids_vec, GUIDReader::NAME),
+            (&blobs_vec, BlobReader::NAME),
+            (&userstrings_vec, UserStringReader::NAME),
+        ]
+        .into_iter()
+        .filter(|(s, _)| !s.is_empty())
+        .collect();
+
+        // ECMA-335, II.24.2.1 (page 271)
+        let root_and_header_size: usize = 20usize
+            + crate::utils::round_up_to_4(VERSION_STRING.len() + 1usize).0
+            + streams
+                .iter()
+                .map(|(_, n)| {
+                    // add offset and size fields
+                    8 + crate::utils::round_up_to_4(n.len() + 1).0
+                })
+                .sum::<usize>();
+
+        let metadata_rva = current_rva!();
+
+        let mut metadata_buf = vec![0u8; root_and_header_size];
+        metadata_buf.pwrite(
+            Metadata {
+                signature: 0x424A5342, // magic value, same page of ECMA as above
+                major_version: 1,
+                minor_version: 1,
+                reserved: 0,
+                version: VERSION_STRING,
+                flags: 0,
+                stream_headers: streams
+                    .iter()
+                    .scan(root_and_header_size, |offset, (s, name)| {
+                        let prev = *offset;
+                        let size = s.len();
+                        *offset += size;
+
+                        Some(stream::Header {
+                            offset: prev as u32,
+                            size: size as u32,
+                            name,
+                        })
+                    })
+                    .collect(),
+            },
+            0,
+        )?;
+        for (s, _) in streams {
+            metadata_buf.extend(s);
+        }
+
+        let metadata_len = metadata_buf.len();
+        text.extend(metadata_buf);
+
+        let cli_rva = current_rva!();
+        let cli_header = Header {
+            cb: 72,
+            major_runtime_version: 0,
+            minor_runtime_version: 0,
+            metadata: RVASize {
+                rva: metadata_rva,
+                size: metadata_len as u32,
+            },
+            flags: pe::COMIMAGE_FLAGS_ILONLY,
+            entry_point_token,
+            resources: Default::default(),
+            strong_name_signature: Default::default(),
+            code_manager_table: Default::default(),
+            vtable_fixups: Default::default(),
+            export_address_table_jumps: Default::default(),
+            managed_native_header: Default::default(),
+        };
+        let mut header_buf = [0u8; 72];
+        header_buf.pwrite_with(cli_header, 0, scroll::LE)?;
+        text.extend(header_buf);
+
+        writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR, cli_rva, 72);
 
         let text_range = writer.reserve_text_section(text.len() as u32);
 

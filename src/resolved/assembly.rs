@@ -1,6 +1,6 @@
 use super::attribute::{Attribute, SecurityDeclaration};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Flags {
     pub has_public_key: bool,
     pub retargetable: bool,

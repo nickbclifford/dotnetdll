@@ -1,4 +1,5 @@
 use super::index;
+use bitvec::{order::Lsb0, view::BitView};
 use num_derive::{FromPrimitive, ToPrimitive};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
@@ -9,7 +10,7 @@ use scroll::{
 use paste::paste;
 
 macro_rules! tables {
-    ($($name:ident = $val:literal { $($fname:ident: $ty:ty,)+ }),+) => {
+    ($($name:ident = $val:literal $([sorted by $($sort_field:ident),+])? { $($fname:ident: $ty:ty,)+ }),+) => {
         #[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive)]
         pub enum Kind {
             $(
@@ -71,6 +72,44 @@ macro_rules! tables {
                             [<$name:snake>]: vec![],
                         )*
                     }
+                }
+
+                pub fn valid_mask(&self) -> u64 {
+                    let mut mask = 0;
+
+                    let slice = mask.view_bits_mut::<Lsb0>();
+
+                    $(
+                        if !self.[<$name:snake>].is_empty() {
+                            slice.set($val, true);
+                        }
+                    )*
+
+                    mask
+                }
+
+                pub fn sort(&mut self) {
+                    $(
+                        $(
+                            self.[<$name:snake>].sort_by_key(|r| ($(r.$sort_field),+));
+                        )?
+                    )+
+                }
+
+                pub fn sorted_mask() -> u64 {
+                    let mut mask = 0;
+
+                    let slice = mask.view_bits_mut::<Lsb0>();
+
+                    $(
+                        $(
+                            // need to expand the $sort_field to only match on sorted tables
+                            let _ = stringify!($($sort_field),+);
+                            slice.set($val, true);
+                        )?
+                    )*
+
+                    mask
                 }
             }
 
@@ -159,23 +198,23 @@ tables! {
         processor: u32,
         assembly_ref: index::Simple<AssemblyRef>,
     },
-    ClassLayout = 0x0F {
+    ClassLayout = 0x0F [sorted by parent] {
         packing_size: u16,
         class_size: u32,
         parent: index::Simple<TypeDef>,
     },
-    Constant = 0x0B {
+    Constant = 0x0B [sorted by parent] {
         constant_type: u8,
         padding: u8,
         parent: index::HasConstant,
         value: index::Blob,
     },
-    CustomAttribute = 0x0C {
+    CustomAttribute = 0x0C [sorted by parent] {
         parent: index::HasCustomAttribute,
         attr_type: index::CustomAttributeType,
         value: index::Blob,
     },
-    DeclSecurity = 0x0E {
+    DeclSecurity = 0x0E [sorted by parent] {
         action: u16,
         parent: index::HasDeclSecurity,
         permission_set: index::Blob,
@@ -201,15 +240,15 @@ tables! {
         name: index::String,
         signature: index::Blob,
     },
-    FieldLayout = 0x10 {
+    FieldLayout = 0x10 [sorted by field] {
         offset: u32,
         field: index::Simple<Field>,
     },
-    FieldMarshal = 0x0D {
+    FieldMarshal = 0x0D [sorted by parent] {
         parent: index::HasFieldMarshal,
         native_type: index::Blob,
     },
-    FieldRva = 0x1D {
+    FieldRva = 0x1D [sorted by field] {
         rva: u32,
         field: index::Simple<Field>,
     },
@@ -218,23 +257,23 @@ tables! {
         name: index::String,
         hash_value: index::Blob,
     },
-    GenericParam = 0x2A {
+    GenericParam = 0x2A [sorted by owner, number] {
         number: u16,
         flags: u16,
         owner: index::TypeOrMethodDef,
         name: index::String,
     },
-    GenericParamConstraint = 0x2C {
+    GenericParamConstraint = 0x2C [sorted by owner] {
         owner: index::Simple<GenericParam>,
         constraint: index::TypeDefOrRef,
     },
-    ImplMap = 0x1C {
+    ImplMap = 0x1C [sorted by member_forwarded] {
         mapping_flags: u16,
         member_forwarded: index::MemberForwarded,
         import_name: index::String,
         import_scope: index::Simple<ModuleRef>,
     },
-    InterfaceImpl = 0x09 {
+    InterfaceImpl = 0x09 [sorted by class, interface] {
         class: index::Simple<TypeDef>,
         interface: index::TypeDefOrRef,
     },
@@ -257,12 +296,12 @@ tables! {
         signature: index::Blob,
         param_list: index::Simple<Param>,
     },
-    MethodImpl = 0x19 {
+    MethodImpl = 0x19 [sorted by class] {
         class: index::Simple<TypeDef>,
         method_body: index::MethodDefOrRef,
         method_declaration: index::MethodDefOrRef,
     },
-    MethodSemantics = 0x18 {
+    MethodSemantics = 0x18 [sorted by association] {
         semantics: u16,
         method: index::Simple<MethodDef>,
         association: index::HasSemantics,
@@ -281,7 +320,7 @@ tables! {
     ModuleRef = 0x1A {
         name: index::String,
     },
-    NestedClass = 0x29 {
+    NestedClass = 0x29 [sorted by nested_class] {
         nested_class: index::Simple<TypeDef>,
         enclosing_class: index::Simple<TypeDef>,
     },

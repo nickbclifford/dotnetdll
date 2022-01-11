@@ -56,6 +56,14 @@ mod utils {
         val.hash(&mut hasher);
         hasher.finish()
     }
+
+    pub fn round_up_to_4(mut val: usize) -> (usize, usize) {
+        let rem = val % 4;
+        if rem != 0 {
+            val += 4 - rem;
+        }
+        (val, rem)
+    }
 }
 
 pub mod binary;
@@ -102,6 +110,8 @@ mod tests {
             }
 
             for m in &t.methods {
+                println!("{:#?}", m);
+
                 print!("\t{}", m.show(&r));
 
                 if let Some(b) = &m.body {
@@ -271,24 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn headers_write() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.0/System.Text.Json.dll")?;
-        let dll = DLL::parse(&file)?;
-        let meta = dll.get_logical_metadata()?;
-
-        let mut buffer = vec![0_u8; dll.cli.metadata.size as usize];
-        buffer.pwrite(meta, 0)?;
-
-        let _parsed: metadata::header::Header = buffer.pread(0)?;
-
-        // these two are equal if you ignore sorting
-        // for some reason, the input tables appear to not be ECMA-compliantly sorted
-        // assert_eq!(meta, parsed);
-
-        Ok(())
-    }
-
-    #[test]
     fn attr_args_write() -> Result<(), Box<dyn std::error::Error>> {
         const SIZE: usize = 119;
         // retrieved from ildasm
@@ -348,14 +340,292 @@ mod tests {
 
     #[test]
     fn write_all() {
-        use super::{resolution::Resolution, resolved::module::Module};
+        use super::{
+            binary::signature::kinds::CallingConvention,
+            resolution::{EntryPoint, Resolution},
+            resolved::{
+                assembly::*,
+                body, il,
+                members::{Accessibility as MAccess, *},
+                module::Module,
+                signature::*,
+                types::{Accessibility as TAccess, *},
+                Accessibility,
+            },
+        };
 
-        let v = DLL::write(&Resolution::new(Module {
+        const TOKEN: &[u8] = &[0xB0, 0x3F, 0x5F, 0x7F, 0x11, 0xD5, 0x0A, 0x3A];
+
+        let mut res = Resolution::new(Module {
             attributes: vec![],
+            name: "test.dll",
+            mvid: [
+                0x7d, 0xca, 0x02, 0xcd, 0xba, 0xd1, 0x4e, 0x45, 0xbf, 0x5f, 0x1b, 0x7d, 0xf1, 0x93, 0xce, 0x36,
+            ],
+        });
+        res.assembly = Some(Assembly {
+            attributes: vec![],
+            hash_algorithm: HashAlgorithm::SHA1,
+            version: Version {
+                major: 1,
+                minor: 0,
+                build: 0,
+                revision: 0,
+            },
+            flags: Flags::default(),
+            public_key: None,
             name: "test",
-            mvid: [0; 16],
-        }))
-        .unwrap();
+            culture: None,
+            security: None,
+        });
+
+        // global module type
+        res.push_type_definition(TypeDefinition {
+            attributes: vec![],
+            name: "<Module>",
+            namespace: None,
+            fields: vec![],
+            properties: vec![],
+            methods: vec![],
+            events: vec![],
+            encloser: None,
+            overrides: vec![],
+            extends: None,
+            implements: vec![],
+            generic_parameters: vec![],
+            flags: TypeFlags {
+                accessibility: TAccess::NotPublic,
+                layout: Layout::Automatic,
+                kind: Kind::Class,
+                abstract_type: false,
+                sealed: false,
+                special_name: false,
+                imported: false,
+                serializable: false,
+                string_formatting: StringFormatting::ANSI,
+                before_field_init: false,
+                runtime_special_name: false,
+            },
+            security: None,
+        });
+
+        let console_asm_ref = res.push_assembly_reference(ExternalAssemblyReference {
+            attributes: vec![],
+            version: Version {
+                major: 6,
+                minor: 0,
+                build: 0,
+                revision: 0,
+            },
+            flags: Default::default(),
+            public_key_or_token: Some(TOKEN),
+            name: "System.Console",
+            culture: None,
+            hash_value: None,
+        });
+        let runtime_ref = res.push_assembly_reference(ExternalAssemblyReference {
+            attributes: vec![],
+            version: Version {
+                major: 6,
+                minor: 0,
+                build: 0,
+                revision: 0,
+            },
+            flags: Default::default(),
+            public_key_or_token: Some(TOKEN),
+            name: "System.Runtime",
+            culture: None,
+            hash_value: None,
+        });
+        let object_ref = res.push_type_reference(ExternalTypeReference {
+            attributes: vec![],
+            name: "Object",
+            namespace: Some("System"),
+            scope: ResolutionScope::Assembly(runtime_ref),
+        });
+        let ctor_sig = MethodSignature {
+            instance: true,
+            explicit_this: false,
+            calling_convention: CallingConvention::Default,
+            parameters: vec![],
+            return_type: ReturnType(vec![], None),
+            varargs: None,
+        };
+        let ctor_ref = res.push_method_reference(ExternalMethodReference {
+            attributes: vec![],
+            parent: MethodReferenceParent::Type(MethodType::Base(
+                BaseType::Type(TypeSource::User(UserType::Reference(object_ref))).into(),
+            )),
+            name: ".ctor",
+            signature: ctor_sig.clone(),
+        });
+        let console_type_ref = res.push_type_reference(ExternalTypeReference {
+            attributes: vec![],
+            name: "Console",
+            namespace: Some("System"),
+            scope: ResolutionScope::Assembly(console_asm_ref),
+        });
+        let write_line_ref = res.push_method_reference(ExternalMethodReference {
+            attributes: vec![],
+            parent: MethodReferenceParent::Type(MethodType::Base(
+                BaseType::Type(TypeSource::User(UserType::Reference(console_type_ref))).into(),
+            )),
+            name: "WriteLine",
+            signature: MethodSignature {
+                instance: false,
+                explicit_this: false,
+                calling_convention: CallingConvention::Default,
+                parameters: vec![Parameter(
+                    vec![],
+                    ParameterType::Value(MethodType::Base(BaseType::String.into())),
+                )],
+                return_type: ReturnType(vec![], None),
+                varargs: None,
+            },
+        });
+
+        let class = res.push_type_definition(TypeDefinition {
+            attributes: vec![],
+            name: "Foo",
+            namespace: None,
+            fields: vec![],
+            properties: vec![],
+            methods: vec![Method {
+                attributes: vec![],
+                name: ".ctor",
+                body: Some(body::Method {
+                    header: body::Header {
+                        initialize_locals: false,
+                        maximum_stack_size: 0,
+                        local_variables: vec![],
+                    },
+                    body: vec![
+                        il::Instruction::LoadArgument(0),
+                        il::Instruction::Call {
+                            tail_call: false,
+                            method: MethodSource::User(UserMethod::Reference(ctor_ref)),
+                        },
+                        il::Instruction::Return,
+                    ],
+                    data_sections: vec![],
+                }),
+                signature: ctor_sig,
+                accessibility: MAccess::Access(Accessibility::Public),
+                generic_parameters: vec![],
+                parameter_metadata: vec![None],
+                static_member: false,
+                sealed: false,
+                virtual_member: false,
+                hide_by_sig: true,
+                vtable_layout: VtableLayout::ReuseSlot,
+                strict: false,
+                abstract_member: false,
+                special_name: true,
+                pinvoke: None,
+                runtime_special_name: true,
+                security: None,
+                require_sec_object: false,
+                body_format: BodyFormat::IL,
+                body_management: BodyManagement::Managed,
+                forward_ref: false,
+                preserve_sig: false,
+                synchronized: false,
+                no_inlining: false,
+                no_optimization: false,
+            }],
+            events: vec![],
+            encloser: None,
+            overrides: vec![],
+            extends: Some(TypeSource::User(UserType::Reference(object_ref))),
+            implements: vec![],
+            generic_parameters: vec![],
+            flags: TypeFlags {
+                accessibility: TAccess::Public,
+                layout: Layout::Automatic,
+                kind: Kind::Class,
+                abstract_type: false,
+                sealed: false,
+                special_name: false,
+                imported: false,
+                serializable: false,
+                string_formatting: StringFormatting::ANSI,
+                before_field_init: true,
+                runtime_special_name: false,
+            },
+            security: None,
+        });
+        let method_idx = res.push_method(
+            class,
+            Method {
+                attributes: vec![],
+                name: "Main",
+                body: Some(body::Method {
+                    header: body::Header {
+                        initialize_locals: false,
+                        maximum_stack_size: 0,
+                        local_variables: vec![],
+                    },
+                    body: vec![
+                        il::Instruction::LoadString("Hello, world!".encode_utf16().collect()),
+                        il::Instruction::Call {
+                            tail_call: false,
+                            method: MethodSource::User(UserMethod::Reference(write_line_ref)),
+                        },
+                        il::Instruction::Return,
+                    ],
+                    data_sections: vec![],
+                }),
+                signature: MethodSignature {
+                    instance: false,
+                    explicit_this: false,
+                    calling_convention: CallingConvention::Default,
+                    parameters: vec![Parameter(
+                        vec![],
+                        ParameterType::Value(MethodType::Base(
+                            BaseType::Vector(vec![], MethodType::Base(BaseType::String.into())).into(),
+                        )),
+                    )],
+                    return_type: ReturnType(vec![], None),
+                    varargs: None,
+                },
+                accessibility: MAccess::Access(Accessibility::Public),
+                generic_parameters: vec![],
+                parameter_metadata: vec![
+                    None,
+                    Some(ParameterMetadata {
+                        attributes: vec![],
+                        name: "args",
+                        is_in: false,
+                        is_out: false,
+                        optional: false,
+                        default: None,
+                        marshal: None,
+                    }),
+                ],
+                static_member: true,
+                sealed: false,
+                virtual_member: false,
+                hide_by_sig: true,
+                vtable_layout: VtableLayout::ReuseSlot,
+                strict: false,
+                abstract_member: false,
+                special_name: false,
+                pinvoke: None,
+                runtime_special_name: false,
+                security: None,
+                require_sec_object: false,
+                body_format: BodyFormat::IL,
+                body_management: BodyManagement::Managed,
+                forward_ref: false,
+                preserve_sig: false,
+                synchronized: false,
+                no_inlining: false,
+                no_optimization: false,
+            },
+        );
+        res.entry_point = Some(EntryPoint::Method(method_idx));
+
+        let v = DLL::write(&res).unwrap();
 
         std::fs::write("test.dll", v).unwrap();
     }

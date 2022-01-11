@@ -9,6 +9,7 @@ use scroll::{
     Pread, Pwrite,
 };
 use std::collections::HashMap;
+use scroll_buffer::DynamicBuffer;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {
@@ -75,10 +76,10 @@ impl TryFromCtx<'_> for Header {
         ))
     }
 }
-impl TryIntoCtx for Header {
+impl TryIntoCtx<(), DynamicBuffer> for Header {
     type Error = scroll::Error;
 
-    fn try_into_ctx(mut self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(mut self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite_with(self.reserved0, offset, scroll::LE)?;
@@ -103,32 +104,19 @@ impl TryIntoCtx for Header {
         let mut tables_map = HashMap::new();
 
         // ECMA-335, II.22 (page 210)
-        self.tables.class_layout.sort_by_key(|r| r.parent);
-        self.tables.constant.sort_by_key(|r| r.parent);
-        self.tables.custom_attribute.sort_by_key(|r| r.parent);
-        self.tables.decl_security.sort_by_key(|r| r.parent);
-        self.tables.field_layout.sort_by_key(|r| r.field);
-        self.tables.field_marshal.sort_by_key(|r| r.parent);
-        self.tables.field_rva.sort_by_key(|r| r.field);
-        self.tables.generic_param.sort_by_key(|r| (r.owner, r.number));
-        self.tables.generic_param_constraint.sort_by_key(|r| r.owner);
-        self.tables.impl_map.sort_by_key(|r| r.member_forwarded);
-        self.tables.interface_impl.sort_by_key(|r| (r.class, r.interface));
-        self.tables.method_impl.sort_by_key(|r| r.class);
-        self.tables.method_semantics.sort_by_key(|r| r.association);
-        self.tables.nested_class.sort_by_key(|r| r.nested_class);
+        self.tables.sort();
 
         // callers must make sure that TypeDefs that enclose any types
         // precede their nested types (ECMA-335, II.22, page 210)
 
+        let mut buf = [0_u8; 32];
         for_each_row!(self.tables, |r, k| {
-            let mut buf = [0_u8; 64];
             let mut offset = 0;
             buf.gwrite_with(r, &mut offset, ctx)?;
             tables_map
                 .entry(k.to_u8().unwrap())
                 .or_insert_with(Vec::new)
-                .extend(&buf[..offset]);
+                .extend_from_slice(&buf[..offset]);
         });
 
         let mut sizes: Vec<_> = sizes_map.into_iter().collect();

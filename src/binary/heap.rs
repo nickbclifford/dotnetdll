@@ -167,7 +167,7 @@ heap_writer!(
     |self, value| {
         let start = self.buffer.len();
         self.buffer.extend(value);
-        index::GUID((start + 1) / 16)
+        index::GUID(((start + 1) / 16) + 1)
     }
 );
 heap_writer!(

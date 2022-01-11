@@ -4,7 +4,7 @@ use scroll::{
     Pread, Pwrite,
 };
 
-#[derive(Debug, Pread, Pwrite)]
+#[derive(Debug, Default, Pread, Pwrite)]
 pub struct RVASize {
     pub rva: u32,
     pub size: u32,
@@ -80,11 +80,7 @@ impl TryIntoCtx for Metadata<'_> {
         into.gwrite_with(self.minor_version, offset, scroll::LE)?;
         into.gwrite_with(self.reserved, offset, scroll::LE)?;
 
-        let mut len = self.version.len() + 1;
-        let rem = len % 4;
-        if rem != 0 {
-            len += 4 - rem;
-        }
+        let (len, rem) = crate::utils::round_up_to_4(self.version.len() + 1);
         into.gwrite_with(len as u32, offset, scroll::LE)?;
 
         into.gwrite(self.version, offset)?;

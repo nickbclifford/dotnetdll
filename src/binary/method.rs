@@ -99,6 +99,7 @@ impl TryIntoCtx<(), DynamicBuffer> for Exception {
             into.gwrite_with(hoff, offset, scroll::LE)?;
             into.gwrite_with(hlen, offset, scroll::LE)?;
         } else {
+            into.gwrite_with(self.flags, offset, scroll::LE)?;
             into.gwrite_with(self.try_offset, offset, scroll::LE)?;
             into.gwrite_with(self.try_length, offset, scroll::LE)?;
             into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
@@ -312,10 +313,7 @@ impl TryIntoCtx<(), DynamicBuffer> for Method {
         }
 
         // align to next 4-byte boundary
-        let rem = *offset % 4;
-        if rem != 0 {
-            *offset += 4 - rem;
-        }
+        *offset = crate::utils::round_up_to_4(*offset).0;
 
         for d in self.data_sections {
             into.gwrite(d, offset)?;

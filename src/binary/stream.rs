@@ -20,10 +20,7 @@ impl<'a> TryFromCtx<'a> for Header<'a> {
 
         let name = from.gread_with(offset, StrCtx::Delimiter(0))?;
 
-        let rem = *offset % 4;
-        if rem != 0 {
-            *offset += 4 - rem;
-        }
+        *offset = crate::utils::round_up_to_4(*offset).0;
 
         let obj = Header {
             offset: stream_offset,
@@ -46,13 +43,8 @@ impl TryIntoCtx for Header<'_> {
         into.gwrite(self.name, offset)?;
         into.gwrite_with(0_u8, offset, scroll::LE)?;
 
-        // after initial null-termination, align to 4 bytes with nulls
-        let rem = self.name.len() % 4;
-        if rem != 0 {
-            for _ in 0..(4 - rem) {
-                into.gwrite_with(0_u8, offset, scroll::LE)?;
-            }
-        }
+        // after initial null-termination, skip ahead to align to 4 bytes with nulls
+        *offset = crate::utils::round_up_to_4(*offset).0;
 
         Ok(*offset)
     }
