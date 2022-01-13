@@ -633,7 +633,7 @@ pub fn instruction<'r, 'data>(
         ConvOvfI8 => Instruction::ConvertOverflow(ConversionType::Int64, NumberSign::Signed),
         ConvOvfI8Un => Instruction::ConvertOverflow(ConversionType::Int64, NumberSign::Unsigned),
         ConvOvfIUn => Instruction::ConvertOverflow(ConversionType::IntPtr, NumberSign::Unsigned),
-        ConvOvfU => Instruction::Convert(ConversionType::UIntPtr),
+        ConvOvfU => Instruction::ConvertOverflow(ConversionType::UIntPtr, NumberSign::Signed),
         ConvOvfU1 => Instruction::ConvertOverflow(ConversionType::UInt8, NumberSign::Signed),
         ConvOvfU1Un => Instruction::ConvertOverflow(ConversionType::UInt8, NumberSign::Unsigned),
         ConvOvfU2 => Instruction::ConvertOverflow(ConversionType::UInt16, NumberSign::Signed),

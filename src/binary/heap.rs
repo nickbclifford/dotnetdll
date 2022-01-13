@@ -144,7 +144,7 @@ heap_writer!(
     |self, value| {
         let start = self.buffer.len();
         self.buffer.extend(value.as_bytes());
-        self.buffer.push(0u8);
+        self.buffer.push(0_u8);
         index::String(start)
     }
 );
@@ -188,7 +188,7 @@ heap_writer!(
         let start = self.buffer.len();
         self.buffer.extend(write_bytes(
             &value
-                .into_iter()
+                .iter()
                 .flat_map(|&u| u.to_le_bytes())
                 .chain(std::iter::once(final_byte))
                 .collect::<Vec<_>>(),

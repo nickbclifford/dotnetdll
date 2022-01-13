@@ -241,7 +241,7 @@ mod tests {
                 files.push(std::fs::read(path)?);
             }
         }
-        let dlls: Vec<_> = files.iter().map(|f| DLL::parse(&f)).collect::<Result<_, _>>()?;
+        let dlls: Vec<_> = files.iter().map(|f| DLL::parse(f)).collect::<Result<_, _>>()?;
         let cache: Vec<_> = dlls.iter().map(|d| d.resolve(opts)).collect::<Result<_, _>>()?;
 
         let resolver = DLLCacheResolver {
@@ -299,7 +299,7 @@ mod tests {
         use IntegralParam::*;
         use NamedArg::*;
 
-        let mut buf = [0u8; SIZE];
+        let mut buf = [0_u8; SIZE];
         buf.pwrite(
             // Into<Box<_>> is a little less noisy here
             CustomAttributeData {

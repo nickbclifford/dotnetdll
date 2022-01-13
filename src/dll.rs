@@ -2420,7 +2420,7 @@ impl<'a> DLL<'a> {
                             };
                         }
                         let (constant_type, value) = match c {
-                            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(if *b { 1u8 } else { 0u8 })),
+                            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(if *b { 1_u8 } else { 0_u8 })),
                             Char(u) => (ELEMENT_TYPE_CHAR, blob!(u)),
                             Int8(i) => (ELEMENT_TYPE_I1, blob!(i)),
                             UInt8(u) => (ELEMENT_TYPE_U1, blob!(u)),
@@ -2439,7 +2439,7 @@ impl<'a> DLL<'a> {
                                     &cs.iter().map(|c| c.to_le_bytes()).flatten().collect::<Vec<_>>()
                                 ),
                             ),
-                            Null => (ELEMENT_TYPE_CLASS, blob!(0u32)),
+                            Null => (ELEMENT_TYPE_CLASS, blob!(0_u32)),
                         };
 
                         tables.constant.push(Constant {
@@ -2633,11 +2633,10 @@ impl<'a> DLL<'a> {
                         semantics: match member_idx {
                             MethodMemberIndex::PropertyGetter(_) => 0x0002,
                             MethodMemberIndex::PropertySetter(_) => 0x0001,
-                            MethodMemberIndex::PropertyOther { .. } => 0x0004,
+                            MethodMemberIndex::PropertyOther { .. } | MethodMemberIndex::EventOther { .. } => 0x0004,
                             MethodMemberIndex::EventAdd(_) => 0x0008,
                             MethodMemberIndex::EventRemove(_) => 0x0010,
                             MethodMemberIndex::EventRaise(_) => 0x0020,
-                            MethodMemberIndex::EventOther { .. } => 0x0004,
                             _ => unreachable!(),
                         },
                         method: def_index.into(),
@@ -2788,9 +2787,11 @@ impl<'a> DLL<'a> {
                 })
                 .collect();
 
+            use crate::binary::il::Instruction;
+
             // now that we have final bytesizes, we can fix offsets
             for (i, &current_off) in instructions.iter_mut().zip(offsets.iter()) {
-                use crate::binary::il::Instruction::*;
+                use Instruction::*;
 
                 let bytesize = i.bytesize();
                 let convert_offset = |o: &mut i32| {
@@ -2829,7 +2830,7 @@ impl<'a> DLL<'a> {
                 make_short!(Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave);
             }
 
-            let body_size = instructions.iter().map(|i| i.bytesize()).sum();
+            let body_size = instructions.iter().map(Instruction::bytesize).sum();
 
             let mut data_sections: Vec<_> = body
                 .data_sections
@@ -2912,12 +2913,14 @@ impl<'a> DLL<'a> {
                         flags |= 0x10;
                     }
 
-                    let local_var_sig_tok = if !body.header.local_variables.is_empty() {
+                    let local_var_sig_tok = if body.header.local_variables.is_empty() {
+                        0
+                    } else {
                         tables.stand_alone_sig.push(StandAloneSig {
                             signature: convert::write::local_vars(&body.header.local_variables, build_ctx!())?,
                         });
 
-                        let mut buf = [0u8; 4];
+                        let mut buf = [0_u8; 4];
                         buf.pwrite(
                             index::Token {
                                 target: index::TokenTarget::Table(metadata::table::Kind::StandAloneSig),
@@ -2926,8 +2929,6 @@ impl<'a> DLL<'a> {
                             0,
                         )?;
                         u32::from_le_bytes(buf)
-                    } else {
-                        0
                     };
 
                     method::Header::Fat {
@@ -3019,7 +3020,7 @@ impl<'a> DLL<'a> {
                     },
                 };
 
-                let mut buf = [0u8; 4];
+                let mut buf = [0_u8; 4];
                 buf.pwrite(tok, 0)?;
                 u32::from_le_bytes(buf)
             }
@@ -3040,13 +3041,13 @@ impl<'a> DLL<'a> {
             heap_sizes: {
                 let mut mask = 0;
 
-                if strings_vec.len() >= (1usize << 16) {
+                if strings_vec.len() >= (1_usize << 16) {
                     mask |= 0x01;
                 }
-                if guids_vec.len() >= (1usize << 16) {
+                if guids_vec.len() >= (1_usize << 16) {
                     mask |= 0x02;
                 }
-                if blobs_vec.len() >= (1usize << 16) {
+                if blobs_vec.len() >= (1_usize << 16) {
                     mask |= 0x04;
                 }
 
@@ -3062,7 +3063,7 @@ impl<'a> DLL<'a> {
         header_buf.pwrite(header, 0)?;
         let header_stream = header_buf.get();
 
-        const VERSION_STRING: &'static str = "Standard CLI 2005";
+        const VERSION_STRING: &str = "Standard CLI 2005";
 
         let streams: Vec<_> = [
             (header_stream, "#~"),
@@ -3076,8 +3077,8 @@ impl<'a> DLL<'a> {
         .collect();
 
         // ECMA-335, II.24.2.1 (page 271)
-        let root_and_header_size: usize = 20usize
-            + crate::utils::round_up_to_4(VERSION_STRING.len() + 1usize).0
+        let root_and_header_size: usize = 20_usize
+            + crate::utils::round_up_to_4(VERSION_STRING.len() + 1_usize).0
             + streams
                 .iter()
                 .map(|(_, n)| {
@@ -3088,10 +3089,10 @@ impl<'a> DLL<'a> {
 
         let metadata_rva = current_rva!();
 
-        let mut metadata_buf = vec![0u8; root_and_header_size];
+        let mut metadata_buf = vec![0_u8; root_and_header_size];
         metadata_buf.pwrite(
             Metadata {
-                signature: 0x424A5342, // magic value, same page of ECMA as above
+                signature: 0x424A_5342, // magic value, same page of ECMA as above
                 major_version: 1,
                 minor_version: 1,
                 reserved: 0,
@@ -3132,14 +3133,14 @@ impl<'a> DLL<'a> {
             },
             flags: pe::COMIMAGE_FLAGS_ILONLY,
             entry_point_token,
-            resources: Default::default(),
-            strong_name_signature: Default::default(),
-            code_manager_table: Default::default(),
-            vtable_fixups: Default::default(),
-            export_address_table_jumps: Default::default(),
-            managed_native_header: Default::default(),
+            resources: RVASize::default(),
+            strong_name_signature: RVASize::default(),
+            code_manager_table: RVASize::default(),
+            vtable_fixups: RVASize::default(),
+            export_address_table_jumps: RVASize::default(),
+            managed_native_header: RVASize::default(),
         };
-        let mut header_buf = [0u8; 72];
+        let mut header_buf = [0_u8; 72];
         header_buf.pwrite_with(cli_header, 0, scroll::LE)?;
         text.extend(header_buf);
 
