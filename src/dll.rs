@@ -2023,7 +2023,6 @@ impl<'a> DLL<'a> {
 
         let mut text = vec![];
 
-        // add import information
         let imports = if is_executable {
             let import_rva = writer.virtual_len();
 
@@ -2072,10 +2071,15 @@ impl<'a> DLL<'a> {
                 first_thunk: u32!(iat_rva),
             }));
             idata.extend([0; 20]);
-            let section = writer.reserve_idata_section(idata.len() as u32);
-            // the writer sets the data dir to the whole section by default
-            // since we don't start the section with the import directory, we need to
-            // manually overwrite it with the directory RVA (set size to just cover the entries)
+            let size = idata.len() as u32;
+
+            // by default, writer.reserve_idata_section() enables IMAGE_SCN_MEM_WRITE, which is forbidden by coreclr
+            let section = writer.reserve_section(
+                *b".idata\0\0",
+                pe::IMAGE_SCN_CNT_INITIALIZED_DATA | pe::IMAGE_SCN_MEM_READ,
+                size,
+                size,
+            );
             writer.set_data_directory(pe::IMAGE_DIRECTORY_ENTRY_IMPORT, directory_rva, 40);
 
             // write entry point to beginning of text section
@@ -3145,7 +3149,14 @@ impl<'a> DLL<'a> {
 
         // TODO: are relocations really only needed for executables?
         if is_executable {
-            writer.add_reloc(text_range.virtual_address, pe::IMAGE_REL_BASED_HIGHLOW);
+            writer.add_reloc(
+                text_range.virtual_address,
+                if is_32_bit {
+                    pe::IMAGE_REL_BASED_HIGHLOW
+                } else {
+                    pe::IMAGE_REL_BASED_DIR64
+                },
+            );
             writer.reserve_reloc_section();
         }
 
@@ -3153,7 +3164,11 @@ impl<'a> DLL<'a> {
 
         writer.write_dos_header_and_stub()?;
         writer.write_nt_headers(NtHeaders {
-            machine: pe::IMAGE_FILE_MACHINE_AMD64,
+            machine: if is_32_bit {
+                pe::IMAGE_FILE_MACHINE_I386
+            } else {
+                pe::IMAGE_FILE_MACHINE_AMD64
+            },
             time_date_stamp: match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
                 Ok(d) => d.as_secs() as u32,
                 _ => 0,

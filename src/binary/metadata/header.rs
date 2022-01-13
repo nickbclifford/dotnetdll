@@ -8,8 +8,8 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
-use std::collections::HashMap;
 use scroll_buffer::DynamicBuffer;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {
