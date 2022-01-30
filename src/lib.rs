@@ -453,9 +453,9 @@ mod tests {
         };
         let ctor_ref = res.push_method_reference(ExternalMethodReference {
             attributes: vec![],
-            parent: MethodReferenceParent::Type(MethodType::Base(
+            parent: MethodReferenceParent::Type(
                 BaseType::Type(TypeSource::User(UserType::Reference(object_ref))).into(),
-            )),
+            ),
             name: ".ctor",
             signature: ctor_sig.clone(),
         });
@@ -467,9 +467,9 @@ mod tests {
         });
         let write_line_ref = res.push_method_reference(ExternalMethodReference {
             attributes: vec![],
-            parent: MethodReferenceParent::Type(MethodType::Base(
+            parent: MethodReferenceParent::Type(
                 BaseType::Type(TypeSource::User(UserType::Reference(console_type_ref))).into(),
-            )),
+            ),
             name: "WriteLine",
             signature: MethodSignature {
                 instance: false,
@@ -477,7 +477,7 @@ mod tests {
                 calling_convention: CallingConvention::Default,
                 parameters: vec![Parameter(
                     vec![],
-                    ParameterType::Value(MethodType::Base(BaseType::String.into())),
+                    ParameterType::Value(BaseType::String.into()),
                 )],
                 return_type: ReturnType(vec![], None),
                 varargs: None,
@@ -581,9 +581,9 @@ mod tests {
                     calling_convention: CallingConvention::Default,
                     parameters: vec![Parameter(
                         vec![],
-                        ParameterType::Value(MethodType::Base(
-                            BaseType::Vector(vec![], MethodType::Base(BaseType::String.into())).into(),
-                        )),
+                        ParameterType::Value(
+                            BaseType::Vector(vec![], BaseType::String.into()).into(),
+                        ),
                     )],
                     return_type: ReturnType(vec![], None),
                     varargs: None,
@@ -625,7 +625,7 @@ mod tests {
         );
         res.entry_point = Some(EntryPoint::Method(method_idx));
 
-        let v = DLL::write(&res).unwrap();
+        let v = DLL::write(&res, false, true).unwrap();
 
         std::fs::write("test.dll", v).unwrap();
     }

@@ -148,7 +148,7 @@ impl<'a> DLL<'a> {
         self.raw_rva(def.rva)?.pread(0).map_err(CLI)
     }
 
-    #[allow(clippy::nonminimal_bool)]
+    #[allow(clippy::nonminimal_bool, unused_mut)]
     pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
         use convert::TypeKind;
         use resolved::{
@@ -600,60 +600,59 @@ impl<'a> DLL<'a> {
             })
         }
 
-        // this allows us to initialize the Vec out of order, which is safe because we know that everything
-        // will eventually be initialized in the end
-        // it's much simpler/more efficient than trying to use a HashMap or something
-        // TODO: MaybeUninit for better semantic correctness
-        macro_rules! new_with_len {
-            ($name:ident, $len:ident) => {
-                let mut $name = Vec::with_capacity($len);
-                unsafe {
-                    $name.set_len($len);
-                }
+        // this allows us to initialize the Vec out of order
+        // we consider it safe because we guarantee that the body will fully initialize everything
+        // it's much simpler and more efficient than trying to use a HashMap or something
+        macro_rules! build_vec {
+            ($name:ident = $t:ty[$len:ident], $body:expr) => {
+                let mut $name = vec![std::mem::MaybeUninit::uninit(); $len];
+                $body;
+                let mut $name: Vec<$t> = unsafe { std::mem::transmute($name) };
             };
         }
 
-        new_with_len!(fields, fields_len);
+        build_vec!(fields = FieldIndex[fields_len], {
+            debug!("fields");
 
-        debug!("fields");
+            for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
+                use super::binary::signature::kinds::FieldSig;
+                use members::*;
 
-        for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
-            use super::binary::signature::kinds::FieldSig;
-            use members::*;
+                let parent_fields = &mut types[type_idx].fields;
+                parent_fields.reserve(type_fields.len());
 
-            let parent_fields = &mut types[type_idx].fields;
-            parent_fields.reserve(type_fields.len());
+                for (f_idx, f) in type_fields {
+                    let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
 
-            for (f_idx, f) in type_fields {
-                let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
-
-                parent_fields.push(Field {
-                    attributes: vec![],
-                    name: heap_idx!(strings, f.name),
-                    type_modifiers: cmod
-                        .into_iter()
-                        .map(|c| convert::read::custom_modifier(c, &ctx))
-                        .collect::<Result<_>>()?,
-                    return_type: MemberType::from_sig(t, &ctx)?,
-                    accessibility: member_accessibility(f.flags)?,
-                    static_member: check_bitmask!(f.flags, 0x10),
-                    init_only: check_bitmask!(f.flags, 0x20),
-                    literal: check_bitmask!(f.flags, 0x40),
-                    default: None,
-                    not_serialized: check_bitmask!(f.flags, 0x80),
-                    special_name: check_bitmask!(f.flags, 0x200),
-                    pinvoke: None,
-                    runtime_special_name: check_bitmask!(f.flags, 0x400),
-                    offset: None,
-                    marshal: None,
-                    start_of_initial_value: None,
-                });
-                fields[f_idx] = FieldIndex {
-                    parent_type: TypeIndex(type_idx),
-                    field: parent_fields.len() - 1,
-                };
+                    parent_fields.push(Field {
+                        attributes: vec![],
+                        name: heap_idx!(strings, f.name),
+                        type_modifiers: cmod
+                            .into_iter()
+                            .map(|c| convert::read::custom_modifier(c, &ctx))
+                            .collect::<Result<_>>()?,
+                        return_type: MemberType::from_sig(t, &ctx)?,
+                        accessibility: member_accessibility(f.flags)?,
+                        static_member: check_bitmask!(f.flags, 0x10),
+                        init_only: check_bitmask!(f.flags, 0x20),
+                        literal: check_bitmask!(f.flags, 0x40),
+                        default: None,
+                        not_serialized: check_bitmask!(f.flags, 0x80),
+                        special_name: check_bitmask!(f.flags, 0x200),
+                        pinvoke: None,
+                        runtime_special_name: check_bitmask!(f.flags, 0x400),
+                        offset: None,
+                        marshal: None,
+                        initial_value: None,
+                    });
+                    fields[f_idx].write(FieldIndex {
+                        parent_type: TypeIndex(type_idx),
+                        field: parent_fields.len() - 1,
+                    });
+                }
             }
-        }
+        });
+
 
         macro_rules! get_field {
             ($f_idx:ident) => {{
@@ -679,7 +678,7 @@ impl<'a> DLL<'a> {
             let idx = rva.field.0 - 1;
             match fields.get(idx) {
                 Some(&field) => {
-                    get_field!(field).start_of_initial_value = Some(self.raw_rva(rva.rva)?);
+                    get_field!(field).initial_value = Some(self.raw_rva(rva.rva)?);
                 }
                 None => throw!("bad parent field index {} for field RVA specification", idx),
             }
@@ -687,82 +686,82 @@ impl<'a> DLL<'a> {
 
         let params_len = tables.param.len();
 
-        new_with_len!(methods, method_len);
-
-        debug!("methods");
-
-        // easier to read than a complicated iterator chain
         let mut owned_params = Vec::with_capacity(params_len);
-        for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
-            let parent_methods = &mut types[type_idx].methods;
-            parent_methods.reserve(type_methods.len());
 
-            for (m_idx, m) in type_methods {
-                use members::*;
+        build_vec!(methods = MethodIndex[method_len], {
+            debug!("methods");
 
-                let name = heap_idx!(strings, m.name);
+            for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
+                let parent_methods = &mut types[type_idx].methods;
+                parent_methods.reserve(type_methods.len());
 
-                let sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
-                let num_method_params = sig.parameters.len();
+                for (m_idx, m) in type_methods {
+                    use members::*;
 
-                parent_methods.push(Method {
-                    attributes: vec![],
-                    name,
-                    body: None,
-                    signature: sig,
-                    accessibility: member_accessibility(m.flags)?,
-                    generic_parameters: vec![],
-                    // NOTE: lots of allocations since this is generated for every single method
-                    parameter_metadata: vec![None; num_method_params + 1],
-                    static_member: check_bitmask!(m.flags, 0x10),
-                    sealed: check_bitmask!(m.flags, 0x20),
-                    virtual_member: check_bitmask!(m.flags, 0x40),
-                    hide_by_sig: check_bitmask!(m.flags, 0x80),
-                    vtable_layout: match m.flags & 0x100 {
-                        0x000 => VtableLayout::ReuseSlot,
-                        0x100 => VtableLayout::NewSlot,
-                        _ => unreachable!(),
-                    },
-                    strict: check_bitmask!(m.flags, 0x200),
-                    abstract_member: check_bitmask!(m.flags, 0x400),
-                    special_name: check_bitmask!(m.flags, 0x800),
-                    pinvoke: None,
-                    runtime_special_name: check_bitmask!(m.flags, 0x1000),
-                    security: None,
-                    require_sec_object: check_bitmask!(m.flags, 0x8000),
-                    body_format: match m.impl_flags & 0x3 {
-                        0x0 => BodyFormat::IL,
-                        0x1 => BodyFormat::Native,
-                        0x2 => throw!("invalid code type value OPTIL (0x2) for method {}", name),
-                        0x3 => BodyFormat::Runtime,
-                        _ => unreachable!(),
-                    },
-                    body_management: match m.impl_flags & 0x4 {
-                        0x0 => BodyManagement::Unmanaged,
-                        0x4 => BodyManagement::Managed,
-                        _ => unreachable!(),
-                    },
-                    forward_ref: check_bitmask!(m.impl_flags, 0x10),
-                    preserve_sig: check_bitmask!(m.impl_flags, 0x80),
-                    synchronized: check_bitmask!(m.impl_flags, 0x20),
-                    no_inlining: check_bitmask!(m.impl_flags, 0x8),
-                    no_optimization: check_bitmask!(m.impl_flags, 0x40),
-                });
+                    let name = heap_idx!(strings, m.name);
 
-                methods[m_idx] = MethodIndex {
-                    parent_type: TypeIndex(type_idx),
-                    member: MethodMemberIndex::Method(parent_methods.len() - 1),
-                };
+                    let sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+                    let num_method_params = sig.parameters.len();
 
-                owned_params.push((
-                    m_idx,
-                    range_index!(
-                        enumerated (m_idx, m) => range param_list in method_def,
-                        indexes param with len params_len
-                    ),
-                ));
+                    parent_methods.push(Method {
+                        attributes: vec![],
+                        name,
+                        body: None,
+                        signature: sig,
+                        accessibility: member_accessibility(m.flags)?,
+                        generic_parameters: vec![],
+                        // NOTE: lots of allocations since this is generated for every single method
+                        parameter_metadata: vec![None; num_method_params + 1],
+                        static_member: check_bitmask!(m.flags, 0x10),
+                        sealed: check_bitmask!(m.flags, 0x20),
+                        virtual_member: check_bitmask!(m.flags, 0x40),
+                        hide_by_sig: check_bitmask!(m.flags, 0x80),
+                        vtable_layout: match m.flags & 0x100 {
+                            0x000 => VtableLayout::ReuseSlot,
+                            0x100 => VtableLayout::NewSlot,
+                            _ => unreachable!(),
+                        },
+                        strict: check_bitmask!(m.flags, 0x200),
+                        abstract_member: check_bitmask!(m.flags, 0x400),
+                        special_name: check_bitmask!(m.flags, 0x800),
+                        pinvoke: None,
+                        runtime_special_name: check_bitmask!(m.flags, 0x1000),
+                        security: None,
+                        require_sec_object: check_bitmask!(m.flags, 0x8000),
+                        body_format: match m.impl_flags & 0x3 {
+                            0x0 => BodyFormat::IL,
+                            0x1 => BodyFormat::Native,
+                            0x2 => throw!("invalid code type value OPTIL (0x2) for method {}", name),
+                            0x3 => BodyFormat::Runtime,
+                            _ => unreachable!(),
+                        },
+                        body_management: match m.impl_flags & 0x4 {
+                            0x0 => BodyManagement::Unmanaged,
+                            0x4 => BodyManagement::Managed,
+                            _ => unreachable!(),
+                        },
+                        forward_ref: check_bitmask!(m.impl_flags, 0x10),
+                        preserve_sig: check_bitmask!(m.impl_flags, 0x80),
+                        synchronized: check_bitmask!(m.impl_flags, 0x20),
+                        no_inlining: check_bitmask!(m.impl_flags, 0x8),
+                        no_optimization: check_bitmask!(m.impl_flags, 0x40),
+                    });
+
+                    methods[m_idx].write(MethodIndex {
+                        parent_type: TypeIndex(type_idx),
+                        member: MethodMemberIndex::Method(parent_methods.len() - 1),
+                    });
+
+                    owned_params.push((
+                        m_idx,
+                        range_index!(
+                            enumerated (m_idx, m) => range param_list in method_def,
+                            indexes param with len params_len
+                        ),
+                    ));
+                }
             }
-        }
+        });
 
         // only should be used before the event/method semantics phase
         // since before then we know member index is a Method(usize)
@@ -975,31 +974,31 @@ impl<'a> DLL<'a> {
             }
         }
 
-        new_with_len!(params, params_len);
+        build_vec!(params = (usize, usize)[params_len], {
+            debug!("params");
 
-        debug!("params");
+            for (m_idx, iter) in owned_params {
+                for (p_idx, param) in iter {
+                    use members::*;
 
-        for (m_idx, iter) in owned_params {
-            for (p_idx, param) in iter {
-                use members::*;
+                    let meta_idx = param.sequence as usize;
 
-                let meta_idx = param.sequence as usize;
+                    let param_val = Some(ParameterMetadata {
+                        attributes: vec![],
+                        name: heap_idx!(strings, param.name),
+                        is_in: check_bitmask!(param.flags, 0x1),
+                        is_out: check_bitmask!(param.flags, 0x2),
+                        optional: check_bitmask!(param.flags, 0x10),
+                        default: None,
+                        marshal: None,
+                    });
 
-                let param_val = Some(ParameterMetadata {
-                    attributes: vec![],
-                    name: heap_idx!(strings, param.name),
-                    is_in: check_bitmask!(param.flags, 0x1),
-                    is_out: check_bitmask!(param.flags, 0x2),
-                    optional: check_bitmask!(param.flags, 0x10),
-                    default: None,
-                    marshal: None,
-                });
+                    get_method!(methods[m_idx]).parameter_metadata[meta_idx] = param_val;
 
-                get_method!(methods[m_idx]).parameter_metadata[meta_idx] = param_val;
-
-                params[p_idx] = (m_idx, meta_idx);
+                    params[p_idx].write((m_idx, meta_idx));
+                }
             }
-        }
+        });
 
         debug!("field marshal");
 
@@ -1034,41 +1033,41 @@ impl<'a> DLL<'a> {
 
         let prop_len = tables.property.len();
 
-        new_with_len!(properties, prop_len);
+        build_vec!(properties = (usize, usize)[prop_len], {
+            debug!("properties");
 
-        debug!("properties");
+            for (map_idx, map) in tables.property_map.iter().enumerate() {
+                let type_idx = map.parent.0 - 1;
 
-        for (map_idx, map) in tables.property_map.iter().enumerate() {
-            let type_idx = map.parent.0 - 1;
+                let parent_props = match types.get_mut(type_idx) {
+                    Some(t) => &mut t.properties,
+                    None => throw!("invalid parent type index {} for property map {}", type_idx, map_idx),
+                };
 
-            let parent_props = match types.get_mut(type_idx) {
-                Some(t) => &mut t.properties,
-                None => throw!("invalid parent type index {} for property map {}", type_idx, map_idx),
-            };
+                for (p_idx, prop) in range_index!(
+                    enumerated (map_idx, map) => range property_list in property_map,
+                    indexes property with len prop_len
+                ) {
+                    use super::binary::signature::kinds::PropertySig;
+                    use members::*;
 
-            for (p_idx, prop) in range_index!(
-                enumerated (map_idx, map) => range property_list in property_map,
-                indexes property with len prop_len
-            ) {
-                use super::binary::signature::kinds::PropertySig;
-                use members::*;
+                    let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
 
-                let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
-
-                parent_props.push(Property {
-                    attributes: vec![],
-                    name: heap_idx!(strings, prop.name),
-                    getter: None,
-                    setter: None,
-                    other: vec![],
-                    property_type: convert::read::parameter(sig.property_type, &ctx)?,
-                    special_name: check_bitmask!(prop.flags, 0x200),
-                    runtime_special_name: check_bitmask!(prop.flags, 0x1000),
-                    default: None,
-                });
-                properties[p_idx] = (type_idx, parent_props.len() - 1);
+                    parent_props.push(Property {
+                        attributes: vec![],
+                        name: heap_idx!(strings, prop.name),
+                        getter: None,
+                        setter: None,
+                        other: vec![],
+                        property_type: convert::read::parameter(sig.property_type, &ctx)?,
+                        special_name: check_bitmask!(prop.flags, 0x200),
+                        runtime_special_name: check_bitmask!(prop.flags, 0x1000),
+                        default: None,
+                    });
+                    properties[p_idx].write((type_idx, parent_props.len() - 1));
+                }
             }
-        }
+        });
 
         debug!("constants");
 
@@ -1176,63 +1175,63 @@ impl<'a> DLL<'a> {
 
         let event_len = tables.event.len();
 
-        new_with_len!(events, event_len);
+        build_vec!(events = (usize, usize)[event_len], {
+            debug!("events");
 
-        debug!("events");
+            for (map_idx, map) in tables.event_map.iter().enumerate() {
+                let type_idx = map.parent.0 - 1;
 
-        for (map_idx, map) in tables.event_map.iter().enumerate() {
-            let type_idx = map.parent.0 - 1;
+                let parent = types.get_mut(type_idx).ok_or_else(|| {
+                    scroll::Error::Custom(format!(
+                        "invalid parent type index {} for event map {}",
+                        type_idx, map_idx
+                    ))
+                })?;
+                let parent_events = &mut parent.events;
 
-            let parent = types.get_mut(type_idx).ok_or_else(|| {
-                scroll::Error::Custom(format!(
-                    "invalid parent type index {} for event map {}",
-                    type_idx, map_idx
-                ))
-            })?;
-            let parent_events = &mut parent.events;
+                for (e_idx, event) in range_index!(
+                    enumerated (map_idx, map) => range event_list in event_map,
+                    indexes event with len event_len
+                ) {
+                    use members::*;
 
-            for (e_idx, event) in range_index!(
-                enumerated (map_idx, map) => range event_list in event_map,
-                indexes event with len event_len
-            ) {
-                use members::*;
+                    let name = heap_idx!(strings, event.name);
 
-                let name = heap_idx!(strings, event.name);
+                    let internal_idx = parent_events.len();
 
-                let internal_idx = parent_events.len();
+                    macro_rules! get_listener {
+                        ($l_name:literal, $flag:literal, $variant:ident) => {{
+                            let sem = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
+                                use metadata::index::HasSemantics;
+                                check_bitmask!(s.semantics, $flag)
+                                    && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
+                            }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
+                            let m_idx = sem.method.0 - 1;
+                            if m_idx < method_len {
+                                let method = extract_method!(parent, methods[m_idx]);
+                                methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
+                                method
+                            } else {
+                                throw!("invalid method index {} in {} index for event {}", m_idx, $l_name, name);
+                            }
+                        }}
+                    }
 
-                macro_rules! get_listener {
-                    ($l_name:literal, $flag:literal, $variant:ident) => {{
-                        let sem = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
-                            use metadata::index::HasSemantics;
-                            check_bitmask!(s.semantics, $flag)
-                                && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
-                        }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
-                        let m_idx = sem.method.0 - 1;
-                        if m_idx < method_len {
-                            let method = extract_method!(parent, methods[m_idx]);
-                            methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
-                            method
-                        } else {
-                            throw!("invalid method index {} in {} index for event {}", m_idx, $l_name, name);
-                        }
-                    }}
+                    parent_events.push(Event {
+                        attributes: vec![],
+                        name,
+                        delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
+                        add_listener: get_listener!("add", 0x8, EventAdd),
+                        remove_listener: get_listener!("remove", 0x10, EventRemove),
+                        raise_event: None,
+                        other: vec![],
+                        special_name: check_bitmask!(event.event_flags, 0x200),
+                        runtime_special_name: check_bitmask!(event.event_flags, 0x400),
+                    });
+                    events[e_idx].write((type_idx, internal_idx));
                 }
-
-                parent_events.push(Event {
-                    attributes: vec![],
-                    name,
-                    delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
-                    add_listener: get_listener!("add", 0x8, EventAdd),
-                    remove_listener: get_listener!("remove", 0x10, EventRemove),
-                    raise_event: None,
-                    other: vec![],
-                    special_name: check_bitmask!(event.event_flags, 0x200),
-                    runtime_special_name: check_bitmask!(event.event_flags, 0x400),
-                });
-                events[e_idx] = (type_idx, internal_idx);
             }
-        }
+        });
 
         debug!("method semantics");
 
@@ -1985,7 +1984,7 @@ impl<'a> DLL<'a> {
         Ok(res)
     }
 
-    pub fn write(res: &Resolution) -> Result<Vec<u8>> {
+    pub fn write(res: &Resolution, is_32_bit: bool, is_executable: bool) -> Result<Vec<u8>> {
         use metadata::{header, index, table::*};
         use object::write::pe::*;
         use resolved::{
@@ -1999,11 +1998,6 @@ impl<'a> DLL<'a> {
             resource::{Implementation, Visibility},
             types::{Layout, ResolutionScope, TypeImplementation},
         };
-
-        // PE characteristics
-        // TODO
-        let is_32_bit = true;
-        let is_executable = true;
 
         // writer setup
         let mut buffer = vec![];
@@ -2244,8 +2238,6 @@ impl<'a> DLL<'a> {
             enc_base_id: 0.into(),
         });
 
-        // TODO: should we automatically push the <Module> type?
-
         tables.module_ref.reserve(res.module_references.len());
         for r in &res.module_references {
             tables.module_ref.push(ModuleRef {
@@ -2483,7 +2475,7 @@ impl<'a> DLL<'a> {
                         if f.default.is_some() {
                             mask |= 0x8000;
                         }
-                        if f.start_of_initial_value.is_some() {
+                        if f.initial_value.is_some() {
                             mask |= 0x0100;
                         }
                         mask
@@ -2496,8 +2488,7 @@ impl<'a> DLL<'a> {
                 write_marshal!(f.marshal, index::HasFieldMarshal::Field(table_idx));
                 write_default!(&f.default, index::HasConstant::Field(table_idx));
 
-                // TODO: change member type/semantics so that we don't copy the whole file on accident
-                if let Some(v) = f.start_of_initial_value {
+                if let Some(v) = f.initial_value {
                     tables.field_rva.push(FieldRva {
                         rva: current_rva!(),
                         field: table_idx.into(),
@@ -3148,7 +3139,6 @@ impl<'a> DLL<'a> {
 
         let text_range = writer.reserve_text_section(text.len() as u32);
 
-        // TODO: are relocations really only needed for executables?
         if is_executable {
             writer.add_reloc(
                 text_range.virtual_address,
@@ -3191,7 +3181,7 @@ impl<'a> DLL<'a> {
             minor_image_version: 0,
             major_subsystem_version: 5,
             minor_subsystem_version: 0,
-            subsystem: pe::IMAGE_SUBSYSTEM_WINDOWS_CUI, // TODO
+            subsystem: pe::IMAGE_SUBSYSTEM_WINDOWS_CUI,
             dll_characteristics: 0,
             size_of_stack_reserve: 0x0010_0000,
             size_of_stack_commit: 0x1000,

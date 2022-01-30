@@ -67,7 +67,7 @@ pub struct Field<'a> {
     pub runtime_special_name: bool,
     pub offset: Option<usize>,
     pub marshal: Option<MarshalSpec>,
-    pub start_of_initial_value: Option<&'a [u8]>,
+    pub initial_value: Option<&'a [u8]>,
 }
 name_display!(Field<'_>);
 impl ResolvedDebug for Field<'_> {

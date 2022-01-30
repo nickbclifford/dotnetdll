@@ -480,6 +480,11 @@ impl ResolvedDebug for MemberType {
         }
     }
 }
+impl From<BaseType<MemberType>> for MemberType {
+    fn from(b: BaseType<MemberType>) -> Self {
+        MemberType::Base(Box::new(b))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MethodType {
@@ -496,6 +501,11 @@ impl ResolvedDebug for MethodType {
             TypeGeneric(i) => format!("T{}", i),
             MethodGeneric(i) => format!("M{}", i),
         }
+    }
+}
+impl From<BaseType<MethodType>> for MethodType {
+    fn from(b: BaseType<MethodType>) -> Self {
+        MethodType::Base(Box::new(b))
     }
 }
 
