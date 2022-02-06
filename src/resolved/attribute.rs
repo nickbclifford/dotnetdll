@@ -1,4 +1,6 @@
-use scroll::{Pread, Result};
+use scroll::{Pread, Pwrite, Result};
+use scroll_buffer::DynamicBuffer;
+use std::borrow::Cow;
 
 use crate::binary::signature::{attribute::*, compressed::Unsigned};
 use crate::resolution::Resolution;
@@ -191,10 +193,10 @@ fn parse_named<'def, 'inst>(
         .collect()
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct Attribute<'a> {
     pub constructor: members::UserMethod,
-    pub(crate) value: Option<&'a [u8]>,
+    pub(crate) value: Option<Cow<'a, [u8]>>,
 }
 
 impl<'a> Attribute<'a> {
@@ -205,6 +207,7 @@ impl<'a> Attribute<'a> {
     ) -> Result<CustomAttributeData<'a>> {
         let bytes = self
             .value
+            .as_ref()
             .ok_or_else(|| scroll::Error::Custom("null data for custom attribute".to_string()))?;
 
         let offset = &mut 0;
@@ -250,6 +253,17 @@ impl<'a> Attribute<'a> {
             named_args: named,
         })
     }
+
+    pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'a>) -> Result<Self> {
+        let mut buffer = DynamicBuffer::with_increment(8);
+
+        buffer.pwrite(data, 0)?;
+
+        Ok(Attribute {
+            constructor,
+            value: Some(buffer.into_vec().into()),
+        })
+    }
 }
 
 // we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
@@ -259,42 +273,65 @@ impl<'a> Attribute<'a> {
 pub struct SecurityDeclaration<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub action: u16,
-    pub(crate) value: &'a [u8],
+    pub(crate) value: Cow<'a, [u8]>,
 }
 
 #[derive(Debug, Clone)]
-pub struct SecurityAttributeData<'a> {
+pub struct PermissionAttribute<'a> {
     pub type_name: &'a str,
     pub fields: Vec<NamedArg<'a>>,
 }
 
 impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
-        &self,
+        &'a self,
         resolution: &'a Resolution<'a>,
         resolver: &'a impl Resolver<'a>,
-    ) -> Result<Vec<SecurityAttributeData<'a>>> {
+    ) -> Result<Vec<PermissionAttribute<'a>>> {
         let offset = &mut 0;
 
-        let period: u8 = self.value.gread_with(offset, scroll::LE)?;
+        let value = self.value.as_ref();
+
+        let period: u8 = value.gread_with(offset, scroll::LE)?;
         if period != b'.' {
             throw!("bad security permission set sentinel {:#04x}", period);
         }
 
-        let Unsigned(num_attributes) = self.value.gread(offset)?;
+        let Unsigned(num_attributes) = value.gread(offset)?;
 
         (0..num_attributes)
             .map(|_| {
-                let type_name = self.value.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                let type_name = value.gread::<SerString>(offset)?.0.ok_or_else(|| {
                     scroll::Error::Custom("null attribute type name found when parsing security".to_string())
                 })?;
 
-                let fields = parse_named(self.value, offset, resolution, &|s| {
+                let fields = parse_named(value, offset, resolution, &|s| {
                     resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
                 })?;
 
-                Ok(SecurityAttributeData { type_name, fields })
+                Ok(PermissionAttribute { type_name, fields })
             })
             .collect()
+    }
+
+    pub fn new(attributes: Vec<Attribute<'a>>, action: u16, attrs: Vec<PermissionAttribute<'a>>) -> Result<Self> {
+        let mut buffer = DynamicBuffer::with_increment(8);
+        let offset = &mut 0;
+
+        buffer.gwrite_with(b'.', offset, scroll::LE)?;
+        buffer.gwrite(Unsigned(attrs.len() as u32), offset)?;
+
+        for attr in attrs {
+            buffer.gwrite(SerString(Some(attr.type_name)), offset)?;
+            for arg in attr.fields {
+                buffer.gwrite(arg, offset)?;
+            }
+        }
+
+        Ok(SecurityDeclaration {
+            attributes,
+            action,
+            value: buffer.into_vec().into(),
+        })
     }
 }

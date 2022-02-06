@@ -653,7 +653,6 @@ impl<'a> DLL<'a> {
             }
         });
 
-
         macro_rules! get_field {
             ($f_idx:ident) => {{
                 &mut types[$f_idx.parent_type.0].fields[$f_idx.field]
@@ -875,7 +874,7 @@ impl<'a> DLL<'a> {
             *parent = Some(SecurityDeclaration {
                 attributes: vec![],
                 action: s.action,
-                value: heap_idx!(blobs, s.permission_set),
+                value: heap_idx!(blobs, s.permission_set).into(),
             });
         }
 
@@ -1545,7 +1544,7 @@ impl<'a> DLL<'a> {
                         throw!("invalid null index for constructor of custom attribute {}", idx)
                     }
                 },
-                value: optional_idx!(blobs, a.value),
+                value: optional_idx!(blobs, a.value).map(|v| v.into()),
             };
 
             // panicking indexers after the indexes from the attribute are okay here,
@@ -1989,6 +1988,7 @@ impl<'a> DLL<'a> {
         use object::write::pe::*;
         use resolved::{
             assembly::HashAlgorithm,
+            attribute::Attribute,
             body,
             generic::Variance,
             members::{
@@ -2130,16 +2130,25 @@ impl<'a> DLL<'a> {
             };
         }
 
-        // TODO: all attributes
+        let mut attributes: Vec<(&Attribute, index::HasCustomAttribute)> = vec![];
+
+        macro_rules! write_attrs {
+            ($a:expr, $parent:ident($idx:expr)) => {
+                attributes.extend($a.iter().map(|r| (r, index::HasCustomAttribute::$parent($idx))))
+            };
+        }
 
         macro_rules! write_security {
-            ($s:expr, $owner:expr) => {{
+            ($s:expr, $parent:ident($idx:expr)) => {{
                 if let Some(s) = $s {
+                    let idx = tables.decl_security.len() + 1;
                     tables.decl_security.push(DeclSecurity {
                         action: s.action,
-                        parent: $owner,
-                        permission_set: heap_idx!(blobs, s.value),
+                        parent: index::HasDeclSecurity::$parent($idx),
+                        permission_set: heap_idx!(blobs, &s.value),
                     });
+
+                    write_attrs!(s.attributes, DeclSecurity(idx));
                 }
             }};
         }
@@ -2161,11 +2170,12 @@ impl<'a> DLL<'a> {
                 culture: opt_heap!(strings, a.culture),
             });
 
-            write_security!(&a.security, index::HasDeclSecurity::Assembly(1));
+            write_attrs!(a.attributes, Assembly(1));
+            write_security!(&a.security, Assembly(1));
         }
 
         tables.assembly_ref.reserve(res.assembly_references.len());
-        for a in &res.assembly_references {
+        for (idx, a) in res.assembly_references.iter().enumerate() {
             tables.assembly_ref.push(AssemblyRef {
                 major_version: a.version.major,
                 minor_version: a.version.minor,
@@ -2177,10 +2187,12 @@ impl<'a> DLL<'a> {
                 culture: opt_heap!(strings, a.culture),
                 hash_value: opt_heap!(blobs, a.hash_value),
             });
+
+            write_attrs!(a.attributes, AssemblyRef(idx + 1));
         }
 
         tables.exported_type.reserve(res.exported_types.len());
-        for e in &res.exported_types {
+        for (idx, e) in res.exported_types.iter().enumerate() {
             let mut export = ExportedType {
                 flags: e.flags.to_mask(),
                 type_def_id: 0,
@@ -2201,20 +2213,24 @@ impl<'a> DLL<'a> {
                 }
             };
 
+            write_attrs!(e.attributes, ExportedType(idx + 1));
+
             tables.exported_type.push(export);
         }
 
         tables.file.reserve(res.files.len());
-        for f in &res.files {
+        for (idx, f) in res.files.iter().enumerate() {
             tables.file.push(File {
                 flags: build_bitmask!(f, has_metadata => 0x0001),
                 name: heap_idx!(strings, f.name),
                 hash_value: heap_idx!(blobs, f.hash_value),
             });
+
+            write_attrs!(f.attributes, File(idx + 1));
         }
 
         tables.manifest_resource.reserve(res.manifest_resources.len());
-        for r in &res.manifest_resources {
+        for (idx, r) in res.manifest_resources.iter().enumerate() {
             tables.manifest_resource.push(ManifestResource {
                 offset: r.offset as u32,
                 flags: match r.visibility {
@@ -2228,6 +2244,8 @@ impl<'a> DLL<'a> {
                     None => index::Implementation::Null,
                 },
             });
+
+            write_attrs!(r.attributes, ManifestResource(idx + 1))
         }
 
         tables.module.push(Module {
@@ -2237,52 +2255,61 @@ impl<'a> DLL<'a> {
             enc_id: 0.into(),
             enc_base_id: 0.into(),
         });
+        write_attrs!(res.module.attributes, Module(1));
 
         tables.module_ref.reserve(res.module_references.len());
-        for r in &res.module_references {
+        for (idx, r) in res.module_references.iter().enumerate() {
             tables.module_ref.push(ModuleRef {
                 name: heap_idx!(strings, r.name),
             });
+
+            write_attrs!(r.attributes, ModuleRef(idx + 1));
         }
 
         let mut method_index_map = HashMap::new();
         let mut field_index_map = HashMap::new();
 
         macro_rules! build_generic {
-            ($g:expr, $owner:expr) => {{
-                let new_idx = tables.generic_param.len().into();
-                tables.generic_param.push(GenericParam {
-                    number: $g.sequence as u16,
-                    flags: match $g.variance {
-                        Variance::Invariant => 0x0,
-                        Variance::Covariant => 0x1,
-                        Variance::Contravariant => 0x2,
-                    } | build_bitmask!(
-                        $g.special_constraint,
-                        reference_type => 0x04,
-                        value_type => 0x08,
-                        has_default_constructor => 0x10
-                    ),
-                    owner: $owner,
-                    name: heap_idx!(strings, $g.name),
-                });
+            ($gs:expr, $parent:ident($idx:expr)) => {
+                tables.generic_param.reserve($gs.len());
+                for g in &$gs {
+                    let idx = tables.generic_param.len() + 1;
+                    tables.generic_param.push(GenericParam {
+                        number: g.sequence as u16,
+                        flags: match g.variance {
+                            Variance::Invariant => 0x0,
+                            Variance::Covariant => 0x1,
+                            Variance::Contravariant => 0x2,
+                        } | build_bitmask!(
+                            g.special_constraint,
+                            reference_type => 0x04,
+                            value_type => 0x08,
+                            has_default_constructor => 0x10
+                        ),
+                        owner: index::TypeOrMethodDef::$parent($idx),
+                        name: heap_idx!(strings, g.name),
+                    });
+                    write_attrs!(g.attributes, GenericParam(idx));
 
-                tables
-                    .generic_param_constraint
-                    .reserve($g.type_constraints.len());
-                for c in &$g.type_constraints {
                     tables
                         .generic_param_constraint
-                        .push(GenericParamConstraint {
-                            owner: new_idx,
-                            constraint: convert::write::idx_with_modifiers(
-                                &c.constraint_type,
-                                &c.custom_modifiers,
-                                build_ctx!(),
-                            )?,
-                        });
+                        .reserve(g.type_constraints.len());
+                    for c in &g.type_constraints {
+                        let constraint_idx = tables.generic_param_constraint.len() + 1;
+                        tables
+                            .generic_param_constraint
+                            .push(GenericParamConstraint {
+                                owner: idx.into(),
+                                constraint: convert::write::idx_with_modifiers(
+                                    &c.constraint_type,
+                                    &c.custom_modifiers,
+                                    build_ctx!(),
+                                )?,
+                            });
+                        write_attrs!(c.attributes, GenericParamConstraint(constraint_idx));
+                    }
                 }
-            }};
+            };
         }
 
         let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
@@ -2317,20 +2344,20 @@ impl<'a> DLL<'a> {
                 .into(),
             });
 
-            tables.generic_param.reserve(t.generic_parameters.len());
-            for g in &t.generic_parameters {
-                build_generic!(g, index::TypeOrMethodDef::TypeDef(idx));
-            }
+            build_generic!(t.generic_parameters, TypeDef(idx));
 
             tables.interface_impl.reserve(t.implements.len());
-            for (_, i) in &t.implements {
+            for (attrs, i) in &t.implements {
+                let impl_idx = tables.interface_impl.len() + 1;
                 tables.interface_impl.push(InterfaceImpl {
                     class: idx.into(),
                     interface: convert::write::source_index(i, build_ctx!())?,
                 });
+                write_attrs!(attrs, InterfaceImpl(impl_idx));
             }
 
-            write_security!(&t.security, index::HasDeclSecurity::TypeDef(idx));
+            write_attrs!(t.attributes, TypeDef(idx));
+            write_security!(&t.security, TypeDef(idx));
 
             overrides.extend(
                 t.overrides
@@ -2364,7 +2391,7 @@ impl<'a> DLL<'a> {
             }
 
             macro_rules! write_pinvoke {
-                ($p:expr, $owner:expr) => {{
+                ($p:expr, $parent:ident($idx:expr)) => {{
                     if let Some(p) = $p {
                         tables.impl_map.push(ImplMap {
                             mapping_flags: build_bitmask!(p,
@@ -2381,7 +2408,7 @@ impl<'a> DLL<'a> {
                                 UnmanagedCallingConvention::Thiscall => 0x400,
                                 UnmanagedCallingConvention::Fastcall => 0x500,
                             },
-                            member_forwarded: $owner,
+                            member_forwarded: index::MemberForwarded::$parent($idx),
                             import_name: heap_idx!(strings, p.import_name),
                             import_scope: (p.import_scope.0 + 1).into(),
                         });
@@ -2390,10 +2417,10 @@ impl<'a> DLL<'a> {
             }
 
             macro_rules! write_marshal {
-                ($spec:expr, $owner:expr) => {{
+                ($spec:expr, $parent:ident($idx:expr)) => {{
                     if let Some(s) = $spec {
                         tables.field_marshal.push(FieldMarshal {
-                            parent: $owner,
+                            parent: index::HasFieldMarshal::$parent($idx),
                             native_type: convert::write::into_blob(s, build_ctx!())?,
                         });
                     }
@@ -2401,7 +2428,7 @@ impl<'a> DLL<'a> {
             }
 
             macro_rules! write_default {
-                ($d:expr, $owner:expr) => {{
+                ($d:expr, $parent:ident($idx:expr)) => {{
                     if let Some(c) = $d {
                         use crate::binary::signature::encoded::*;
                         use ConstantValue::*;
@@ -2412,7 +2439,7 @@ impl<'a> DLL<'a> {
                             };
                         }
                         let (constant_type, value) = match c {
-                            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(if *b { 1_u8 } else { 0_u8 })),
+                            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(*b as u8)),
                             Char(u) => (ELEMENT_TYPE_CHAR, blob!(u)),
                             Int8(i) => (ELEMENT_TYPE_I1, blob!(i)),
                             UInt8(u) => (ELEMENT_TYPE_U1, blob!(u)),
@@ -2437,7 +2464,7 @@ impl<'a> DLL<'a> {
                         tables.constant.push(Constant {
                             constant_type,
                             padding: 0,
-                            parent: $owner,
+                            parent: index::HasConstant::$parent($idx),
                             value,
                         });
                     }
@@ -2484,9 +2511,10 @@ impl<'a> DLL<'a> {
                     signature: convert::write::blob_index(&f.return_type, build_ctx!())?,
                 });
 
-                write_pinvoke!(&f.pinvoke, index::MemberForwarded::Field(table_idx));
-                write_marshal!(f.marshal, index::HasFieldMarshal::Field(table_idx));
-                write_default!(&f.default, index::HasConstant::Field(table_idx));
+                write_attrs!(f.attributes, Field(table_idx));
+                write_pinvoke!(&f.pinvoke, Field(table_idx));
+                write_marshal!(f.marshal, Field(table_idx));
+                write_default!(&f.default, Field(table_idx));
 
                 if let Some(v) = f.initial_value {
                     tables.field_rva.push(FieldRva {
@@ -2536,7 +2564,8 @@ impl<'a> DLL<'a> {
                     property_type: convert::write::parameter(&p.property_type, build_ctx!())?,
                 });
 
-                write_default!(&p.default, index::HasConstant::Property(table_idx));
+                write_attrs!(p.attributes, Property(table_idx));
+                write_default!(&p.default, Property(table_idx));
 
                 all_methods.extend(
                     p.other
@@ -2573,7 +2602,8 @@ impl<'a> DLL<'a> {
                 });
             }
             for (event_idx, e) in t.events.iter().enumerate() {
-                let association = Some(index::HasSemantics::Event(tables.event.len() + 1));
+                let table_idx = tables.event.len() + 1;
+                let association = Some(index::HasSemantics::Event(table_idx));
 
                 tables.event.push(Event {
                     event_flags: build_bitmask!(e,
@@ -2582,6 +2612,8 @@ impl<'a> DLL<'a> {
                     name: heap_idx!(strings, e.name),
                     event_type: convert::write::index(&e.delegate_type, build_ctx!())?,
                 });
+
+                write_attrs!(e.attributes, Event(table_idx));
 
                 all_methods.extend(
                     [
@@ -2694,13 +2726,11 @@ impl<'a> DLL<'a> {
                     .into(),
                 });
 
-                tables.generic_param.reserve(m.generic_parameters.len());
-                for g in &m.generic_parameters {
-                    build_generic!(g, index::TypeOrMethodDef::MethodDef(def_index));
-                }
+                build_generic!(m.generic_parameters, MethodDef(def_index));
 
-                write_pinvoke!(&m.pinvoke, index::MemberForwarded::MethodDef(def_index));
-                write_security!(&m.security, index::HasDeclSecurity::MethodDef(def_index));
+                write_attrs!(m.attributes, MethodDef(def_index));
+                write_pinvoke!(&m.pinvoke, MethodDef(def_index));
+                write_security!(&m.security, MethodDef(def_index));
 
                 tables.param.reserve(m.parameter_metadata.len());
                 for (idx, p) in m.parameter_metadata.iter().enumerate() {
@@ -2725,8 +2755,9 @@ impl<'a> DLL<'a> {
                             name: heap_idx!(strings, p.name),
                         });
 
-                        write_marshal!(p.marshal, index::HasFieldMarshal::Param(param_idx));
-                        write_default!(&p.default, index::HasConstant::Param(param_idx));
+                        write_attrs!(p.attributes, Param(param_idx));
+                        write_marshal!(p.marshal, Param(param_idx));
+                        write_default!(&p.default, Param(param_idx));
                     }
                 }
             }
@@ -2961,7 +2992,7 @@ impl<'a> DLL<'a> {
         tables
             .member_ref
             .reserve(res.method_references.len() + res.field_references.len());
-        for m in &res.method_references {
+        for (idx, m) in res.method_references.iter().enumerate() {
             tables.member_ref.push(MemberRef {
                 class: match &m.parent {
                     MethodReferenceParent::Type(t) => type_to_parent!(t),
@@ -2971,8 +3002,10 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, m.name),
                 signature: convert::write::method_ref(&m.signature, build_ctx!())?,
             });
+
+            write_attrs!(m.attributes, MemberRef(idx + 1));
         }
-        for f in &res.field_references {
+        for (idx, f) in res.field_references.iter().enumerate() {
             tables.member_ref.push(MemberRef {
                 class: match &f.parent {
                     FieldReferenceParent::Type(t) => type_to_parent!(t),
@@ -2981,10 +3014,12 @@ impl<'a> DLL<'a> {
                 name: heap_idx!(strings, f.name),
                 signature: convert::write::field_ref(f, build_ctx!())?,
             });
+
+            write_attrs!(f.attributes, MemberRef(field_offset + idx + 1));
         }
 
         tables.type_ref.reserve(res.type_references.len());
-        for r in &res.type_references {
+        for (idx, r) in res.type_references.iter().enumerate() {
             tables.type_ref.push(TypeRef {
                 resolution_scope: match r.scope {
                     ResolutionScope::Nested(t) => index::ResolutionScope::TypeRef(t.0 + 1),
@@ -2995,6 +3030,20 @@ impl<'a> DLL<'a> {
                 },
                 type_name: heap_idx!(strings, r.name),
                 type_namespace: opt_heap!(strings, r.namespace),
+            });
+
+            write_attrs!(r.attributes, TypeRef(idx + 1));
+        }
+
+        tables.custom_attribute.reserve(attributes.len());
+        for (a, parent) in attributes {
+            tables.custom_attribute.push(CustomAttribute {
+                parent,
+                attr_type: match a.constructor {
+                    UserMethod::Definition(m) => index::CustomAttributeType::MethodDef(method_index_map[&m]),
+                    UserMethod::Reference(r) => index::CustomAttributeType::MemberRef(r.0 + 1),
+                },
+                value: opt_heap!(blobs, a.value.as_ref()),
             });
         }
 

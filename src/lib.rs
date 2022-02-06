@@ -254,7 +254,7 @@ mod tests {
                 println!(
                     "assembly attribute {} ({:x?})",
                     a.constructor.show(&r),
-                    a.value.unwrap()
+                    a.value.as_ref().unwrap()
                 );
                 match a.instantiation_data(&resolver, &r) {
                     Ok(d) => println!("data {:#?}", d),
@@ -475,10 +475,7 @@ mod tests {
                 instance: false,
                 explicit_this: false,
                 calling_convention: CallingConvention::Default,
-                parameters: vec![Parameter(
-                    vec![],
-                    ParameterType::Value(BaseType::String.into()),
-                )],
+                parameters: vec![Parameter(vec![], ParameterType::Value(BaseType::String.into()))],
                 return_type: ReturnType(vec![], None),
                 varargs: None,
             },
@@ -581,9 +578,7 @@ mod tests {
                     calling_convention: CallingConvention::Default,
                     parameters: vec![Parameter(
                         vec![],
-                        ParameterType::Value(
-                            BaseType::Vector(vec![], BaseType::String.into()).into(),
-                        ),
+                        ParameterType::Value(BaseType::Vector(vec![], BaseType::String.into()).into()),
                     )],
                     return_type: ReturnType(vec![], None),
                     varargs: None,
