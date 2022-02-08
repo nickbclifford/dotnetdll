@@ -389,9 +389,10 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, r.name);
 
+                let offset = r.offset as usize;
+
                 Ok(ManifestResource {
                     attributes: vec![],
-                    offset: r.offset as usize,
                     name,
                     visibility: match r.flags & 0x7 {
                         0x1 => Visibility::Public,
@@ -406,7 +407,7 @@ impl<'a> DLL<'a> {
                         BinImpl::File(f) => {
                             let idx = f - 1;
                             if idx < files.len() {
-                                Some(Implementation::File(FileIndex(idx)))
+                                Implementation::File { location: FileIndex(idx), offset }
                             } else {
                                 throw!(
                                     "invalid file index {} for manifest resource {}",
@@ -419,7 +420,7 @@ impl<'a> DLL<'a> {
                             let idx = a - 1;
 
                             if idx < assembly_refs.len() {
-                                Some(Implementation::Assembly(AssemblyRefIndex(idx)))
+                                Implementation::Assembly { location: AssemblyRefIndex(idx), offset }
                             } else {
                                 throw!(
                                     "invalid assembly reference index {} for manifest resource {}",
@@ -432,7 +433,7 @@ impl<'a> DLL<'a> {
                             "exported type indices are invalid in manifest resource implementations (found in resource {})",
                             name
                         ),
-                        BinImpl::Null => None
+                        BinImpl::Null => Implementation::CurrentFile(self.at_rva(&self.cli.resources)?[offset..].into())
                     },
                 })
             })
@@ -2229,20 +2230,30 @@ impl<'a> DLL<'a> {
             write_attrs!(f.attributes, File(idx + 1));
         }
 
+        let mut resources = vec![];
+
         tables.manifest_resource.reserve(res.manifest_resources.len());
         for (idx, r) in res.manifest_resources.iter().enumerate() {
+            let (offset, implementation) = match &r.implementation {
+                Implementation::File { location, offset } => (*offset, index::Implementation::File(location.0 + 1)),
+                Implementation::Assembly { location, offset } => {
+                    (*offset, index::Implementation::AssemblyRef(location.0 + 1))
+                }
+                Implementation::CurrentFile(res) => {
+                    let offset = resources.len();
+                    resources.extend_from_slice(&res);
+                    (offset, index::Implementation::Null)
+                }
+            };
+
             tables.manifest_resource.push(ManifestResource {
-                offset: r.offset as u32,
+                offset: offset as u32,
                 flags: match r.visibility {
                     Visibility::Public => 0x0001,
                     Visibility::Private => 0x0002,
                 },
                 name: heap_idx!(strings, r.name),
-                implementation: match r.implementation {
-                    Some(Implementation::File(f)) => index::Implementation::File(f.0 + 1),
-                    Some(Implementation::Assembly(a)) => index::Implementation::AssemblyRef(a.0 + 1),
-                    None => index::Implementation::Null,
-                },
+                implementation,
             });
 
             write_attrs!(r.attributes, ManifestResource(idx + 1))
@@ -3162,6 +3173,12 @@ impl<'a> DLL<'a> {
         let metadata_len = metadata_buf.len();
         text.extend(metadata_buf);
 
+        let resources_rva = RVASize {
+            rva: current_rva!(),
+            size: resources.len() as u32,
+        };
+        text.extend(resources);
+
         let cli_rva = current_rva!();
         let cli_header = Header {
             cb: 72,
@@ -3173,7 +3190,7 @@ impl<'a> DLL<'a> {
             },
             flags: pe::COMIMAGE_FLAGS_ILONLY,
             entry_point_token,
-            resources: RVASize::default(),
+            resources: resources_rva,
             strong_name_signature: RVASize::default(),
             code_manager_table: RVASize::default(),
             vtable_fixups: RVASize::default(),

@@ -1,9 +1,12 @@
 use super::attribute::Attribute;
+use crate::resolution::{AssemblyRefIndex, FileIndex};
+use std::borrow::Cow;
 
-#[derive(Debug, Copy, Clone)]
-pub enum Implementation {
-    File(crate::resolution::FileIndex),
-    Assembly(crate::resolution::AssemblyRefIndex),
+#[derive(Debug, Clone)]
+pub enum Implementation<'a> {
+    File { location: FileIndex, offset: usize },
+    Assembly { location: AssemblyRefIndex, offset: usize },
+    CurrentFile(Cow<'a, [u8]>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -12,14 +15,10 @@ pub enum Visibility {
     Private,
 }
 
-// TODO: a null implementation means offset in the current file
-// change from Option<Implementation> to an Implementation that contains the bytes to insert?
-
 #[derive(Debug, Clone)]
 pub struct ManifestResource<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub offset: usize,
     pub name: &'a str,
     pub visibility: Visibility,
-    pub implementation: Option<Implementation>,
+    pub implementation: Implementation<'a>,
 }

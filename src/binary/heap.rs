@@ -176,14 +176,10 @@ heap_writer!(
     usize,
     [u16],
     |self, value| {
-        let final_byte: u8 = if value.iter().any(|u| {
-            let [high, low] = u.to_le_bytes();
+        let final_byte = value.iter().any(|u| {
+            let [high, low] = u.to_be_bytes();
             high != 0 || matches!(low, 0x01..=0x08 | 0x0E..=0x1F | 0x27 | 0x2D | 0x7F)
-        }) {
-            1
-        } else {
-            0
-        };
+        }) as u8;
 
         let start = self.buffer.len();
         self.buffer.extend(write_bytes(
