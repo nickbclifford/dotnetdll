@@ -30,7 +30,6 @@ pub struct GenericConstraint<'a, ConstraintType> {
 #[derive(Debug, Clone)]
 pub struct Generic<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
-    pub sequence: usize,
     pub name: &'a str,
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,

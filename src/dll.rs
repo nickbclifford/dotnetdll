@@ -883,6 +883,8 @@ impl<'a> DLL<'a> {
 
         let mut constraint_map = HashMap::new();
 
+        // this table is supposed to be sorted by owner and number (ECMA-335, II.22, page 210)
+        // thus no need to sort the generics by sequence after the fact
         for (idx, p) in tables.generic_param.iter().enumerate() {
             use generic::*;
             use metadata::index::TypeOrMethodDef;
@@ -893,7 +895,6 @@ impl<'a> DLL<'a> {
                 () => {
                     Generic {
                         attributes: vec![],
-                        sequence: p.number as usize,
                         name,
                         variance: match p.flags & 0x3 {
                             0x0 => Variance::Invariant,
@@ -959,18 +960,6 @@ impl<'a> DLL<'a> {
                 TypeOrMethodDef::Null => {
                     throw!("invalid null owner index for generic parameter {}", name)
                 }
-            }
-        }
-
-        // this doesn't really matter that much, just to make the sequences nicer
-        // I originally tried to do this with uninitialized Vecs and no sequence field,
-        // but for reasons I don't understand, that broke
-        // TODO: get rid of this, it adds possibility for invalid state when writing
-        for t in &mut types {
-            t.generic_parameters.sort_by_key(|p| p.sequence);
-
-            for m in &mut t.methods {
-                m.generic_parameters.sort_by_key(|p| p.sequence);
             }
         }
 
@@ -2241,7 +2230,7 @@ impl<'a> DLL<'a> {
                 }
                 Implementation::CurrentFile(res) => {
                     let offset = resources.len();
-                    resources.extend_from_slice(&res);
+                    resources.extend_from_slice(res);
                     (offset, index::Implementation::Null)
                 }
             };
@@ -2283,10 +2272,10 @@ impl<'a> DLL<'a> {
         macro_rules! build_generic {
             ($gs:expr, $parent:ident($idx:expr)) => {
                 tables.generic_param.reserve($gs.len());
-                for g in &$gs {
-                    let idx = tables.generic_param.len() + 1;
+                for (idx, g) in $gs.iter().enumerate() {
+                    let table_idx = tables.generic_param.len() + 1;
                     tables.generic_param.push(GenericParam {
-                        number: g.sequence as u16,
+                        number: idx as u16,
                         flags: match g.variance {
                             Variance::Invariant => 0x0,
                             Variance::Covariant => 0x1,
@@ -2300,7 +2289,7 @@ impl<'a> DLL<'a> {
                         owner: index::TypeOrMethodDef::$parent($idx),
                         name: heap_idx!(strings, g.name),
                     });
-                    write_attrs!(g.attributes, GenericParam(idx));
+                    write_attrs!(g.attributes, GenericParam(table_idx));
 
                     tables
                         .generic_param_constraint
@@ -2310,7 +2299,7 @@ impl<'a> DLL<'a> {
                         tables
                             .generic_param_constraint
                             .push(GenericParamConstraint {
-                                owner: idx.into(),
+                                owner: table_idx.into(),
                                 constraint: convert::write::idx_with_modifiers(
                                     &c.constraint_type,
                                     &c.custom_modifiers,
