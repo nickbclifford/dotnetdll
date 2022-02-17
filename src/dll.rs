@@ -290,7 +290,7 @@ impl<'a> DLL<'a> {
 
                 Ok(TypeDefinition {
                     attributes: vec![],
-                    flags: TypeFlags::new(
+                    flags: TypeFlags::from_mask(
                         t.flags,
                         if layout_flags == 0x00 {
                             Layout::Automatic
@@ -450,7 +450,7 @@ impl<'a> DLL<'a> {
                 let name = heap_idx!(strings, e.type_name);
                 Ok(ExportedType {
                     attributes: vec![],
-                    flags: TypeFlags::new(e.flags, Layout::Automatic),
+                    flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
                     name,
                     namespace: optional_idx!(strings, e.type_namespace),
                     implementation: match e.implementation {
@@ -700,8 +700,11 @@ impl<'a> DLL<'a> {
 
                     let name = heap_idx!(strings, m.name);
 
-                    let sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
-                    let num_method_params = sig.parameters.len();
+                    let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+
+                    if check_bitmask!(m.flags, 0x10) {
+                        sig.instance = false;
+                    }
 
                     parent_methods.push(Method {
                         attributes: vec![],
@@ -710,9 +713,8 @@ impl<'a> DLL<'a> {
                         signature: sig,
                         accessibility: member_accessibility(m.flags)?,
                         generic_parameters: vec![],
-                        // NOTE: lots of allocations since this is generated for every single method
-                        parameter_metadata: vec![None; num_method_params + 1],
-                        static_member: check_bitmask!(m.flags, 0x10),
+                        return_type_metadata: None,
+                        parameter_metadata: vec![],
                         sealed: check_bitmask!(m.flags, 0x20),
                         virtual_member: check_bitmask!(m.flags, 0x40),
                         hide_by_sig: check_bitmask!(m.flags, 0x80),
@@ -970,7 +972,7 @@ impl<'a> DLL<'a> {
                 for (p_idx, param) in iter {
                     use members::*;
 
-                    let meta_idx = param.sequence as usize;
+                    let sequence = param.sequence as usize;
 
                     let param_val = Some(ParameterMetadata {
                         attributes: vec![],
@@ -982,9 +984,20 @@ impl<'a> DLL<'a> {
                         marshal: None,
                     });
 
-                    get_method!(methods[m_idx]).parameter_metadata[meta_idx] = param_val;
+                    let method = get_method!(methods[m_idx]);
 
-                    params[p_idx].write((m_idx, meta_idx));
+                    if sequence == 0 {
+                        method.return_type_metadata = param_val;
+                    } else {
+                        let len = method.parameter_metadata.len();
+                        if len < sequence {
+                            method.parameter_metadata.extend(vec![None; sequence - len]);
+                        }
+
+                        method.parameter_metadata[sequence - 1] = param_val;
+                    }
+
+                    params[p_idx].write((m_idx, sequence));
                 }
             }
         });
@@ -1008,10 +1021,15 @@ impl<'a> DLL<'a> {
                     let idx = i - 1;
                     match params.get(idx) {
                         Some(&(m_idx, p_idx)) => {
-                            get_method!(methods[m_idx]).parameter_metadata[p_idx]
-                                .as_mut()
-                                .unwrap()
-                                .marshal = value;
+                            let method = get_method!(methods[m_idx]);
+
+                            let param_meta = if p_idx == 0 {
+                                &mut method.return_type_metadata
+                            } else {
+                                &mut method.parameter_metadata[p_idx - 1]
+                            };
+
+                            param_meta.as_mut().unwrap().marshal = value;
                         }
                         None => throw!("bad parameter index {} for field marshal", idx),
                     }
@@ -1117,10 +1135,15 @@ impl<'a> DLL<'a> {
 
                     match params.get(p_idx) {
                         Some(&(parent, internal)) => {
-                            get_method!(methods[parent]).parameter_metadata[internal]
-                                .as_mut()
-                                .unwrap()
-                                .default = value;
+                            let method = get_method!(methods[parent]);
+
+                            let param_meta = if internal == 0 {
+                                &mut method.return_type_metadata
+                            } else {
+                                &mut method.parameter_metadata[internal - 1]
+                            };
+
+                            param_meta.as_mut().unwrap().default = value;
                         }
                         None => throw!("invalid parameter parent index {} for constant {}", p_idx, idx),
                     }
@@ -1607,12 +1630,21 @@ impl<'a> DLL<'a> {
                 Param(i) => {
                     let p_idx = i - 1;
                     match params.get(p_idx) {
-                        Some(&(parent, internal)) => res[methods[parent]].parameter_metadata
-                            [internal]
-                            .as_mut()
-                            .unwrap()
-                            .attributes
-                            .push(attr),
+                        Some(&(parent, internal)) => {
+                            let method = &mut res[methods[parent]];
+
+                            let param_meta = if internal == 0 {
+                                &mut method.return_type_metadata
+                            } else {
+                                &mut method.parameter_metadata[internal - 1]
+                            };
+
+                            param_meta
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .push(attr)
+                        },
                         None => throw!(
                             "invalid parameter index {} for parent of custom attribute {}",
                             p_idx,
@@ -2694,7 +2726,6 @@ impl<'a> DLL<'a> {
                     },
                     flags: {
                         let mut mask = build_bitmask!(m,
-                            static_member => 0x0010,
                             sealed => 0x0020,
                             virtual_member => 0x0040,
                             hide_by_sig => 0x0080,
@@ -2703,6 +2734,9 @@ impl<'a> DLL<'a> {
                             special_name => 0x0800,
                             runtime_special_name => 0x1000,
                             require_sec_object => 0x8000);
+                        if m.is_static() {
+                            mask |= 0x0010;
+                        }
                         mask |= m.accessibility.to_mask();
                         mask |= match m.vtable_layout {
                             VtableLayout::ReuseSlot => 0x0000,
@@ -2733,7 +2767,10 @@ impl<'a> DLL<'a> {
                 write_security!(&m.security, MethodDef(def_index));
 
                 tables.param.reserve(m.parameter_metadata.len());
-                for (idx, p) in m.parameter_metadata.iter().enumerate() {
+                for (idx, p) in std::iter::once(&m.return_type_metadata)
+                    .chain(m.parameter_metadata.iter())
+                    .enumerate()
+                {
                     if let Some(p) = p {
                         let param_idx = tables.param.len() + 1;
 

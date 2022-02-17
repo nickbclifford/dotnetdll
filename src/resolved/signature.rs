@@ -39,6 +39,11 @@ impl ResolvedDebug for Parameter {
         buf
     }
 }
+impl Parameter {
+    pub const fn new(t: ParameterType) -> Self {
+        Parameter(vec![], t)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReturnType(pub Vec<CustomTypeModifier>, pub Option<ParameterType>);
@@ -55,6 +60,13 @@ impl ResolvedDebug for ReturnType {
         }
 
         buf
+    }
+}
+impl ReturnType {
+    pub const VOID: Self = ReturnType(vec![], None);
+
+    pub const fn new(t: ParameterType) -> Self {
+        ReturnType(vec![], Some(t))
     }
 }
 
@@ -89,6 +101,25 @@ impl<T> MethodSignature<T> {
             .join(", ")
     }
 }
-
 pub type ManagedMethod = MethodSignature<CallingConvention>;
 pub type MaybeUnmanagedMethod = MethodSignature<StandAloneCallingConvention>;
+impl ManagedMethod {
+    const fn new(instance: bool, return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+        Self {
+            instance,
+            explicit_this: false,
+            calling_convention: CallingConvention::Default,
+            parameters,
+            return_type,
+            varargs: None
+        }
+    }
+
+    pub const fn instance(return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+        Self::new(true, return_type, parameters)
+    }
+
+    pub const fn static_member(return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+        Self::new(false, return_type, parameters)
+    }
+}

@@ -36,6 +36,11 @@ impl Display for Accessibility {
         }
     }
 }
+impl From<super::Accessibility> for Accessibility {
+    fn from(a: super::Accessibility) -> Self {
+        Accessibility::Access(a)
+    }
+}
 impl Accessibility {
     pub fn to_mask(self) -> u16 {
         match self {
@@ -162,7 +167,7 @@ impl ResolvedDebug for Property<'_> {
             write!(buf, "{} ", access).unwrap();
         }
 
-        if accessors.iter().any(|m| m.static_member) {
+        if accessors.iter().any(|m| m.is_static()) {
             buf.push_str("static ");
         }
 
@@ -236,8 +241,8 @@ pub struct Method<'a> {
     pub signature: signature::ManagedMethod,
     pub accessibility: Accessibility,
     pub generic_parameters: Vec<MethodGeneric<'a>>,
+    pub return_type_metadata: Option<ParameterMetadata<'a>>,
     pub parameter_metadata: Vec<Option<ParameterMetadata<'a>>>,
-    pub static_member: bool,
     pub sealed: bool,
     pub virtual_member: bool,
     pub hide_by_sig: bool,
@@ -262,7 +267,7 @@ impl ResolvedDebug for Method<'_> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = format!("{} ", self.accessibility);
 
-        if self.static_member {
+        if self.is_static() {
             buf.push_str("static ");
         }
 
@@ -300,6 +305,47 @@ impl ResolvedDebug for Method<'_> {
         }
 
         buf
+    }
+}
+impl<'a> Method<'a> {
+    pub const fn new(
+        access: super::Accessibility,
+        signature: signature::ManagedMethod,
+        name: &'a str,
+        body: Option<body::Method>,
+    ) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            body,
+            signature,
+            accessibility: Accessibility::Access(access),
+            generic_parameters: vec![],
+            return_type_metadata: None,
+            parameter_metadata: vec![],
+            sealed: false,
+            virtual_member: false,
+            hide_by_sig: true,
+            vtable_layout: VtableLayout::ReuseSlot,
+            strict: false,
+            abstract_member: false,
+            special_name: false,
+            pinvoke: None,
+            runtime_special_name: false,
+            security: None,
+            require_sec_object: false,
+            body_format: BodyFormat::IL,
+            body_management: BodyManagement::Managed,
+            forward_ref: false,
+            preserve_sig: false,
+            synchronized: false,
+            no_inlining: false,
+            no_optimization: false,
+        }
+    }
+
+    pub fn is_static(&self) -> bool {
+        !self.signature.instance
     }
 }
 
@@ -478,7 +524,7 @@ impl ResolvedDebug for Event<'_> {
         format!(
             "{} {}{}event {} {}",
             self.add_listener.accessibility,
-            if self.add_listener.static_member { "static " } else { "" },
+            if self.add_listener.is_static() { "static " } else { "" },
             if self.add_listener.abstract_member {
                 "abstract "
             } else if self.add_listener.virtual_member {

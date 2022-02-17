@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter, Write};
 
 use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
+use crate::convert::TypeKind;
 use crate::resolution::*;
 
 use super::{
@@ -70,7 +71,23 @@ pub struct TypeFlags {
 }
 
 impl TypeFlags {
-    pub fn new(bitmask: u32, layout: Layout) -> TypeFlags {
+    pub const fn default() -> Self {
+        Self {
+            accessibility: Accessibility::NotPublic,
+            layout: Layout::Automatic,
+            kind: Kind::Class,
+            abstract_type: false,
+            sealed: false,
+            special_name: false,
+            imported: false,
+            serializable: false,
+            string_formatting: StringFormatting::ANSI,
+            before_field_init: true,
+            runtime_special_name: false,
+        }
+    }
+
+    pub(crate) fn from_mask(bitmask: u32, layout: Layout) -> TypeFlags {
         use Accessibility::*;
 
         TypeFlags {
@@ -143,6 +160,11 @@ impl TypeFlags {
             StringFormatting::Custom(val) => 0x30000 | (val & 0x00C0_0000),
         };
         mask
+    }
+}
+impl Default for TypeFlags {
+    fn default() -> Self {
+        Self::default()
     }
 }
 
@@ -227,6 +249,31 @@ impl ResolvedDebug for TypeDefinition<'_> {
 }
 
 impl<'a> TypeDefinition<'a> {
+    pub const fn new(name: &'a str) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            namespace: None,
+            fields: vec![],
+            properties: vec![],
+            methods: vec![],
+            events: vec![],
+            encloser: None,
+            overrides: vec![],
+            extends: None,
+            implements: vec![],
+            generic_parameters: vec![],
+            flags: TypeFlags::default(),
+            security: None,
+        }
+    }
+
+    pub const fn new_ns(name: &'a str, namespace: &'a str) -> Self {
+        let mut result = Self::new(name);
+        result.namespace = Some(namespace);
+        result
+    }
+
     pub fn nested_type_name(&self, res: &Resolution<'a>) -> String {
         match self.encloser {
             Some(enc) => format!("{}/{}", res[enc], self),
@@ -465,6 +512,28 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     }
 }
 
+impl<T> BaseType<T> {
+    pub const fn vector(inner: T) -> Self {
+        BaseType::Vector(vec![], inner)
+    }
+
+    pub const VOID_PTR: Self = BaseType::ValuePointer(vec![], None);
+
+    pub const fn pointer(pointee: T) -> Self {
+        BaseType::ValuePointer(vec![], Some(pointee))
+    }
+}
+
+macro_rules! impl_from {
+    ($t:ty) => {
+        impl From<BaseType<$t>> for $t {
+            fn from(b: BaseType<$t>) -> Self {
+                TypeKind::from_base(b)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MemberType {
     // NOTE: lots of heap allocation taking place because of how common this type is
@@ -480,11 +549,7 @@ impl ResolvedDebug for MemberType {
         }
     }
 }
-impl From<BaseType<MemberType>> for MemberType {
-    fn from(b: BaseType<MemberType>) -> Self {
-        MemberType::Base(Box::new(b))
-    }
-}
+impl_from!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MethodType {
@@ -503,11 +568,7 @@ impl ResolvedDebug for MethodType {
         }
     }
 }
-impl From<BaseType<MethodType>> for MethodType {
-    fn from(b: BaseType<MethodType>) -> Self {
-        MethodType::Base(Box::new(b))
-    }
-}
+impl_from!(MethodType);
 
 #[derive(Debug, Clone)]
 pub enum LocalVariable {
