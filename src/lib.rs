@@ -363,54 +363,26 @@ mod tests {
                 0x7d, 0xca, 0x02, 0xcd, 0xba, 0xd1, 0x4e, 0x45, 0xbf, 0x5f, 0x1b, 0x7d, 0xf1, 0x93, 0xce, 0x36,
             ],
         });
-        res.assembly = Some(Assembly {
-            attributes: vec![],
-            hash_algorithm: HashAlgorithm::SHA1,
-            version: Version {
-                major: 1,
-                minor: 0,
-                build: 0,
-                revision: 0,
-            },
-            flags: Flags::default(),
-            public_key: None,
-            name: "test",
-            culture: None,
-            security: None,
-        });
+        let mut assembly = Assembly::new("test");
+        assembly.version.major = 1;
+        res.assembly = Some(assembly);
 
         // global module type
         let mut module = TypeDefinition::new("<Module>");
         module.flags.before_field_init = false;
         res.push_type_definition(module);
 
-        let console_asm_ref = res.push_assembly_reference(ExternalAssemblyReference {
-            attributes: vec![],
-            version: Version {
-                major: 6,
-                minor: 0,
-                build: 0,
-                revision: 0,
-            },
-            flags: Default::default(),
-            public_key_or_token: Some(TOKEN),
-            name: "System.Console",
-            culture: None,
-            hash_value: None,
+        let console_asm_ref = res.push_assembly_reference({
+            let mut val = ExternalAssemblyReference::new("System.Console");
+            val.version.major = 6;
+            val.public_key_or_token = Some(TOKEN);
+            val
         });
-        let runtime_ref = res.push_assembly_reference(ExternalAssemblyReference {
-            attributes: vec![],
-            version: Version {
-                major: 6,
-                minor: 0,
-                build: 0,
-                revision: 0,
-            },
-            flags: Default::default(),
-            public_key_or_token: Some(TOKEN),
-            name: "System.Runtime",
-            culture: None,
-            hash_value: None,
+        let runtime_ref = res.push_assembly_reference({
+            let mut val = ExternalAssemblyReference::new("System.Runtime");
+            val.version.major = 6;
+            val.public_key_or_token = Some(TOKEN);
+            val
         });
         let object_ref = res.push_type_reference(ExternalTypeReference {
             attributes: vec![],

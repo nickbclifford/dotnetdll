@@ -269,7 +269,7 @@ impl<'a> DLL<'a> {
                 Ok(ExternalAssemblyReference {
                     attributes: vec![],
                     version: build_version!(a),
-                    flags: Flags::new(a.flags),
+                    has_full_public_key: check_bitmask!(a.flags, 0x0001),
                     public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
                     name: heap_idx!(strings, a.name),
                     culture: optional_idx!(strings, a.culture),
@@ -2203,7 +2203,7 @@ impl<'a> DLL<'a> {
                 minor_version: a.version.minor,
                 build_number: a.version.build,
                 revision_number: a.version.revision,
-                flags: a.flags.to_mask(),
+                flags: a.has_full_public_key as u32,
                 public_key_or_token: opt_heap!(blobs, a.public_key_or_token),
                 name: heap_idx!(strings, a.name),
                 culture: opt_heap!(strings, a.culture),
