@@ -113,7 +113,7 @@ macro_rules! internal_index {
 
         impl<'a> Resolution<'a> {
             paste! {
-                pub fn [<push $sing>](&mut self, parent: TypeIndex, $sing: $t) -> $name {
+                pub fn [<push_ $sing>](&mut self, parent: TypeIndex, $sing: $t) -> $name {
                     let $plural = &mut self[parent].$plural;
                     $plural.push($sing);
                     $name {
@@ -122,7 +122,7 @@ macro_rules! internal_index {
                     }
                 }
 
-                pub fn [<$sing index>](&self, parent: TypeIndex, index: usize) -> Option<$name> {
+                pub fn [<$sing _index>](&self, parent: TypeIndex, index: usize) -> Option<$name> {
                     if index < self[parent].$plural.len() {
                         Some($name {
                             parent_type: parent,
