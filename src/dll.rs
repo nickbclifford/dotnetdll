@@ -1155,6 +1155,7 @@ impl<'a> DLL<'a> {
                     MethodMemberIndex::Method(i) => i,
                     _ => unreachable!(),
                 };
+                // NOTE: this is super inefficient, does a linear search every single time
                 for m in methods.iter_mut() {
                     if m.parent_type == idx.parent_type {
                         match &mut m.member {
