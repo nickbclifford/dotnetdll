@@ -74,13 +74,13 @@ pub mod resolved;
 
 #[cfg(test)]
 mod tests {
-    use scroll::{Pread, Pwrite};
-
     use super::{
         binary::*,
         dll::{ResolveOptions, DLL},
         resolved::ResolvedDebug,
     };
+    use dotnetdll_macros::{ctype, msig};
+    use scroll::{Pread, Pwrite};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
@@ -402,10 +402,7 @@ mod tests {
         let write_line_ref = res.push_method_reference(ExternalMethodReference::new(
             MethodReferenceParent::Type(BaseType::Type(console_type_ref.into()).into()),
             "WriteLine",
-            MethodSignature::static_member(
-                ReturnType::VOID,
-                vec![Parameter::new(ParameterType::Value(BaseType::String.into()))],
-            ),
+            msig! { void (string) },
         ));
 
         let mut foo_def = TypeDefinition::new(None, "Foo");
@@ -440,12 +437,7 @@ mod tests {
 
         let mut main = Method::new(
             Accessibility::Public,
-            MethodSignature::static_member(
-                ReturnType::VOID,
-                vec![Parameter::new(ParameterType::Value(
-                    BaseType::vector(BaseType::String.into()).into(),
-                ))],
-            ),
+            msig! { static void (string[]) },
             "Main",
             Some(body::Method {
                 header: body::Header {
@@ -473,5 +465,22 @@ mod tests {
         let v = DLL::write(&res, false, true).unwrap();
 
         std::fs::write("test.dll", v).unwrap();
+    }
+
+    #[test]
+    pub fn constructor_macros() {
+        use super::resolved::{signature::*, types::*};
+
+        let m: MethodType = ctype! { string[] };
+        println!("{:?}", m);
+        let m: MethodType = ctype! { bool };
+        println!("{:?}", m);
+        let m: MethodType = ctype! { char[]* };
+        println!("{:?}", m);
+        let m: MethodType = ctype! { void*[] };
+        println!("{:?}", m);
+
+        println!("{:?}", msig! { static void (string[]) });
+        println!("{:?}", msig! { string (int, #m) });
     }
 }

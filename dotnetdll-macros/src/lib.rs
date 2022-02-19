@@ -5,6 +5,7 @@ use syn::parse_macro_input;
 mod binary_il;
 mod coded;
 mod from;
+mod types;
 
 #[proc_macro]
 pub fn instructions(input: TokenStream) -> TokenStream {
@@ -22,4 +23,16 @@ pub fn coded_index(input: TokenStream) -> TokenStream {
 pub fn derive_from(input: TokenStream) -> TokenStream {
     let derive = parse_macro_input!(input);
     from::derive_from(derive).into()
+}
+
+#[proc_macro]
+pub fn ctype(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input);
+    types::ctype(&input).into()
+}
+
+#[proc_macro]
+pub fn msig(input: TokenStream) -> TokenStream {
+    let sig = parse_macro_input!(input);
+    types::msig(sig).into()
 }

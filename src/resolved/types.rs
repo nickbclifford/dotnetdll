@@ -326,7 +326,7 @@ impl<'a> ExternalTypeReference<'a> {
             attributes: vec![],
             name,
             namespace,
-            scope
+            scope,
         }
     }
 }
