@@ -1,7 +1,7 @@
 use super::resolved::*;
+use dotnetdll_macros::From;
 use paste::paste;
 use std::ops::{Index, IndexMut};
-use dotnetdll_macros::From;
 
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
@@ -44,6 +44,11 @@ pub enum EntryPoint {
     File(FileIndex),
 }
 
+// all the unsafe indexing here is safe because these indices are known to be always correct and in bounds
+// the field storing the index is private, so consumers can't create bad indices
+// is this necessary? not really, a regular panicking indexer would probably do fine with branch prediction
+// but we might as well take advantage of the semantic guarantee
+
 macro_rules! basic_index {
     ($name:ident indexes $field:ident as $t:ty) => {
         paste! {
@@ -54,12 +59,12 @@ macro_rules! basic_index {
                 type Output = $t;
 
                 fn index(&self, index: $name) -> &Self::Output {
-                    &self.[<$field s>][index.0]
+                    unsafe { self.[<$field s>].get_unchecked(index.0) }
                 }
             }
             impl<'a> IndexMut<$name> for Resolution<'a> {
                 fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                    &mut self.[<$field s>][index.0]
+                    unsafe { self.[<$field s>].get_unchecked_mut(index.0) }
                 }
             }
             impl<'a> Resolution<'a> {
@@ -101,13 +106,13 @@ macro_rules! internal_index {
             type Output = $t;
 
             fn index(&self, index: $name) -> &Self::Output {
-                &self[index.parent_type].$plural[index.$sing]
+                unsafe { self[index.parent_type].$plural.get_unchecked(index.$sing) }
             }
         }
 
         impl<'a> IndexMut<$name> for Resolution<'a> {
             fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[index.parent_type].$plural[index.$sing]
+                unsafe { self[index.parent_type].$plural.get_unchecked_mut(index.$sing) }
             }
         }
 
@@ -165,15 +170,19 @@ impl<'a> Index<MethodIndex> for Resolution<'a> {
         let parent = &self[index.parent_type];
 
         use MethodMemberIndex::*;
-        match index.member {
-            Method(i) => &parent.methods[i],
-            PropertyGetter(i) => parent.properties[i].getter.as_ref().unwrap(),
-            PropertySetter(i) => parent.properties[i].setter.as_ref().unwrap(),
-            PropertyOther { property, other } => &parent.properties[property].other[other],
-            EventAdd(i) => &parent.events[i].add_listener,
-            EventRemove(i) => &parent.events[i].remove_listener,
-            EventRaise(i) => parent.events[i].raise_event.as_ref().unwrap(),
-            EventOther { event, other } => &parent.events[event].other[other],
+        unsafe {
+            match index.member {
+                Method(i) => parent.methods.get_unchecked(i),
+                PropertyGetter(i) => parent.properties.get_unchecked(i).getter.as_ref().unwrap(),
+                PropertySetter(i) => parent.properties.get_unchecked(i).setter.as_ref().unwrap(),
+                PropertyOther { property, other } => {
+                    parent.properties.get_unchecked(property).other.get_unchecked(other)
+                }
+                EventAdd(i) => &parent.events.get_unchecked(i).add_listener,
+                EventRemove(i) => &parent.events.get_unchecked(i).remove_listener,
+                EventRaise(i) => parent.events.get_unchecked(i).raise_event.as_ref().unwrap(),
+                EventOther { event, other } => parent.events.get_unchecked(event).other.get_unchecked(other),
+            }
         }
     }
 }
@@ -182,15 +191,21 @@ impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
         let parent = &mut self[index.parent_type];
 
         use MethodMemberIndex::*;
-        match index.member {
-            Method(i) => &mut parent.methods[i],
-            PropertyGetter(i) => parent.properties[i].getter.as_mut().unwrap(),
-            PropertySetter(i) => parent.properties[i].setter.as_mut().unwrap(),
-            PropertyOther { property, other } => &mut parent.properties[property].other[other],
-            EventAdd(i) => &mut parent.events[i].add_listener,
-            EventRemove(i) => &mut parent.events[i].remove_listener,
-            EventRaise(i) => parent.events[i].raise_event.as_mut().unwrap(),
-            EventOther { event, other } => &mut parent.events[event].other[other],
+        unsafe {
+            match index.member {
+                Method(i) => parent.methods.get_unchecked_mut(i),
+                PropertyGetter(i) => parent.properties.get_unchecked_mut(i).getter.as_mut().unwrap(),
+                PropertySetter(i) => parent.properties.get_unchecked_mut(i).setter.as_mut().unwrap(),
+                PropertyOther { property, other } => parent
+                    .properties
+                    .get_unchecked_mut(property)
+                    .other
+                    .get_unchecked_mut(other),
+                EventAdd(i) => &mut parent.events.get_unchecked_mut(i).add_listener,
+                EventRemove(i) => &mut parent.events.get_unchecked_mut(i).remove_listener,
+                EventRaise(i) => parent.events.get_unchecked_mut(i).raise_event.as_mut().unwrap(),
+                EventOther { event, other } => parent.events.get_unchecked_mut(event).other.get_unchecked_mut(other),
+            }
         }
     }
 }

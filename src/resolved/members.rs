@@ -1,6 +1,3 @@
-use std::fmt::{Display, Formatter, Write};
-use crate::binary::signature::kinds::MarshalSpec;
-use crate::resolution::*;
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -9,7 +6,10 @@ use super::{
     types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
 };
+use crate::binary::signature::kinds::MarshalSpec;
+use crate::resolution::*;
 use dotnetdll_macros::From;
+use std::fmt::{Display, Formatter, Write};
 
 macro_rules! name_display {
     ($i:ty) => {
@@ -213,6 +213,19 @@ pub struct ParameterMetadata<'a> {
     pub marshal: Option<MarshalSpec>,
 }
 name_display!(ParameterMetadata<'_>);
+impl<'a> ParameterMetadata<'a> {
+    pub const fn name(name: &'a str) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            is_in: false,
+            is_out: false,
+            optional: false,
+            default: None,
+            marshal: None,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum BodyFormat {
@@ -385,6 +398,16 @@ pub struct ExternalMethodReference<'a> {
     pub signature: signature::ManagedMethod,
 }
 name_display!(ExternalMethodReference<'_>);
+impl<'a> ExternalMethodReference<'a> {
+    pub const fn new(parent: MethodReferenceParent, name: &'a str, signature: signature::ManagedMethod) -> Self {
+        Self {
+            attributes: vec![],
+            parent,
+            name,
+            signature,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, From)]
 pub enum UserMethod {

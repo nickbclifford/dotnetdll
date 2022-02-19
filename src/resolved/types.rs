@@ -248,11 +248,11 @@ impl ResolvedDebug for TypeDefinition<'_> {
 }
 
 impl<'a> TypeDefinition<'a> {
-    pub const fn new(name: &'a str) -> Self {
+    pub const fn new(namespace: Option<&'a str>, name: &'a str) -> Self {
         Self {
             attributes: vec![],
             name,
-            namespace: None,
+            namespace,
             fields: vec![],
             properties: vec![],
             methods: vec![],
@@ -265,12 +265,6 @@ impl<'a> TypeDefinition<'a> {
             flags: TypeFlags::default(),
             security: None,
         }
-    }
-
-    pub const fn new_ns(name: &'a str, namespace: &'a str) -> Self {
-        let mut result = Self::new(name);
-        result.namespace = Some(namespace);
-        result
     }
 
     pub fn nested_type_name(&self, res: &Resolution<'a>) -> String {
@@ -322,6 +316,17 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
                 },
                 self
             ),
+        }
+    }
+}
+
+impl<'a> ExternalTypeReference<'a> {
+    pub const fn new(namespace: Option<&'a str>, name: &'a str, scope: ResolutionScope) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            namespace,
+            scope
         }
     }
 }
