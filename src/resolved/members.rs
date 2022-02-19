@@ -482,7 +482,7 @@ impl ResolvedDebug for MethodSource {
     }
 }
 
-#[derive(Debug, Clone, From)]
+#[derive(Debug, Clone)]
 pub enum Constant {
     Boolean(bool),
     Char(u16), // not necessarily valid UTF-16
