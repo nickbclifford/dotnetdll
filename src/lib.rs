@@ -235,7 +235,7 @@ mod tests {
         }
 
         let mut files = vec![];
-        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.0")? {
+        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2")? {
             let path = p?.path();
             if matches!(path.extension(), Some(o) if o == "dll") {
                 files.push(std::fs::read(path)?);
@@ -341,12 +341,11 @@ mod tests {
     #[test]
     fn write_all() {
         use super::{
-            binary::signature::kinds::CallingConvention,
-            resolution::{EntryPoint, Resolution},
+            resolution::Resolution,
             resolved::{
                 assembly::*,
                 body, il,
-                members::{Accessibility as MAccess, *},
+                members::*,
                 module::Module,
                 signature::*,
                 types::{Accessibility as TAccess, *},
@@ -394,7 +393,7 @@ mod tests {
         let ctor_ref = res.push_method_reference(ExternalMethodReference {
             attributes: vec![],
             parent: MethodReferenceParent::Type(
-                BaseType::Type(TypeSource::User(UserType::Reference(object_ref))).into(),
+                BaseType::Type(object_ref.into()).into(),
             ),
             name: ".ctor",
             signature: ctor_sig.clone(),
@@ -408,7 +407,7 @@ mod tests {
         let write_line_ref = res.push_method_reference(ExternalMethodReference {
             attributes: vec![],
             parent: MethodReferenceParent::Type(
-                BaseType::Type(TypeSource::User(UserType::Reference(console_type_ref))).into(),
+                BaseType::Type(console_type_ref.into()).into(),
             ),
             name: "WriteLine",
             signature: MethodSignature::static_member(
@@ -419,7 +418,7 @@ mod tests {
 
         let mut foo_def = TypeDefinition::new("Foo");
         foo_def.flags.accessibility = TAccess::Public;
-        foo_def.extends = Some(TypeSource::User(UserType::Reference(object_ref)));
+        foo_def.extends = Some(object_ref.into());
         let mut method = Method::new(
             Accessibility::Public,
             ctor_sig,
@@ -434,7 +433,7 @@ mod tests {
                     il::Instruction::LoadArgument(0),
                     il::Instruction::Call {
                         tail_call: false,
-                        method: MethodSource::User(UserMethod::Reference(ctor_ref)),
+                        method: ctor_ref.into(),
                     },
                     il::Instruction::Return,
                 ],
@@ -466,7 +465,7 @@ mod tests {
                     il::Instruction::LoadString("Hello, world!".encode_utf16().collect()),
                     il::Instruction::Call {
                         tail_call: false,
-                        method: MethodSource::User(UserMethod::Reference(write_line_ref)),
+                        method: write_line_ref.into(),
                     },
                     il::Instruction::Return,
                 ],
@@ -485,7 +484,7 @@ mod tests {
 
         let main_idx = res.push_method(class, main);
 
-        res.entry_point = Some(EntryPoint::Method(main_idx));
+        res.entry_point = Some(main_idx.into());
 
         let v = DLL::write(&res, false, true).unwrap();
 

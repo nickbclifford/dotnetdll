@@ -1,6 +1,7 @@
 use super::resolved::*;
 use paste::paste;
 use std::ops::{Index, IndexMut};
+use dotnetdll_macros::From;
 
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
@@ -37,7 +38,7 @@ impl Resolution<'_> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, From)]
 pub enum EntryPoint {
     Method(MethodIndex),
     File(FileIndex),

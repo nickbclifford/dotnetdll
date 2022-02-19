@@ -1,8 +1,6 @@
 use std::fmt::{Display, Formatter, Write};
-
 use crate::binary::signature::kinds::MarshalSpec;
 use crate::resolution::*;
-
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -11,6 +9,7 @@ use super::{
     types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
 };
+use dotnetdll_macros::From;
 
 macro_rules! name_display {
     ($i:ty) => {
@@ -22,7 +21,7 @@ macro_rules! name_display {
     };
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, From)]
 pub enum Accessibility {
     CompilerControlled,
     Access(super::Accessibility),
@@ -34,11 +33,6 @@ impl Display for Accessibility {
             CompilerControlled => write!(f, "[compiler controlled]"),
             Access(a) => write!(f, "{}", a),
         }
-    }
-}
-impl From<super::Accessibility> for Accessibility {
-    fn from(a: super::Accessibility) -> Self {
-        Accessibility::Access(a)
     }
 }
 impl Accessibility {
@@ -93,7 +87,7 @@ impl ResolvedDebug for Field<'_> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, From)]
 pub enum FieldReferenceParent {
     Type(MethodType),
     Module(ModuleRefIndex),
@@ -109,7 +103,7 @@ pub struct ExternalFieldReference<'a> {
 }
 name_display!(ExternalFieldReference<'_>);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, From)]
 pub enum FieldSource {
     Definition(FieldIndex),
     Reference(FieldRefIndex),
@@ -376,7 +370,7 @@ pub struct PInvoke<'a> {
     pub import_scope: ModuleRefIndex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, From)]
 pub enum MethodReferenceParent {
     Type(MethodType),
     Module(ModuleRefIndex),
@@ -392,7 +386,7 @@ pub struct ExternalMethodReference<'a> {
 }
 name_display!(ExternalMethodReference<'_>);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, From)]
 pub enum UserMethod {
     Definition(MethodIndex),
     Reference(MethodRefIndex),
@@ -469,9 +463,9 @@ pub struct GenericMethodInstantiation {
     pub parameters: Vec<MethodType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, From)]
 pub enum MethodSource {
-    User(UserMethod),
+    User(#[nested(MethodIndex, MethodRefIndex)] UserMethod),
     Generic(GenericMethodInstantiation),
 }
 impl ResolvedDebug for MethodSource {
@@ -488,7 +482,7 @@ impl ResolvedDebug for MethodSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, From)]
 pub enum Constant {
     Boolean(bool),
     Char(u16), // not necessarily valid UTF-16

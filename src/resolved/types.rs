@@ -1,14 +1,13 @@
-use std::fmt::{Display, Formatter, Write};
-
-use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
-use crate::convert::TypeKind;
-use crate::resolution::*;
-
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     generic::{show_constraints, TypeGeneric},
     members, signature, ResolvedDebug,
 };
+use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
+use crate::convert::TypeKind;
+use crate::resolution::*;
+use dotnetdll_macros::From;
+use std::fmt::{Display, Formatter, Write};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Kind {
@@ -282,7 +281,7 @@ impl<'a> TypeDefinition<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, From)]
 pub enum ResolutionScope {
     Nested(TypeRefIndex),
     ExternalModule(ModuleRefIndex),
@@ -327,7 +326,7 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, From)]
 pub enum TypeImplementation {
     Nested(ExportedTypeIndex),
     ModuleFile { type_def: TypeIndex, file: FileIndex },
@@ -366,7 +365,7 @@ type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, From)]
 pub enum UserType {
     Definition(TypeIndex),
     Reference(TypeRefIndex),
@@ -420,9 +419,9 @@ pub struct GenericInstantiation<CtxBaseType> {
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, From)]
 pub enum TypeSource<EnclosingType> {
-    User(UserType),
+    User(#[nested(TypeIndex, TypeRefIndex)] UserType),
     Generic(GenericInstantiation<EnclosingType>),
 }
 impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
@@ -531,7 +530,7 @@ macro_rules! impl_from {
                 TypeKind::from_base(b)
             }
         }
-    }
+    };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -549,7 +548,6 @@ impl ResolvedDebug for MemberType {
         }
     }
 }
-impl_from!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MethodType {

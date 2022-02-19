@@ -22,6 +22,7 @@ use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 use DLLError::*;
+use dotnetdll_macros::From;
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -30,7 +31,7 @@ pub struct DLL<'a> {
     sections: SectionTable<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, From)]
 pub enum DLLError {
     PERead(ObjectReadError),
     PEWrite(ObjectWriteError),
@@ -48,23 +49,6 @@ impl std::fmt::Display for DLLError {
     }
 }
 impl std::error::Error for DLLError {}
-
-// allows for clean usage with ? operator
-impl From<ObjectReadError> for DLLError {
-    fn from(e: ObjectReadError) -> Self {
-        PERead(e)
-    }
-}
-impl From<ObjectWriteError> for DLLError {
-    fn from(e: ObjectWriteError) -> Self {
-        PEWrite(e)
-    }
-}
-impl From<ScrollError> for DLLError {
-    fn from(e: ScrollError) -> Self {
-        CLI(e)
-    }
-}
 
 pub type Result<T> = std::result::Result<T, DLLError>;
 
