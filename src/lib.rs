@@ -194,88 +194,24 @@ mod tests {
     }
 
     #[test]
-    fn resolution() -> Result<(), Box<dyn std::error::Error>> {
+    fn time_resolve() -> Result<(), Box<dyn std::error::Error>> {
         env_logger::init();
-
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
-        let dll = DLL::parse(&file)?;
-
         let opts = ResolveOptions {
             skip_method_bodies: true,
         };
 
-        let r = dll.resolve(opts)?;
+        let start = std::time::Instant::now();
 
-        use crate::{resolution::Resolution, resolved::types::*};
-        use std::fmt;
-
-        #[derive(Debug)]
-        struct TypeNotFoundError(String);
-        impl fmt::Display for TypeNotFoundError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "unable to find type {}", self.0)
-            }
-        }
-        impl std::error::Error for TypeNotFoundError {}
-
-        struct DLLCacheResolver<'a> {
-            main: &'a Resolution<'a>,
-            cache: &'a [Resolution<'a>],
-        }
-        impl<'a> Resolver<'a> for DLLCacheResolver<'a> {
-            type Error = TypeNotFoundError;
-
-            fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error> {
-                std::iter::once(self.main)
-                    .chain(self.cache.iter())
-                    .flat_map(|r| r.type_definitions.iter().map(move |t| (t, r)))
-                    .find(|(t, _)| t.type_name() == name)
-                    .ok_or_else(|| TypeNotFoundError(name.to_string()))
-            }
-        }
-
-        let mut files = vec![];
         for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2")? {
             let path = p?.path();
             if matches!(path.extension(), Some(o) if o == "dll") {
-                files.push(std::fs::read(path)?);
-            }
-        }
-        let dlls: Vec<_> = files.iter().map(|f| DLL::parse(f)).collect::<Result<_, _>>()?;
-        let cache: Vec<_> = dlls.iter().map(|d| d.resolve(opts)).collect::<Result<_, _>>()?;
-
-        let resolver = DLLCacheResolver {
-            main: &r,
-            cache: &cache,
-        };
-
-        if let Some(a) = &r.assembly {
-            for a in &a.attributes {
-                println!(
-                    "assembly attribute {} ({:x?})",
-                    a.constructor.show(&r),
-                    a.value.as_ref().unwrap()
-                );
-                match a.instantiation_data(&resolver, &r) {
-                    Ok(d) => println!("data {:#?}", d),
-                    Err(e) => println!("failed to parse data {}", e),
-                }
+                let file = std::fs::read(path)?;
+                let dll = DLL::parse(&file)?;
+                dll.resolve(opts)?;
             }
         }
 
-        for t in &r.type_definitions {
-            for a in &t.attributes {
-                println!("type attribute {}", a.constructor.show(&r));
-                println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
-            }
-
-            for m in &t.methods {
-                for a in &m.attributes {
-                    println!("method attribute {}", a.constructor.show(&r));
-                    println!("data {:#?}", a.instantiation_data(&resolver, &r)?);
-                }
-            }
-        }
+        println!("total time: {:?}", start.elapsed());
 
         Ok(())
     }
@@ -481,6 +417,6 @@ mod tests {
         println!("{:?}", m);
 
         println!("{:?}", msig! { static void (string[]) });
-        println!("{:?}", msig! { string (int, #m) });
+        println!("{:?}", msig! { string (int, ref #m) });
     }
 }
