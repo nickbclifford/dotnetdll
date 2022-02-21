@@ -553,6 +553,7 @@ impl ResolvedDebug for MemberType {
         }
     }
 }
+impl_from!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MethodType {

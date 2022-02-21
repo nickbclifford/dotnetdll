@@ -6,6 +6,15 @@ pub struct Module<'a> {
     pub name: &'a str,
     pub mvid: [u8; 16],
 }
+impl<'a> Module<'a> {
+    pub const fn new(name: &'a str) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            mvid: [0; 16],
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ExternalModuleReference<'a> {

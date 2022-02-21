@@ -2,7 +2,19 @@ assembly hello_world
 
 extern mscorlib v6.0.0.0
 
-public class Foo extends System.Object {
+uint enum Hello {
+    ASDF
+}
+
+class TestAttribute extends [mscorlib]System.Attribute implements [mscorlib]System.Collections.IEnumerable, [mscorlib]System.IDisposable {
+    public method void constructor() {
+        ldarg this
+        call [mscorlib]System.Object.constructor()
+        ret
+    }
+}
+
+public class Foo {
     public method void constructor() {
         ldarg this
         call [mscorlib]System.Object.constructor()

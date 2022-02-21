@@ -86,6 +86,28 @@ impl ResolvedDebug for Field<'_> {
         buf
     }
 }
+impl<'a> Field<'a> {
+    pub const fn new(access: super::Accessibility, name: &'a str, return_type: MemberType) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            type_modifiers: vec![],
+            return_type,
+            accessibility: Accessibility::Access(access),
+            static_member: false,
+            init_only: false,
+            literal: false,
+            default: None,
+            not_serialized: false,
+            special_name: false,
+            pinvoke: None,
+            runtime_special_name: false,
+            offset: None,
+            marshal: None,
+            initial_value: None
+        }
+    }
+}
 
 #[derive(Debug, Clone, From)]
 pub enum FieldReferenceParent {
