@@ -1,18 +1,49 @@
-WHITESPACE = _{ " " | NEWLINE }
+WHITESPACE = _{ " " | NEWLINE | "\t" }
 
 nat = { ASCII_DIGIT+ }
 
-asm_ident = @{ XID_START ~ (XID_CONTINUE | ".")* }
-version = ${ "v" ~ nat ~ ("." ~ nat){0,3} }
+ident = @{ XID_START ~ XID_CONTINUE* }
+dotted = @{ (ident ~ ".")* ~ ident }
 
-asm_spec = { asm_ident ~ version? }
+version = ${ "v" ~ nat ~ ("." ~ nat){0,3} }
+asm_spec = { dotted ~ version? }
 
 asm_decl = { "assembly" ~ asm_spec }
 extern_decl = { "extern" ~ asm_spec }
+
+int_type = _{ "bool" | "char" | "sbyte" | "byte" | "short" | "ushort" | "int" | "uint" | "long" | "ulong" | "nint" | "nuint" }
+clitype = @{ int_type | "string" | "object" | "float" | "double" | dotted | ("[" ~ clitype ~ "]") | ("*" ~ clitype) }
+
+enum_decl = { int_type? ~ "enum" ~ dotted ~ "{" ~ ident* ~ "}" }
+
+access = { "public" | ("private" ~ "protected"?) | ("protected" ~ "internal"?) | "internal" }
+
+local_var = { clitype ~ ident }
+label = @{ ident ~ ":" }
+instruction = ${ ASCII_ALPHA_LOWER+ ~ (!"\n" ~ ANY)* } // instructions are specially parsed, terminated by a newline
+method_body = { (local_var+ ~ "---")? ~ (label | instruction)+ }
+
+param_type = { "ref"? ~ clitype }
+param = _{ param_type ~ ident }
+method = { "method" ~ ("void" | param_type) ~ ident ~ "(" ~ ((param ~ ",")* ~ param)? ~ ")" ~ ("{" ~ method_body ~ "}")? }
+
+field = { "field" ~ clitype ~ ident }
+
+semantic_method = { ident ~ "{" ~ method_body ~ "}" }
+property = { "property" ~ clitype ~ ident ~ "{" ~ semantic_method* ~ "}" }
+event = { "event" ~ clitype ~ ident ~ "{" ~ semantic_method* ~ "}" }
+
+type_item = { access ~ "static"? ~ (field | property | method | event) }
+extends = { "extends" ~ dotted }
+implements = { "implements" ~ (dotted ~ ",")* ~ dotted }
+type_decl = { ("class" | "struct" | "interface") ~ dotted ~ extends? ~ implements? ~ "{" ~ type_item* ~ "}" }
+
+top_level_decl = { "public"? ~ (type_decl | enum_decl) }
 
 assembly = _{
     SOI ~
     asm_decl ~
     extern_decl* ~
+    top_level_decl* ~
     EOI
 }
