@@ -1,0 +1,18 @@
+WHITESPACE = _{ " " | NEWLINE }
+
+nat = { ASCII_DIGIT+ }
+
+asm_ident = @{ XID_START ~ (XID_CONTINUE | ".")* }
+version = ${ "v" ~ nat ~ ("." ~ nat){0,3} }
+
+asm_spec = { asm_ident ~ version? }
+
+asm_decl = { "assembly" ~ asm_spec }
+extern_decl = { "extern" ~ asm_spec }
+
+assembly = _{
+    SOI ~
+    asm_decl ~
+    extern_decl* ~
+    EOI
+}
