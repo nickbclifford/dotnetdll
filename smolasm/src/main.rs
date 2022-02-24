@@ -1,3 +1,4 @@
+use dotnetdll::resolved::types::ValueKind;
 use dotnetdll::resolved::ResolvedDebug;
 use dotnetdll::{
     resolution::{AssemblyRefIndex, Resolution},
@@ -227,7 +228,15 @@ fn main() {
                 value_field.runtime_special_name = true;
                 res[type_def].fields.push(value_field);
                 for (idx, i) in idents.into_iter().enumerate() {
-                    let mut field = Field::new(Accessibility::Public, i, BaseType::Type(type_def.into()).into());
+                    let mut field = Field::new(
+                        Accessibility::Public,
+                        i,
+                        BaseType::Type {
+                            value_kind: ValueKind::ValueType,
+                            source: type_def.into(),
+                        }
+                        .into(),
+                    );
                     field.static_member = true;
                     field.literal = true;
                     // TODO: native ints

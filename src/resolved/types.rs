@@ -443,9 +443,19 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ValueKind {
+    Class,
+    ValueType,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseType<EnclosingType> {
-    Type(TypeSource<EnclosingType>),
+    Type {
+        value_kind: ValueKind,
+        source: TypeSource<EnclosingType>,
+    },
     Boolean,
     Char,
     Int8,
@@ -472,7 +482,9 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
         use BaseType::*;
         use StandAloneCallingConvention::*;
         match self {
-            Type(t) => t.show(res),
+            Type { value_kind: value_type, source } => {
+                format!("{}{}", if *value_type == ValueKind::ValueType { "valuetype " } else { "" }, source.show(res))
+            }
             Boolean => "bool".to_string(),
             Char => "char".to_string(),
             Int8 => "sbyte".to_string(),

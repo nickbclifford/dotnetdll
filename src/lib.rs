@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net5.0/test.dll")?;
+        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net6.0/test.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve(ResolveOptions::default())?;
@@ -326,7 +326,13 @@ mod tests {
         ));
         let ctor_sig = MethodSignature::instance(ReturnType::VOID, vec![]);
         let ctor_ref = res.push_method_reference(ExternalMethodReference::new(
-            MethodReferenceParent::Type(BaseType::Type(object_ref.into()).into()),
+            MethodReferenceParent::Type(
+                BaseType::Type {
+                    value_kind: ValueKind::Class,
+                    source: object_ref.into(),
+                }
+                .into(),
+            ),
             ".ctor",
             ctor_sig.clone(),
         ));
@@ -336,7 +342,13 @@ mod tests {
             ResolutionScope::Assembly(console_asm_ref),
         ));
         let write_line_ref = res.push_method_reference(ExternalMethodReference::new(
-            MethodReferenceParent::Type(BaseType::Type(console_type_ref.into()).into()),
+            MethodReferenceParent::Type(
+                BaseType::Type {
+                    value_kind: ValueKind::Class,
+                    source: console_type_ref.into(),
+                }
+                .into(),
+            ),
             "WriteLine",
             msig! { void (string) },
         ));

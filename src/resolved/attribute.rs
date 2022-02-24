@@ -123,7 +123,7 @@ fn method_to_type<'def, 'inst>(
         MethodType::Base(b) => {
             use BaseType::*;
             let t = match &**b {
-                Type(ts) => match ts {
+                Type { source: ts, .. } => match ts {
                     TypeSource::User(t) => {
                         let name = t.type_name(resolution);
                         if name == "System.Type" {

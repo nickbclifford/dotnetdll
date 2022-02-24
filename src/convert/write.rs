@@ -1,4 +1,5 @@
 use super::TypeKind;
+use crate::dll::DLLError;
 use crate::{
     binary::{
         heap::{BlobWriter, HeapWriter, UserStringWriter},
@@ -90,7 +91,7 @@ pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<
 
 pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match base {
-        BaseType::Type(t) => source_index(t, ctx)?,
+        BaseType::Type { source, .. } => source_index(source, ctx)?,
         rest => into_index(base_sig(rest, ctx)?, ctx)?,
     })
 }
@@ -121,6 +122,21 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     use BaseType::*;
 
     Ok(match base {
+        Type {
+            value_kind,
+            source,
+        } => {
+            let idx = source_index(source, ctx)?.into();
+            match value_kind {
+                ValueKind::Class => SType::Class(idx),
+                ValueKind::ValueType => SType::ValueType(idx),
+                ValueKind::Unknown => {
+                    return Err(DLLError::CLI(scroll::Error::Custom(
+                        "attempted to use type of unknown value kind inside a signature".to_string(),
+                    )));
+                }
+            }
+        }
         Boolean => SType::Boolean,
         Char => SType::Char,
         Int8 => SType::Int8,
@@ -147,7 +163,6 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
             },
         ),
         FunctionPointer(sig) => SType::FnPtr(Box::new(maybe_unmanaged_method(sig, ctx)?)),
-        _ => unreachable!(),
     })
 }
 
@@ -253,7 +268,11 @@ pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> 
 }
 
 pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {
-    if let Some(BaseType::Type(TypeSource::User(u))) = t.as_base() {
+    if let Some(BaseType::Type {
+        source: TypeSource::User(u),
+        ..
+    }) = t.as_base()
+    {
         Ok(user_index(*u))
     } else {
         let sig = t.as_sig(ctx)?;
