@@ -1,17 +1,22 @@
+use dotnetdll::dll::DLL;
+use dotnetdll::resolution::EntryPoint;
+use dotnetdll::resolved::members::{Event, Method, ParameterMetadata};
 use dotnetdll::resolved::types::ValueKind;
-use dotnetdll::resolved::ResolvedDebug;
+use dotnetdll::resolved::types::{MemberType, MethodType};
 use dotnetdll::{
     resolution::{AssemblyRefIndex, Resolution},
     resolved::{
         assembly::{Assembly, ExternalAssemblyReference, Version},
-        members::{Constant, Field},
+        members::{Constant, Field, Property},
         module::Module,
+        signature::{msig, MethodSignature, Parameter, ParameterType, ReturnType},
         types::{Accessibility as TAccess, BaseType, ExternalTypeReference, ResolutionScope, TypeDefinition, UserType},
-        Accessibility,
+        Accessibility, ResolvedDebug,
     },
 };
 use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[derive(Parser)]
@@ -49,19 +54,20 @@ fn dotted(s: &str) -> (Option<&str>, &str) {
 }
 
 fn int_type<T>(t: &str) -> BaseType<T> {
+    use BaseType::*;
     match t {
-        "bool" => BaseType::Boolean,
-        "char" => BaseType::Char,
-        "sbyte" => BaseType::Int8,
-        "byte" => BaseType::UInt8,
-        "short" => BaseType::Int16,
-        "ushort" => BaseType::UInt16,
-        "int" => BaseType::Int32,
-        "uint" => BaseType::UInt32,
-        "long" => BaseType::Int64,
-        "ulong" => BaseType::UInt64,
-        "nint" => BaseType::IntPtr,
-        "nuint" => BaseType::UIntPtr,
+        "bool" => Boolean,
+        "char" => Char,
+        "sbyte" => Int8,
+        "byte" => UInt8,
+        "short" => Int16,
+        "ushort" => UInt16,
+        "int" => Int32,
+        "uint" => UInt32,
+        "long" => Int64,
+        "ulong" => UInt64,
+        "nint" => IntPtr,
+        "nuint" => UIntPtr,
         _ => unreachable!(),
     }
 }
@@ -71,6 +77,32 @@ fn type_ref(pair: Pair<Rule>) -> (Option<&str>, &str) {
     match &pairs[..] {
         [t] => (None, t.as_str()),
         [a, t] => (Some(a.as_str()), t.as_str()),
+        _ => unreachable!(),
+    }
+}
+
+fn access(s: &str) -> Accessibility {
+    use Accessibility::*;
+    let mut iter = s.split_whitespace();
+    match iter.next().unwrap() {
+        "public" => Public,
+        "private" => {
+            if iter.next().is_some() {
+                // private protected
+                FamilyANDAssembly
+            } else {
+                Private
+            }
+        }
+        "protected" => {
+            if iter.next().is_some() {
+                // protected internal
+                FamilyORAssembly
+            } else {
+                Family
+            }
+        }
+        "internal" => Assembly,
         _ => unreachable!(),
     }
 }
@@ -87,44 +119,39 @@ fn main() {
     let (assembly_name, version) = asm_spec(asm_decl);
 
     let module_name = format!("{}.dll", assembly_name);
-    let mut res = Resolution::new(Module::new(&module_name));
+    let res = RefCell::new(Resolution::new(Module::new(&module_name)));
     let mut assembly = Assembly::new(assembly_name);
     assembly.version = version;
-    res.assembly = Some(assembly);
+    res.borrow_mut().assembly = Some(assembly);
+
+    res.borrow_mut().type_definitions.push(TypeDefinition::new(None, "<Module>"));
 
     let mut extern_map = HashMap::new();
     while matches!(pairs.peek(), Some(p) if p.as_rule() == Rule::extern_decl) {
         let (name, version) = asm_spec(pairs.next().unwrap());
         let mut asm_ref = ExternalAssemblyReference::new(name);
         asm_ref.version = version;
-        extern_map.insert(name, res.push_assembly_reference(asm_ref));
+        extern_map.insert(name, res.borrow_mut().push_assembly_reference(asm_ref));
     }
 
     // we always need an mscorlib reference, insert a default one if the user didn't specify a version
-    let mscorlib = *extern_map
-        .entry("mscorlib")
-        .or_insert_with(|| res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib")));
+    let mscorlib = *extern_map.entry("mscorlib").or_insert_with(|| {
+        res.borrow_mut()
+            .push_assembly_reference(ExternalAssemblyReference::new("mscorlib"))
+    });
 
-    println!("{:#?}", extern_map);
+    let ref_map: RefCell<HashMap<(AssemblyRefIndex, &str), _>> = RefCell::new(HashMap::new());
 
-    let mut ref_map: HashMap<(AssemblyRefIndex, &str), _> = HashMap::new();
-    macro_rules! get_ref {
-        ($asm_ref:expr, $typename:expr) => {{
-            let a = $asm_ref;
-            let t = $typename;
-            match ref_map.get(&(a, t)) {
-                Some(i) => *i,
-                None => {
-                    let (namespace, name) = dotted(t);
-                    res.push_type_reference(ExternalTypeReference::new(
-                        namespace,
-                        name,
-                        ResolutionScope::Assembly(a),
-                    ))
-                }
-            }
-        }};
-    }
+    let get_ref = |a, t| {
+        *ref_map.borrow_mut().entry((a, t)).or_insert_with(|| {
+            let (namespace, name) = dotted(t);
+            res.borrow_mut().push_type_reference(ExternalTypeReference::new(
+                namespace,
+                name,
+                ResolutionScope::Assembly(a),
+            ))
+        })
+    };
 
     enum TypeKind<'i> {
         Enum {
@@ -193,28 +220,71 @@ fn main() {
         };
         let (namespace, name) = dotted(typename);
 
-        let type_def = res.push_type_definition(TypeDefinition::new(namespace, name));
+        let type_def = res
+            .borrow_mut()
+            .push_type_definition(TypeDefinition::new(namespace, name));
         types.insert(typename, type_def);
 
-        res[type_def].flags.accessibility = access;
+        res.borrow_mut()[type_def].flags.accessibility = access;
         kinds.push((type_def, kind));
     }
 
-    macro_rules! user_type {
-        ($r:expr) => {{
-            let (asm, name) = type_ref($r);
-            match asm {
-                Some(a) => UserType::from(get_ref!(extern_map[a], name)),
-                None => UserType::from(types[name]),
+    let user_type = |p| {
+        let (asm, name) = type_ref(p);
+        match asm {
+            Some(a) => UserType::from(get_ref(extern_map[a], name)),
+            None => UserType::from(types[name]),
+        }
+    };
+
+    fn clitype<'i, T: From<BaseType<T>>>(p: Pair<'i, Rule>, user_type: impl Fn(Pair<'i, Rule>) -> UserType) -> T {
+        println!("{:?}", p);
+        match p.as_str() {
+            "string" => BaseType::String,
+            "object" => BaseType::Object,
+            "float" => BaseType::Float32,
+            "double" => BaseType::Float64,
+            _ => {
+                let is_valuetype = p.as_str().starts_with("valuetype");
+                let inner = p.into_inner().next().unwrap();
+                match inner.as_rule() {
+                    Rule::int_type => int_type(inner.as_str()),
+                    Rule::type_ref => BaseType::Type {
+                        value_kind: if is_valuetype {
+                            ValueKind::ValueType
+                        } else {
+                            ValueKind::Class
+                        },
+                        source: user_type(inner).into(),
+                    },
+                    Rule::vector => BaseType::vector(clitype(inner.into_inner().next().unwrap(), user_type)),
+                    Rule::pointer => {
+                        if inner.as_str() == "*void" {
+                            BaseType::VOID_PTR
+                        } else {
+                            BaseType::pointer(clitype(inner, user_type))
+                        }
+                    }
+                    _ => unreachable!(),
+                }
             }
-        }};
+        }
+        .into()
     }
+    macro_rules! clitype {
+        ($e:expr) => {
+            clitype($e, user_type)
+        };
+    }
+
+    let mut methods = vec![];
 
     // now start processing top-level bodies
     for (type_def, kind) in kinds {
         match kind {
             TypeKind::Enum { raw_type, idents, .. } => {
-                res[type_def].extends = Some(get_ref!(mscorlib, "System.Enum").into());
+                res.borrow_mut()[type_def].flags.sealed = true;
+                res.borrow_mut()[type_def].extends = Some(get_ref(mscorlib, "System.Enum").into());
                 let mut value_field = Field::new(
                     Accessibility::Public,
                     "value__",
@@ -226,7 +296,7 @@ fn main() {
                 );
                 value_field.special_name = true;
                 value_field.runtime_special_name = true;
-                res[type_def].fields.push(value_field);
+                res.borrow_mut()[type_def].fields.push(value_field);
                 for (idx, i) in idents.into_iter().enumerate() {
                     let mut field = Field::new(
                         Accessibility::Public,
@@ -240,39 +310,43 @@ fn main() {
                     field.static_member = true;
                     field.literal = true;
                     // TODO: native ints
-                    field.default = Some(match raw_type {
-                        Some("bool") => Constant::Boolean(idx == 1),
-                        Some("char") => Constant::Char(idx.try_into().unwrap()),
-                        Some("sbyte") => Constant::Int8(idx.try_into().unwrap()),
-                        Some("byte") => Constant::UInt8(idx.try_into().unwrap()),
-                        Some("short") => Constant::Int16(idx.try_into().unwrap()),
-                        Some("ushort") => Constant::UInt16(idx.try_into().unwrap()),
-                        Some("int") | None => Constant::Int32(idx.try_into().unwrap()),
-                        Some("uint") => Constant::UInt32(idx.try_into().unwrap()),
-                        Some("long") => Constant::Int64(idx.try_into().unwrap()),
-                        Some("ulong") => Constant::UInt64(idx.try_into().unwrap()),
+                    field.default = Some(match raw_type.unwrap_or("int") {
+                        "bool" => Constant::Boolean(idx == 1),
+                        "char" => Constant::Char(idx.try_into().unwrap()),
+                        "sbyte" => Constant::Int8(idx.try_into().unwrap()),
+                        "byte" => Constant::UInt8(idx.try_into().unwrap()),
+                        "short" => Constant::Int16(idx.try_into().unwrap()),
+                        "ushort" => Constant::UInt16(idx.try_into().unwrap()),
+                        "int" => Constant::Int32(idx.try_into().unwrap()),
+                        "uint" => Constant::UInt32(idx.try_into().unwrap()),
+                        "long" => Constant::Int64(idx.try_into().unwrap()),
+                        "ulong" => Constant::UInt64(idx.try_into().unwrap()),
                         _ => unreachable!(),
                     });
-                    res[type_def].fields.push(field);
+                    res.borrow_mut()[type_def].fields.push(field);
                 }
             }
             TypeKind::Class {
                 kind,
                 extends,
                 implements,
-                ..
+                items,
+                name,
             } => {
-                res[type_def].extends = if let Some(e) = extends {
-                    Some(user_type!(e).into())
+                let is_abstract = kind.starts_with("abstract") || kind == "interface";
+                res.borrow_mut()[type_def].flags.abstract_type = is_abstract;
+
+                res.borrow_mut()[type_def].extends = if let Some(e) = extends {
+                    Some(user_type(e).into())
                 } else if kind != "interface" {
                     Some(
-                        get_ref!(
+                        get_ref(
                             mscorlib,
                             if kind == "struct" {
                                 "System.ValueType"
                             } else {
                                 "System.Object"
-                            }
+                            },
                         )
                         .into(),
                     )
@@ -282,19 +356,194 @@ fn main() {
 
                 if let Some(i) = implements {
                     for p in i.into_inner() {
-                        let val = (vec![], user_type!(p).into());
-                        res[type_def].implements.push(val)
+                        let val = (vec![], user_type(p).into());
+                        res.borrow_mut()[type_def].implements.push(val)
+                    }
+                }
+
+                for type_item in items {
+                    let mut inner = type_item.into_inner();
+                    let accessibility = access(inner.next().unwrap().as_str());
+                    let is_static = matches!(inner.peek(), Some(p) if p.as_rule() == Rule::static_member);
+                    if is_static {
+                        inner.next();
+                    }
+                    let pair = inner.next().unwrap();
+                    let rule = pair.as_rule();
+                    let mut inner = pair.into_inner();
+
+                    match rule {
+                        Rule::field => {
+                            let field_type = inner.next().unwrap();
+                            let ident = inner.next().unwrap();
+
+                            let mut field = Field::new(accessibility, ident.as_str(), clitype!(field_type));
+                            field.static_member = is_static;
+                            res.borrow_mut()[type_def].fields.push(field);
+                        }
+                        Rule::property => {
+                            let prop_type = inner.next().unwrap();
+                            let ident = inner.next().unwrap();
+
+                            let property_type: MethodType = clitype!(prop_type);
+
+                            for sem_method in inner {
+                                let mut inner = sem_method.into_inner();
+                                let semantic = inner.next().unwrap().as_str();
+                                let body = inner.next().unwrap();
+
+                                let t = property_type.clone();
+
+                                let mut sig = match semantic {
+                                    "get" => msig! { #t () },
+                                    "set" => msig! { void (#t) },
+                                    other => panic!("invalid property method semantic {}", other),
+                                };
+                                sig.instance = !is_static;
+
+                                let name = format!("{}_{}", semantic, ident.as_str()).into();
+                                methods.push((
+                                    res.borrow_mut()
+                                        .push_method(type_def, Method::new(accessibility, sig, name, None)),
+                                    body,
+                                ));
+                            }
+
+                            res.borrow_mut()[type_def].properties.push(Property::new(
+                                ident.as_str(),
+                                Parameter::new(ParameterType::Value(property_type)),
+                            ));
+                        }
+                        Rule::method => {
+                            let return_type = inner.next().unwrap();
+                            let ident = inner.next().unwrap();
+                            let mut rest: Vec<_> = inner.collect();
+
+                            let body = if matches!(&rest[..], [.., last] if last.as_rule() == Rule::method_body) {
+                                Some(rest.pop().unwrap())
+                            } else {
+                                if !is_abstract {
+                                    panic!(
+                                        "method {} cannot have no body in non-abstract class {}",
+                                        ident.as_str(),
+                                        name
+                                    );
+                                }
+                                None
+                            };
+
+                            let is_entrypoint = matches!(&rest[..], [.., last] if last.as_rule() == Rule::entry_point);
+                            if is_entrypoint {
+                                rest.pop().unwrap();
+                            }
+
+                            let (param_types, param_names): (Vec<_>, Vec<_>) = rest
+                                .into_iter()
+                                .map(|r| {
+                                    let mut iter = r.into_inner();
+                                    (iter.next().unwrap(), iter.next().unwrap())
+                                })
+                                .unzip();
+
+                            let sig = MethodSignature::new(
+                                !is_static,
+                                if return_type.as_str().starts_with("void") {
+                                    ReturnType::VOID
+                                } else {
+                                    ReturnType::new(ParameterType::Value(clitype!(return_type)))
+                                },
+                                param_types
+                                    .into_iter()
+                                    .map(|p| {
+                                        let is_ref = p.as_str().starts_with("ref");
+                                        let clitype = clitype!(p.into_inner().next().unwrap());
+
+                                        Parameter::new(if is_ref {
+                                            ParameterType::Ref(clitype)
+                                        } else {
+                                            ParameterType::Value(clitype)
+                                        })
+                                    })
+                                    .collect(),
+                            );
+
+                            let mut method = Method::new(accessibility, sig, ident.as_str().into(), None);
+                            method.parameter_metadata = param_names
+                                .into_iter()
+                                .map(|i| Some(ParameterMetadata::name(i.as_str())))
+                                .collect();
+                            method.abstract_member = body.is_none();
+
+                            let idx = res.borrow_mut().push_method(type_def, method);
+                            if is_entrypoint {
+                                res.borrow_mut().entry_point = Some(EntryPoint::Method(idx));
+                            }
+                            if let Some(b) = body {
+                                methods.push((idx, b));
+                            }
+                        }
+                        Rule::event => {
+                            let event_type = inner.next().unwrap();
+                            let ident = inner.next().unwrap();
+
+                            let property_type: MemberType = clitype!(event_type);
+
+                            let mut add = None;
+                            let mut remove = None;
+                            for sem_method in inner {
+                                let mut inner = sem_method.into_inner();
+                                let semantic = inner.next().unwrap().as_str();
+                                let body = inner.next().unwrap();
+
+                                let t = property_type.clone().into();
+                                let mut sig = msig! { void (#t) };
+                                sig.instance = !is_static;
+
+                                let name = format!("{}_{}", semantic, ident.as_str()).into();
+                                let pair = Some((Method::new(accessibility, sig.clone(), name, None), body));
+
+                                match semantic {
+                                    "add" => {
+                                        add = pair;
+                                    }
+                                    "remove" => {
+                                        remove = pair;
+                                    }
+                                    other => panic!("invalid event method semantic {}", other),
+                                }
+                            }
+
+                            let (add_m, add_b) = add.unwrap();
+                            let (remove_m, remove_b) = remove.unwrap();
+
+                            let mut event = Event::new(ident.as_str(), property_type, add_m, remove_m);
+                            let event_idx = res.borrow_mut().push_event(type_def, event);
+                            methods.push((res.borrow().event_add_index(event_idx), add_b));
+                            methods.push((res.borrow().event_remove_index(event_idx), remove_b));
+                        }
+                        _ => unreachable!(),
                     }
                 }
             }
         }
     }
 
+    let res = res.into_inner();
     for t in &res.type_definitions {
         println!("{}", t.show(&res));
 
         for f in &t.fields {
             println!("\t{}", f.show(&res));
         }
+
+        for m in &t.methods {
+            println!("\t{}", m.show(&res));
+        }
     }
+
+    let written = DLL::write(&res, false, true).unwrap();
+
+    std::fs::write(&module_name, &written).unwrap();
+
+    println!("{:#?}", DLL::parse(&written).unwrap().resolve(Default::default()).unwrap());
 }

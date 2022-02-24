@@ -9,6 +9,8 @@ use crate::resolution::*;
 use dotnetdll_macros::From;
 use std::fmt::{Display, Formatter, Write};
 
+pub use dotnetdll_macros::ctype;
+
 #[derive(Debug, Copy, Clone)]
 pub enum Kind {
     Class,
@@ -415,29 +417,26 @@ pub enum InstantiationKind {
     ValueType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GenericInstantiation<CtxBaseType> {
-    pub base_kind: InstantiationKind,
-    pub base: UserType,
-    pub parameters: Vec<CtxBaseType>,
-}
-
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
 #[derive(Debug, Clone, PartialEq, Eq, Hash, From)]
 pub enum TypeSource<EnclosingType> {
     User(#[nested(TypeIndex, TypeRefIndex)] UserType),
-    Generic(GenericInstantiation<EnclosingType>),
+    Generic {
+        base_kind: InstantiationKind,
+        base: UserType,
+        parameters: Vec<EnclosingType>,
+    },
 }
 impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     fn show(&self, res: &Resolution) -> String {
         use TypeSource::*;
         match self {
             User(u) => u.show(res),
-            Generic(g) => format!(
+            Generic { base, parameters, .. } => format!(
                 "{}<{}>",
-                g.base.show(res),
-                g.parameters.iter().map(|p| p.show(res)).collect::<Vec<_>>().join(", ")
+                base.show(res),
+                parameters.iter().map(|p| p.show(res)).collect::<Vec<_>>().join(", ")
             ),
         }
     }
@@ -551,6 +550,7 @@ macro_rules! impl_from {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum MemberType {
     // NOTE: lots of heap allocation taking place because of how common this type is
     Base(Box<BaseType<MemberType>>),
@@ -568,6 +568,7 @@ impl ResolvedDebug for MemberType {
 impl_from!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum MethodType {
     // ditto
     Base(Box<BaseType<MethodType>>),
@@ -585,6 +586,15 @@ impl ResolvedDebug for MethodType {
     }
 }
 impl_from!(MethodType);
+
+impl From<MemberType> for MethodType {
+    fn from(m: MemberType) -> Self {
+        // SAFETY: since both types are tagged repr(u8), they have a defined layout
+        // since MethodType is a superset of MemberType, these layouts intersect
+        // thus, every MemberType is a valid MethodType, and this transmutation is valid
+        unsafe { std::mem::transmute(m) }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum LocalVariable {

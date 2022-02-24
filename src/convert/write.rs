@@ -19,7 +19,7 @@ use crate::{
     dll::Result,
     resolved::{
         il::*,
-        members::{ExternalFieldReference, FieldSource, MethodSource, UserMethod},
+        members::{ExternalFieldReference, Field, FieldSource, MethodSource, UserMethod},
         signature::*,
         types::*,
     },
@@ -33,7 +33,6 @@ pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
     pub specs: &'a mut Vec<TypeSpec>,
     pub type_cache: &'a mut HashMap<u64, TypeDefOrRef>,
-    pub blob_cache: &'a mut HashMap<u64, Blob>,
     pub blob_scratch: &'a mut DynamicBuffer,
 }
 
@@ -51,20 +50,6 @@ pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(result)
 }
 
-pub fn blob_index(t: &impl TypeKind, ctx: &mut Context) -> Result<Blob> {
-    let hash = crate::utils::hash(t);
-
-    if let Some(&i) = ctx.blob_cache.get(&hash) {
-        return Ok(i);
-    }
-
-    let result = into_blob(t.as_sig(ctx)?, ctx)?;
-
-    ctx.blob_cache.insert(hash, result);
-
-    Ok(result)
-}
-
 pub fn user_index(t: UserType) -> TypeDefOrRef {
     match t {
         UserType::Definition(d) => TypeDefOrRef::TypeDef(d.0 + 1),
@@ -75,11 +60,15 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
 pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match t {
         TypeSource::User(u) => user_index(*u),
-        TypeSource::Generic(g) => {
-            let base = user_index(g.base).into();
-            let params = g.parameters.iter().map(|g| g.as_sig(ctx)).collect::<Result<_>>()?;
+        TypeSource::Generic {
+            base_kind,
+            base,
+            parameters,
+        } => {
+            let base = user_index(*base).into();
+            let params = parameters.iter().map(|g| g.as_sig(ctx)).collect::<Result<_>>()?;
             into_index(
-                match g.base_kind {
+                match base_kind {
                     InstantiationKind::Class => SType::GenericInstClass(base, params),
                     InstantiationKind::ValueType => SType::GenericInstValueType(base, params),
                 },
@@ -122,10 +111,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     use BaseType::*;
 
     Ok(match base {
-        Type {
-            value_kind,
-            source,
-        } => {
+        Type { value_kind, source } => {
             let idx = source_index(source, ctx)?.into();
             match value_kind {
                 ValueKind::Class => SType::Class(idx),
@@ -256,7 +242,18 @@ pub fn method_ref(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_ref_sig(sig, ctx)?, ctx)
 }
 
-fn field_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
+fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
+    Ok(FieldSig(
+        custom_modifiers(&f.type_modifiers),
+        f.return_type.as_sig(ctx)?,
+    ))
+}
+
+pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
+    into_blob(field_sig(f, ctx)?, ctx)
+}
+
+fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig(
         custom_modifiers(&f.custom_modifiers),
         f.return_type.as_sig(ctx)?,
@@ -264,7 +261,7 @@ fn field_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> 
 }
 
 pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {
-    into_blob(field_sig(f, ctx)?, ctx)
+    into_blob(field_ref_sig(f, ctx)?, ctx)
 }
 
 pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {

@@ -79,7 +79,6 @@ mod tests {
         dll::{ResolveOptions, DLL},
         resolved::ResolvedDebug,
     };
-    use dotnetdll_macros::{ctype, msig};
     use scroll::{Pread, Pwrite};
 
     #[test]
@@ -359,7 +358,7 @@ mod tests {
         let mut method = Method::new(
             Accessibility::Public,
             ctor_sig,
-            ".ctor",
+            ".ctor".into(),
             Some(body::Method {
                 header: body::Header {
                     initialize_locals: false,
@@ -386,7 +385,7 @@ mod tests {
         let mut main = Method::new(
             Accessibility::Public,
             msig! { static void (string[]) },
-            "Main",
+            "Main".into(),
             Some(body::Method {
                 header: body::Header {
                     initialize_locals: false,

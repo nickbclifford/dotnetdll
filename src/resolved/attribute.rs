@@ -132,8 +132,8 @@ fn method_to_type<'def, 'inst>(
                             process_def(resolve(&name)?)?
                         }
                     }
-                    TypeSource::Generic(g) => {
-                        throw!("bad type {:?} in custom attribute constructor", g)
+                    TypeSource::Generic { .. } => {
+                        throw!("bad type {:?} in custom attribute constructor", ts)
                     }
                 },
                 Boolean => FieldOrPropType::Boolean,

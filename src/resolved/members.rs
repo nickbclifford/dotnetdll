@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -104,7 +105,7 @@ impl<'a> Field<'a> {
             runtime_special_name: false,
             offset: None,
             marshal: None,
-            initial_value: None
+            initial_value: None,
         }
     }
 }
@@ -217,6 +218,21 @@ impl ResolvedDebug for Property<'_> {
         buf
     }
 }
+impl<'a> Property<'a> {
+    pub const fn new(name: &'a str, property_type: signature::Parameter) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            getter: None,
+            setter: None,
+            other: vec![],
+            property_type,
+            special_name: false,
+            runtime_special_name: false,
+            default: None,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum VtableLayout {
@@ -265,7 +281,7 @@ pub enum BodyManagement {
 #[derive(Debug, Clone)]
 pub struct Method<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub body: Option<body::Method>,
     pub signature: signature::ManagedMethod,
     pub accessibility: Accessibility,
@@ -340,7 +356,7 @@ impl<'a> Method<'a> {
     pub const fn new(
         access: super::Accessibility,
         signature: signature::ManagedMethod,
-        name: &'a str,
+        name: Cow<'a, str>,
         body: Option<body::Method>,
     ) -> Self {
         Self {
@@ -440,14 +456,14 @@ impl ResolvedDebug for UserMethod {
     fn show(&self, res: &Resolution) -> String {
         let signature;
         let parent_name;
-        let method_name;
+        let method_name: &str;
 
         match self {
             UserMethod::Definition(i) => {
                 let method = &res[*i];
                 signature = &method.signature;
                 parent_name = res[i.parent_type].nested_type_name(res);
-                method_name = method.name;
+                method_name = &method.name;
             }
             UserMethod::Reference(i) => {
                 let r = &res[*i];
@@ -574,5 +590,25 @@ impl ResolvedDebug for Event<'_> {
             self.delegate_type.show(res),
             self.name
         )
+    }
+}
+impl<'a> Event<'a> {
+    pub const fn new(
+        name: &'a str,
+        delegate_type: MemberType,
+        add_listener: Method<'a>,
+        remove_listener: Method<'a>,
+    ) -> Self {
+        Self {
+            attributes: vec![],
+            name,
+            delegate_type,
+            add_listener,
+            remove_listener,
+            raise_event: None,
+            other: vec![],
+            special_name: false,
+            runtime_special_name: false,
+        }
     }
 }

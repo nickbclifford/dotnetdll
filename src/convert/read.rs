@@ -76,11 +76,11 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
     let generic_inst = |tok, types: Vec<Type>, kind| -> Result<BaseType<T>> {
         Ok(BaseType::Type {
             value_kind,
-            source: TypeSource::Generic(GenericInstantiation {
+            source: TypeSource::Generic {
                 base_kind: kind,
                 base: user_type(tok, ctx)?,
                 parameters: types.into_iter().map(|t| T::from_sig(t, ctx)).collect::<Result<_>>()?,
-            }),
+            },
         })
     };
 

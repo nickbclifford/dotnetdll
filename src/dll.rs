@@ -8,6 +8,7 @@ use super::{
     resolution::*,
     resolved,
 };
+use dotnetdll_macros::From;
 use log::{debug, warn};
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -22,7 +23,6 @@ use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 use DLLError::*;
-use dotnetdll_macros::From;
 
 #[derive(Debug)]
 pub struct DLL<'a> {
@@ -692,7 +692,7 @@ impl<'a> DLL<'a> {
 
                     parent_methods.push(Method {
                         attributes: vec![],
-                        name,
+                        name: name.into(),
                         body: None,
                         signature: sig,
                         accessibility: member_accessibility(m.flags)?,
@@ -1836,7 +1836,7 @@ impl<'a> DLL<'a> {
                     continue;
                 }
 
-                let name = res[methods[idx]].name;
+                let name = &res[methods[idx]].name;
 
                 let raw_body = self.get_method(m)?;
 
@@ -2122,7 +2122,6 @@ impl<'a> DLL<'a> {
         let mut tables = Tables::new();
 
         let mut type_cache = HashMap::new();
-        let mut blob_cache = HashMap::new();
         let mut blob_scratch = DynamicBuffer::with_increment(8);
 
         macro_rules! build_ctx {
@@ -2131,7 +2130,6 @@ impl<'a> DLL<'a> {
                     blobs: &mut blobs,
                     specs: &mut tables.type_spec,
                     type_cache: &mut type_cache,
-                    blob_cache: &mut blob_cache,
                     blob_scratch: &mut blob_scratch,
                 }
             };
@@ -2352,7 +2350,7 @@ impl<'a> DLL<'a> {
                 },
                 // for some reason, things break if I use 0 for null index instead of 1
                 // doesn't make any sense, but ildasm fully crashes otherwise
-                field_list: if t.fields.is_empty() { 1 } else { tables.field.len() + 1 }.into(),
+                field_list: (tables.field.len() + 1).into(),
                 method_list: if t.methods.is_empty() {
                     1
                 } else {
@@ -2525,7 +2523,7 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, f.name),
-                    signature: convert::write::blob_index(&f.return_type, build_ctx!())?,
+                    signature: convert::write::field_def(f, build_ctx!())?,
                 });
 
                 write_attrs!(f.attributes, Field(table_idx));
@@ -2735,14 +2733,9 @@ impl<'a> DLL<'a> {
                         }
                         mask
                     },
-                    name: heap_idx!(strings, m.name),
+                    name: heap_idx!(strings, &m.name),
                     signature: convert::write::method_def(&m.signature, build_ctx!())?,
-                    param_list: if m.parameter_metadata.is_empty() {
-                        0
-                    } else {
-                        tables.param.len() + 1
-                    }
-                    .into(),
+                    param_list: (tables.param.len() + 1).into(),
                 });
 
                 build_generic!(m.generic_parameters, MethodDef(def_index));

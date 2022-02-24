@@ -14,14 +14,20 @@ class TestAttribute extends [mscorlib]System.Attribute implements [mscorlib]Syst
     }
 }
 
+interface IDoThing {
+    public method void Yeet()
+}
+
 public class Foo {
+    private protected field string hi
+
     public method void constructor() {
         ldarg this
         call [mscorlib]System.Object.constructor()
         ret
     }
 
-    public static method void Main([string] args) {
+    public static method void Main([string] args) entrypoint {
         ldstr "hello, world"
         call [mscorlib]System.Console.WriteLine(string)
         ret

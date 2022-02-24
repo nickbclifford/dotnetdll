@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use std::fmt::Write;
+pub use dotnetdll_macros::msig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType {
@@ -104,7 +105,7 @@ impl<T> MethodSignature<T> {
 pub type ManagedMethod = MethodSignature<CallingConvention>;
 pub type MaybeUnmanagedMethod = MethodSignature<StandAloneCallingConvention>;
 impl ManagedMethod {
-    const fn new(instance: bool, return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+    pub const fn new(instance: bool, return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
         Self {
             instance,
             explicit_this: false,
