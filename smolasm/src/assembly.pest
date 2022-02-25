@@ -22,9 +22,10 @@ enum_decl = { int_type? ~ "enum" ~ dotted ~ "{" ~ ident* ~ "}" }
 access = { "public" | ("private" ~ "protected"?) | ("protected" ~ "internal"?) | "internal" }
 
 local_var = { clitype ~ ident }
+locals = { "init"? ~ "{" ~ local_var* ~ "}" }
 label = @{ ident ~ ":" }
 instruction = ${ ASCII_ALPHA_LOWER+ ~ (!"\n" ~ ANY)* } // instructions are specially parsed, terminated by a newline
-method_body = { (local_var+ ~ "---")? ~ (label | instruction)+ }
+method_body = { ("maxstack" ~ nat)? ~ ("locals" ~ locals)? ~ (label | instruction)+ }
 
 param_type = { "ref"? ~ clitype }
 param = { param_type ~ ident }

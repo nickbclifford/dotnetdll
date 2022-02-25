@@ -639,6 +639,16 @@ impl ResolvedDebug for LocalVariable {
         }
     }
 }
+impl LocalVariable {
+    pub const fn new(var_type: MethodType) -> Self {
+        Self::Variable {
+            custom_modifiers: vec![],
+            pinned: false,
+            by_ref: false,
+            var_type
+        }
+    }
+}
 
 pub trait Resolver<'a> {
     type Error: std::error::Error;

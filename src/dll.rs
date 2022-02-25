@@ -1979,7 +1979,7 @@ impl<'a> DLL<'a> {
 
                 res[methods[idx]].body = Some(Method {
                     header,
-                    body: instrs,
+                    instructions: instrs,
                     data_sections,
                 });
             }
@@ -2811,7 +2811,7 @@ impl<'a> DLL<'a> {
             };
 
             let mut instructions: Vec<_> = body
-                .body
+                .instructions
                 .iter()
                 .map(|i| convert::write::instruction(i, ctx, m_ctx))
                 .collect::<Result<_>>()?;

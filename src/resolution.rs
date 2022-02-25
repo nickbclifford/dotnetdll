@@ -80,6 +80,10 @@ macro_rules! basic_index {
                         None
                     }
                 }
+
+                pub fn [<enumerate_ $field s>](&self) -> impl Iterator<Item = ($name, &$t)> {
+                    self.[<$field s>].iter().enumerate().map(|(i, f)| ($name(i), f))
+                }
             }
         }
     };
@@ -137,6 +141,13 @@ macro_rules! internal_index {
                         None
                     }
                 }
+
+                pub fn [<enumerate_ $plural>](&self, parent: TypeIndex) -> impl Iterator<Item = ($name, &$t)> {
+                    self[parent].$plural.iter().enumerate().map(move |(i, f)| ($name {
+                        parent_type: parent,
+                        $sing: i
+                    }, f))
+                }
             }
         }
     };
@@ -173,14 +184,14 @@ impl<'a> Index<MethodIndex> for Resolution<'a> {
         unsafe {
             match index.member {
                 Method(i) => parent.methods.get_unchecked(i),
-                PropertyGetter(i) => parent.properties.get_unchecked(i).getter.as_ref().unwrap(),
-                PropertySetter(i) => parent.properties.get_unchecked(i).setter.as_ref().unwrap(),
+                PropertyGetter(i) => parent.properties.get_unchecked(i).getter.as_ref().unwrap_unchecked(),
+                PropertySetter(i) => parent.properties.get_unchecked(i).setter.as_ref().unwrap_unchecked(),
                 PropertyOther { property, other } => {
                     parent.properties.get_unchecked(property).other.get_unchecked(other)
                 }
                 EventAdd(i) => &parent.events.get_unchecked(i).add_listener,
                 EventRemove(i) => &parent.events.get_unchecked(i).remove_listener,
-                EventRaise(i) => parent.events.get_unchecked(i).raise_event.as_ref().unwrap(),
+                EventRaise(i) => parent.events.get_unchecked(i).raise_event.as_ref().unwrap_unchecked(),
                 EventOther { event, other } => parent.events.get_unchecked(event).other.get_unchecked(other),
             }
         }
@@ -194,8 +205,18 @@ impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
         unsafe {
             match index.member {
                 Method(i) => parent.methods.get_unchecked_mut(i),
-                PropertyGetter(i) => parent.properties.get_unchecked_mut(i).getter.as_mut().unwrap(),
-                PropertySetter(i) => parent.properties.get_unchecked_mut(i).setter.as_mut().unwrap(),
+                PropertyGetter(i) => parent
+                    .properties
+                    .get_unchecked_mut(i)
+                    .getter
+                    .as_mut()
+                    .unwrap_unchecked(),
+                PropertySetter(i) => parent
+                    .properties
+                    .get_unchecked_mut(i)
+                    .setter
+                    .as_mut()
+                    .unwrap_unchecked(),
                 PropertyOther { property, other } => parent
                     .properties
                     .get_unchecked_mut(property)
@@ -203,7 +224,12 @@ impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
                     .get_unchecked_mut(other),
                 EventAdd(i) => &mut parent.events.get_unchecked_mut(i).add_listener,
                 EventRemove(i) => &mut parent.events.get_unchecked_mut(i).remove_listener,
-                EventRaise(i) => parent.events.get_unchecked_mut(i).raise_event.as_mut().unwrap(),
+                EventRaise(i) => parent
+                    .events
+                    .get_unchecked_mut(i)
+                    .raise_event
+                    .as_mut()
+                    .unwrap_unchecked(),
                 EventOther { event, other } => parent.events.get_unchecked_mut(event).other.get_unchecked_mut(other),
             }
         }
@@ -227,6 +253,17 @@ impl<'a> Resolution<'a> {
         } else {
             None
         }
+    }
+    pub fn enumerate_methods(&self, parent: TypeIndex) -> impl Iterator<Item = (MethodIndex, &members::Method<'a>)> {
+        self[parent].methods.iter().enumerate().map(move |(i, f)| {
+            (
+                MethodIndex {
+                    parent_type: parent,
+                    member: MethodMemberIndex::Method(i),
+                },
+                f,
+            )
+        })
     }
 
     pub fn set_property_getter(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {

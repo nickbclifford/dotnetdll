@@ -13,7 +13,7 @@ pub struct Header {
 #[derive(Debug, Clone)]
 pub struct Method {
     pub header: Header,
-    pub body: Vec<Instruction>,
+    pub instructions: Vec<Instruction>,
     pub data_sections: Vec<DataSection>,
 }
 

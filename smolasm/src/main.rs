@@ -1,12 +1,14 @@
 use dotnetdll::dll::DLL;
 use dotnetdll::resolution::EntryPoint;
 use dotnetdll::resolved::members::{Event, Method, ParameterMetadata};
-use dotnetdll::resolved::types::ValueKind;
+use dotnetdll::resolved::types::{LocalVariable, ValueKind};
 use dotnetdll::resolved::types::{MemberType, MethodType};
 use dotnetdll::{
     resolution::{AssemblyRefIndex, Resolution},
     resolved::{
         assembly::{Assembly, ExternalAssemblyReference, Version},
+        body,
+        il::*,
         members::{Constant, Field, Property},
         module::Module,
         signature::{msig, MethodSignature, Parameter, ParameterType, ReturnType},
@@ -107,6 +109,13 @@ fn access(s: &str) -> Accessibility {
     }
 }
 
+fn pop_token(s: &str) -> (&str, &str) {
+    match s.find(char::is_whitespace) {
+        Some(i) => (&s[..i], s[i + 1..].trim_start()),
+        None => (s, ""),
+    }
+}
+
 fn main() {
     let mut pairs = match AssemblyParser::parse(Rule::assembly, include_str!("test.il")) {
         Ok(a) => a,
@@ -124,7 +133,9 @@ fn main() {
     assembly.version = version;
     res.borrow_mut().assembly = Some(assembly);
 
-    res.borrow_mut().type_definitions.push(TypeDefinition::new(None, "<Module>"));
+    res.borrow_mut()
+        .type_definitions
+        .push(TypeDefinition::new(None, "<Module>"));
 
     let mut extern_map = HashMap::new();
     while matches!(pairs.peek(), Some(p) if p.as_rule() == Rule::extern_decl) {
@@ -402,11 +413,11 @@ fn main() {
                                 sig.instance = !is_static;
 
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
-                                methods.push((
-                                    res.borrow_mut()
-                                        .push_method(type_def, Method::new(accessibility, sig, name, None)),
-                                    body,
-                                ));
+                                let mut method = Method::new(accessibility, sig, name, None);
+                                if semantic == "set" {
+                                    method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
+                                }
+                                methods.push((res.borrow_mut().push_method(type_def, method), body));
                             }
 
                             res.borrow_mut()[type_def].properties.push(Property::new(
@@ -500,7 +511,9 @@ fn main() {
                                 sig.instance = !is_static;
 
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
-                                let pair = Some((Method::new(accessibility, sig.clone(), name, None), body));
+                                let mut method = Method::new(accessibility, sig.clone(), name, None);
+                                method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
+                                let pair = Some((method, body));
 
                                 match semantic {
                                     "add" => {
@@ -513,10 +526,12 @@ fn main() {
                                 }
                             }
 
-                            let (add_m, add_b) = add.unwrap();
-                            let (remove_m, remove_b) = remove.unwrap();
+                            let (add_m, add_b) =
+                                add.unwrap_or_else(|| panic!("missing add method on event {}", ident.as_str()));
+                            let (remove_m, remove_b) =
+                                remove.unwrap_or_else(|| panic!("missing remove method on event {}", ident.as_str()));
 
-                            let mut event = Event::new(ident.as_str(), property_type, add_m, remove_m);
+                            let event = Event::new(ident.as_str(), property_type, add_m, remove_m);
                             let event_idx = res.borrow_mut().push_event(type_def, event);
                             methods.push((res.borrow().event_add_index(event_idx), add_b));
                             methods.push((res.borrow().event_remove_index(event_idx), remove_b));
@@ -526,6 +541,111 @@ fn main() {
                 }
             }
         }
+    }
+
+    for (idx, body) in methods {
+        let method = &mut res.borrow_mut()[idx];
+
+        let mut params: HashMap<_, _> = method
+            .parameter_metadata
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                (
+                    p.as_ref().unwrap().name,
+                    if method.signature.instance { i + 1 } else { i } as u16,
+                )
+            })
+            .collect();
+        if method.signature.instance {
+            params.insert("this", 0);
+        }
+
+        let mut inner = body.into_inner();
+
+        let maximum_stack_size: usize = if matches!(inner.peek(), Some(p) if p.as_rule() == Rule::nat) {
+            inner.next().unwrap().as_str().parse().unwrap()
+        } else {
+            8
+        };
+
+        let mut local_idxs = HashMap::new();
+
+        let (initialize_locals, local_variables) = if matches!(inner.peek(), Some(p) if p.as_rule() == Rule::locals) {
+            let locals = inner.next().unwrap();
+            (
+                locals.as_str().starts_with("init"),
+                locals
+                    .into_inner()
+                    .enumerate()
+                    .map(|(idx, l)| {
+                        let mut inner = l.into_inner();
+                        let var_type = clitype!(inner.next().unwrap());
+
+                        let name = inner.next().unwrap().as_str();
+                        local_idxs.insert(name, idx);
+
+                        LocalVariable::new(var_type)
+                    })
+                    .collect(),
+            )
+        } else {
+            (false, vec![])
+        };
+
+        let mut instructions = vec![];
+        let mut instruction_counter = 0;
+        let mut labels = HashMap::new();
+
+        for rule in inner {
+            let line = rule.as_str().trim_end();
+
+            if rule.as_rule() == Rule::label {
+                // strip off the ending colon
+                labels.insert(&line[..line.len() - 1], instruction_counter);
+                continue;
+            }
+
+            let (mnemonic, instr_params) = pop_token(line);
+
+            instructions.push(match mnemonic {
+                "return" => Instruction::Return,
+                "load" => {
+                    let (kind, rest) = pop_token(instr_params);
+                    match kind {
+                        "int" => Instruction::LoadConstantInt32(rest.parse().unwrap()),
+                        "long" => Instruction::LoadConstantInt64(rest.parse().unwrap()),
+                        "float" => Instruction::LoadConstantFloat32(rest.parse().unwrap()),
+                        "double" => Instruction::LoadConstantFloat64(rest.parse().unwrap()),
+                        "string" => Instruction::LoadString(todo!()),
+                        "argument" => Instruction::LoadArgument(
+                            *params
+                                .get(rest)
+                                .unwrap_or_else(|| panic!("unknown argument {}", rest)),
+                        ),
+                        unknown => panic!("unknown load kind {}", unknown),
+                    }
+                }
+                "branch" => Instruction::Branch(
+                    *labels
+                        .get(instr_params)
+                        .unwrap_or_else(|| panic!("unknown label {}", instr_params)),
+                ),
+                unknown => panic!("unknown instruction {}", unknown),
+            });
+
+            instruction_counter += 1;
+        }
+
+        method.body = Some(body::Method {
+            header: body::Header {
+                initialize_locals,
+                maximum_stack_size,
+                local_variables,
+            },
+            instructions,
+            data_sections: vec![],
+        });
     }
 
     let res = res.into_inner();
@@ -545,5 +665,8 @@ fn main() {
 
     std::fs::write(&module_name, &written).unwrap();
 
-    println!("{:#?}", DLL::parse(&written).unwrap().resolve(Default::default()).unwrap());
+    println!(
+        "{:#?}",
+        DLL::parse(&written).unwrap().resolve(Default::default()).unwrap()
+    );
 }

@@ -131,11 +131,11 @@ mod tests {
                         }
                     }
 
-                    let max_size = ((b.body.len() - 1) as f32).log10().ceil() as usize;
+                    let max_size = ((b.instructions.len() - 1) as f32).log10().ceil() as usize;
 
                     println!("\t\t---");
 
-                    for (idx, instr) in b.body.iter().enumerate() {
+                    for (idx, instr) in b.instructions.iter().enumerate() {
                         println!("\t\t{:1$}: {2}", idx, max_size, instr.show(&r))
                     }
 
@@ -365,7 +365,7 @@ mod tests {
                     maximum_stack_size: 0,
                     local_variables: vec![],
                 },
-                body: vec![
+                instructions: vec![
                     il::Instruction::LoadArgument(0),
                     il::Instruction::Call {
                         tail_call: false,
@@ -392,7 +392,7 @@ mod tests {
                     maximum_stack_size: 0,
                     local_variables: vec![],
                 },
-                body: vec![
+                instructions: vec![
                     il::Instruction::LoadString("Hello, world!".encode_utf16().collect()),
                     il::Instruction::Call {
                         tail_call: false,
