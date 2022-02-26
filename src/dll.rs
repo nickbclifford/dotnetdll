@@ -128,8 +128,15 @@ impl<'a> DLL<'a> {
             .map_err(CLI)
     }
 
+    #[allow(clippy::nonminimal_bool)]
     pub fn get_method(&self, def: &metadata::table::MethodDef) -> Result<method::Method> {
-        self.raw_rva(def.rva)?.pread(0).map_err(CLI)
+        let bytes = self.raw_rva(def.rva)?;
+        let mut offset = 0;
+        // if we don't see a method header at the beginning, we need to align
+        if !check_bitmask!(bytes[0], 0x2) {
+            offset = 4 - (def.rva as usize % 4);
+        }
+        bytes.pread(offset).map_err(CLI)
     }
 
     #[allow(clippy::nonminimal_bool, unused_mut)]
@@ -1847,7 +1854,7 @@ impl<'a> DLL<'a> {
                         local_variables: vec![],
                     },
                     method::Header::Fat {
-                        flags,
+                        init_locals,
                         max_stack,
                         local_var_sig_tok,
                         ..
@@ -1887,7 +1894,7 @@ impl<'a> DLL<'a> {
                             }
                         };
                         Header {
-                            initialize_locals: check_bitmask!(flags, 0x10),
+                            initialize_locals: init_locals,
                             maximum_stack_size: max_stack as usize,
                             local_variables,
                         }
@@ -2799,8 +2806,6 @@ impl<'a> DLL<'a> {
         };
 
         for (def_idx, body) in bodies {
-            tables.method_def[def_idx].rva = current_rva!();
-
             let ctx = build_ctx!();
             let m_ctx = &mut convert::write::MethodContext {
                 stand_alone_sigs: &mut tables.stand_alone_sig,
@@ -2831,16 +2836,20 @@ impl<'a> DLL<'a> {
                 use Instruction::*;
 
                 let bytesize = i.bytesize();
-                let convert_offset = |o: &mut i32| {
+                let convert_offset = |o: &mut i32, can_shorten: bool| {
                     let base = current_off + bytesize;
                     let target = offsets[*o as usize];
                     *o = (target as i32) - (base as i32);
+                    if can_shorten && i8::try_from(*o).is_ok() {
+                        // this instruction will become 3 bytes shorter, need to adjust offset for change in bytesize
+                        *o += 3;
+                    }
                 };
 
                 match i {
                     Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
-                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => convert_offset(o),
-                    Switch(os) => os.iter_mut().for_each(convert_offset),
+                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => convert_offset(o, true),
+                    Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
                     _ => continue,
                 }
 
@@ -2942,14 +2951,6 @@ impl<'a> DLL<'a> {
                 {
                     method::Header::Tiny { size: body_size }
                 } else {
-                    let mut flags = 0x3;
-                    if !body.data_sections.is_empty() {
-                        flags |= 0x8;
-                    }
-                    if body.header.initialize_locals {
-                        flags |= 0x10;
-                    }
-
                     let local_var_sig_tok = if body.header.local_variables.is_empty() {
                         0
                     } else {
@@ -2969,7 +2970,8 @@ impl<'a> DLL<'a> {
                     };
 
                     method::Header::Fat {
-                        flags,
+                        more_sects: !body.data_sections.is_empty(),
+                        init_locals: body.header.initialize_locals,
                         max_stack: body.header.maximum_stack_size as u16,
                         size: body_size,
                         local_var_sig_tok,
@@ -2978,6 +2980,16 @@ impl<'a> DLL<'a> {
                 body: instructions,
                 data_sections,
             };
+
+            // fat method headers must be aligned
+            if matches!(m.header, method::Header::Fat { .. }) {
+                let rem = text.len() % 4;
+                if rem != 0 {
+                    text.extend(vec![0; 4 - rem])
+                }
+            }
+
+            tables.method_def[def_idx].rva = current_rva!();
 
             let mut buf = DynamicBuffer::with_increment(16);
             buf.pwrite(m, 0)?;

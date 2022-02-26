@@ -104,7 +104,7 @@ pub(super) fn into_index(
     };
     ctx.specs.push(t);
 
-    Ok(TypeDefOrRef::TypeSpec(len))
+    Ok(TypeDefOrRef::TypeSpec(len + 1))
 }
 
 pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<SType> {

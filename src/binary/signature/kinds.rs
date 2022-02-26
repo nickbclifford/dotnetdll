@@ -468,7 +468,7 @@ impl TryIntoCtx<(), DynamicBuffer> for LocalVarSig {
         let offset = &mut 0;
 
         // tag
-        into.gwrite_with(0x7, offset, scroll::LE)?;
+        into.gwrite_with(0x7u8, offset, scroll::LE)?;
 
         into.gwrite(compressed::Unsigned(self.0.len() as u32), offset)?;
 

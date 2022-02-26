@@ -109,8 +109,6 @@ mod tests {
             }
 
             for m in &t.methods {
-                println!("{:#?}", m);
-
                 print!("\t{}", m.show(&r));
 
                 if let Some(b) = &m.body {

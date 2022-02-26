@@ -481,8 +481,19 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
         use BaseType::*;
         use StandAloneCallingConvention::*;
         match self {
-            Type { value_kind: value_type, source } => {
-                format!("{}{}", if *value_type == ValueKind::ValueType { "valuetype " } else { "" }, source.show(res))
+            Type {
+                value_kind: value_type,
+                source,
+            } => {
+                format!(
+                    "{}{}",
+                    if *value_type == ValueKind::ValueType {
+                        "valuetype "
+                    } else {
+                        ""
+                    },
+                    source.show(res)
+                )
             }
             Boolean => "bool".to_string(),
             Char => "char".to_string(),
@@ -539,11 +550,16 @@ impl<T> BaseType<T> {
     }
 }
 
-macro_rules! impl_from {
+macro_rules! impl_typekind {
     ($t:ty) => {
         impl From<BaseType<$t>> for $t {
             fn from(b: BaseType<$t>) -> Self {
                 TypeKind::from_base(b)
+            }
+        }
+        impl $t {
+            pub fn as_base(&self) -> Option<&BaseType<$t>> {
+                TypeKind::as_base(self)
             }
         }
     };
@@ -565,7 +581,7 @@ impl ResolvedDebug for MemberType {
         }
     }
 }
-impl_from!(MemberType);
+impl_typekind!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -585,7 +601,7 @@ impl ResolvedDebug for MethodType {
         }
     }
 }
-impl_from!(MethodType);
+impl_typekind!(MethodType);
 
 impl From<MemberType> for MethodType {
     fn from(m: MemberType) -> Self {
@@ -645,7 +661,7 @@ impl LocalVariable {
             custom_modifiers: vec![],
             pinned: false,
             by_ref: false,
-            var_type
+            var_type,
         }
     }
 }

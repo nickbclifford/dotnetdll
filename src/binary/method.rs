@@ -11,7 +11,8 @@ pub enum Header {
         size: usize,
     },
     Fat {
-        flags: u16,
+        more_sects: bool,
+        init_locals: bool,
         max_stack: u16,
         size: usize,
         local_var_sig_tok: u32,
@@ -31,10 +32,13 @@ impl TryFromCtx<'_> for Header {
                     size: (b1 >> 2) as usize,
                 }
             } else {
-                let b2: u8 = from.gread_with(offset, scroll::LE)?;
+                // second byte isn't relevant right now
+                // see ECMA-335, II.25.4.3 (page 285)
+                *offset += 1;
 
                 Header::Fat {
-                    flags: u16::from_le_bytes([b1, b2 & 0b1111]),
+                    more_sects: check_bitmask!(b1, 0x8),
+                    init_locals: check_bitmask!(b1, 0x10),
                     max_stack: from.gread_with(offset, scroll::LE)?,
                     size: from.gread_with::<u32>(offset, scroll::LE)? as usize,
                     local_var_sig_tok: from.gread_with(offset, scroll::LE)?,
@@ -56,12 +60,22 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
                 into.gwrite_with(((size as u8) << 2) | 0x2, offset, scroll::LE)?;
             }
             Fat {
-                flags,
+                more_sects,
+                init_locals,
                 max_stack,
                 size,
                 local_var_sig_tok,
             } => {
-                into.gwrite_with(flags | 0x3 | (3 << 12), offset, scroll::LE)?;
+                let mut init_bits = 0x3u16;
+                if more_sects {
+                    init_bits |= 0x8;
+                }
+                if init_locals {
+                    init_bits |= 0x10;
+                }
+                init_bits |= 3 << 12;
+
+                into.gwrite_with(init_bits, offset, scroll::LE)?;
                 into.gwrite_with(max_stack, offset, scroll::LE)?;
                 into.gwrite_with(size as u32, offset, scroll::LE)?;
                 into.gwrite_with(local_var_sig_tok, offset, scroll::LE)?;
@@ -274,14 +288,13 @@ impl TryFromCtx<'_> for Method {
 
         let mut data_sections = vec![];
 
-        if let Header::Fat { flags, .. } = header {
-            let mut has_next = check_bitmask!(flags, 0x8);
-
+        if let Header::Fat {
+            more_sects: mut has_next,
+            ..
+        } = header
+        {
             // align to next 4-byte boundary
-            let rem = *offset % 4;
-            if has_next && rem != 0 {
-                *offset += 4 - rem;
-            }
+            *offset = crate::utils::round_up_to_4(*offset).0;
 
             while has_next {
                 let sec: DataSection = from.gread(offset)?;

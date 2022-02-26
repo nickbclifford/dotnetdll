@@ -1,24 +1,27 @@
-use dotnetdll::dll::DLL;
-use dotnetdll::resolution::EntryPoint;
-use dotnetdll::resolved::members::{Event, Method, ParameterMetadata};
-use dotnetdll::resolved::types::{LocalVariable, ValueKind};
-use dotnetdll::resolved::types::{MemberType, MethodType};
+use debug_cell::RefCell;
 use dotnetdll::{
-    resolution::{AssemblyRefIndex, Resolution},
+    dll::DLL,
+    resolution::{AssemblyRefIndex, EntryPoint, Resolution},
     resolved::{
         assembly::{Assembly, ExternalAssemblyReference, Version},
         body,
         il::*,
         members::{Constant, Field, Property},
+        members::{
+            Event, ExternalMethodReference, Method, MethodReferenceParent, MethodSource, ParameterMetadata, UserMethod,
+        },
         module::Module,
+        signature::ManagedMethod,
         signature::{msig, MethodSignature, Parameter, ParameterType, ReturnType},
-        types::{Accessibility as TAccess, BaseType, ExternalTypeReference, ResolutionScope, TypeDefinition, UserType},
+        types::{
+            Accessibility as TAccess, BaseType, ExternalTypeReference, LocalVariable, MemberType, MethodType,
+            ResolutionScope, TypeDefinition, TypeSource, UserType, ValueKind,
+        },
         Accessibility, ResolvedDebug,
     },
 };
 use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[derive(Parser)]
@@ -121,8 +124,6 @@ fn main() {
         Ok(a) => a,
         Err(e) => panic!("{}", e),
     };
-
-    println!("{:#?}", pairs);
 
     let asm_decl = pairs.next().unwrap();
     let (assembly_name, version) = asm_spec(asm_decl);
@@ -249,7 +250,6 @@ fn main() {
     };
 
     fn clitype<'i, T: From<BaseType<T>>>(p: Pair<'i, Rule>, user_type: impl Fn(Pair<'i, Rule>) -> UserType) -> T {
-        println!("{:?}", p);
         match p.as_str() {
             "string" => BaseType::String,
             "object" => BaseType::Object,
@@ -287,6 +287,36 @@ fn main() {
             clitype($e, user_type)
         };
     }
+
+    fn method_signature<'i>(
+        is_static: bool,
+        return_type: Pair<'i, Rule>,
+        param_types: Vec<Pair<'i, Rule>>,
+        user_type: impl Fn(Pair<'i, Rule>) -> UserType,
+    ) -> ManagedMethod {
+        MethodSignature::new(
+            !is_static,
+            if return_type.as_str().starts_with("void") {
+                ReturnType::VOID
+            } else {
+                ReturnType::new(ParameterType::Value(clitype(return_type, &user_type)))
+            },
+            param_types
+                .into_iter()
+                .map(|p| {
+                    let is_ref = p.as_str().starts_with("ref");
+                    let clitype = clitype(p.into_inner().next().unwrap(), &user_type);
+
+                    Parameter::new(if is_ref {
+                        ParameterType::Ref(clitype)
+                    } else {
+                        ParameterType::Value(clitype)
+                    })
+                })
+                .collect(),
+        )
+    }
+    let method_signature = |i, r, p| method_signature(i, r, p, user_type);
 
     let mut methods = vec![];
 
@@ -426,6 +456,8 @@ fn main() {
                             ));
                         }
                         Rule::method => {
+                            // TODO: constructors
+
                             let return_type = inner.next().unwrap();
                             let ident = inner.next().unwrap();
                             let mut rest: Vec<_> = inner.collect();
@@ -456,27 +488,7 @@ fn main() {
                                 })
                                 .unzip();
 
-                            let sig = MethodSignature::new(
-                                !is_static,
-                                if return_type.as_str().starts_with("void") {
-                                    ReturnType::VOID
-                                } else {
-                                    ReturnType::new(ParameterType::Value(clitype!(return_type)))
-                                },
-                                param_types
-                                    .into_iter()
-                                    .map(|p| {
-                                        let is_ref = p.as_str().starts_with("ref");
-                                        let clitype = clitype!(p.into_inner().next().unwrap());
-
-                                        Parameter::new(if is_ref {
-                                            ParameterType::Ref(clitype)
-                                        } else {
-                                            ParameterType::Value(clitype)
-                                        })
-                                    })
-                                    .collect(),
-                            );
+                            let sig = method_signature(is_static, return_type, param_types);
 
                             let mut method = Method::new(accessibility, sig, ident.as_str().into(), None);
                             method.parameter_metadata = param_names
@@ -544,21 +556,21 @@ fn main() {
     }
 
     for (idx, body) in methods {
-        let method = &mut res.borrow_mut()[idx];
+        let mut params = HashMap::new();
 
-        let mut params: HashMap<_, _> = method
-            .parameter_metadata
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                (
-                    p.as_ref().unwrap().name,
-                    if method.signature.instance { i + 1 } else { i } as u16,
-                )
-            })
-            .collect();
-        if method.signature.instance {
-            params.insert("this", 0);
+        {
+            let method = &mut res.borrow_mut()[idx];
+
+            for (idx, p) in method.parameter_metadata.iter().enumerate() {
+                params.insert(
+                    p.as_ref().unwrap().name.to_string(),
+                    if method.signature.instance { idx + 1 } else { idx } as u16,
+                );
+            }
+        }
+
+        if res.borrow_mut()[idx].signature.instance {
+            params.insert("this".to_string(), 0);
         }
 
         let mut inner = body.into_inner();
@@ -583,7 +595,7 @@ fn main() {
                         let var_type = clitype!(inner.next().unwrap());
 
                         let name = inner.next().unwrap().as_str();
-                        local_idxs.insert(name, idx);
+                        local_idxs.insert(name, idx as u16);
 
                         LocalVariable::new(var_type)
                     })
@@ -597,16 +609,33 @@ fn main() {
         let mut instruction_counter = 0;
         let mut labels = HashMap::new();
 
-        for rule in inner {
-            let line = rule.as_str().trim_end();
+        let mut instr_pairs = vec![];
 
-            if rule.as_rule() == Rule::label {
+        for pair in inner {
+            let line = pair.as_str().trim_end();
+
+            if pair.as_rule() == Rule::label {
                 // strip off the ending colon
                 labels.insert(&line[..line.len() - 1], instruction_counter);
+            } else {
+                instr_pairs.push(pair);
+                instruction_counter += 1;
+            }
+        }
+
+        for pair in instr_pairs {
+            if pair.as_rule() != Rule::instruction {
                 continue;
             }
 
-            let (mnemonic, instr_params) = pop_token(line);
+            let (mnemonic, instr_params) = pop_token(pair.as_str().trim_end());
+
+            fn parse_single(rule: Rule, s: &str) -> Pair<Rule> {
+                match AssemblyParser::parse(rule, s) {
+                    Ok(mut ps) => ps.next().unwrap(),
+                    Err(e) => panic!("failed to parse {:?}: {}", rule, e),
+                }
+            }
 
             instructions.push(match mnemonic {
                 "return" => Instruction::Return,
@@ -617,13 +646,52 @@ fn main() {
                         "long" => Instruction::LoadConstantInt64(rest.parse().unwrap()),
                         "float" => Instruction::LoadConstantFloat32(rest.parse().unwrap()),
                         "double" => Instruction::LoadConstantFloat64(rest.parse().unwrap()),
-                        "string" => Instruction::LoadString(todo!()),
+                        "string" => {
+                            let mut buf = String::new();
+                            let mut arg_iter = rest.chars();
+
+                            if arg_iter.next() != Some('"') {
+                                panic!("expected string literal");
+                            }
+
+                            loop {
+                                let c = arg_iter.next().expect("unterminated string literal");
+                                match c {
+                                    '"' => break,
+                                    '\\' => buf.push(match arg_iter.next().expect("bad escape sequence") {
+                                        '\\' => '\\',
+                                        '"' => '"',
+                                        'n' => '\n',
+                                        't' => '\t',
+                                        other => panic!("unknown escape sequence \\{}", other),
+                                    }),
+                                    other => buf.push(other),
+                                }
+                            }
+
+                            Instruction::LoadString(buf.encode_utf16().collect())
+                        }
                         "argument" => Instruction::LoadArgument(
-                            *params
+                            *params.get(rest).unwrap_or_else(|| panic!("unknown argument {}", rest)),
+                        ),
+                        "local" => Instruction::LoadLocalVariable(
+                            *local_idxs
                                 .get(rest)
-                                .unwrap_or_else(|| panic!("unknown argument {}", rest)),
+                                .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
                         ),
                         unknown => panic!("unknown load kind {}", unknown),
+                    }
+                }
+                "store" => {
+                    let (kind, rest) = pop_token(instr_params);
+
+                    match kind {
+                        "local" => Instruction::StoreLocal(
+                            *local_idxs
+                                .get(rest)
+                                .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
+                        ),
+                        unknown => panic!("unknown store kind {}", unknown),
                     }
                 }
                 "branch" => Instruction::Branch(
@@ -631,13 +699,71 @@ fn main() {
                         .get(instr_params)
                         .unwrap_or_else(|| panic!("unknown label {}", instr_params)),
                 ),
+                "box" => Instruction::Box(clitype!(parse_single(Rule::clitype, instr_params))),
+                "call" => {
+                    let method_ref = parse_single(Rule::method_ref, instr_params);
+                    let is_static = method_ref.as_str().starts_with("static");
+                    let mut iter = method_ref.into_inner();
+
+                    let return_type = iter.next().unwrap();
+
+                    let mut name_iter = iter.next().unwrap().into_inner();
+                    let parent: MethodType = clitype!(name_iter.next().unwrap());
+                    let method_name = name_iter.next().unwrap().as_str();
+
+                    let sig = method_signature(is_static, return_type, iter.collect());
+
+                    Instruction::Call {
+                        tail_call: false,
+                        method: MethodSource::User(match parent.as_base() {
+                            Some(BaseType::Type {
+                                source: TypeSource::User(UserType::Definition(d)),
+                                ..
+                            }) => UserMethod::Definition(
+                                res.borrow()
+                                    .enumerate_methods(*d)
+                                    .find(|(_, m)| m.name == method_name && m.signature == sig)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "could not find method {} on type {}",
+                                            method_name,
+                                            res.borrow()[*d].name
+                                        )
+                                    })
+                                    .0,
+                            ),
+                            _ => UserMethod::Reference({
+                                let found_ref = {
+                                    let res_b = res.borrow();
+                                    let x = res_b
+                                        .enumerate_method_references()
+                                        .find(|(_, r)| {
+                                            matches!(&r.parent, MethodReferenceParent::Type(t) if t == &parent)
+                                                && r.name == method_name
+                                                && r.signature == sig
+                                        })
+                                        .map(|(i, _)| i);
+                                    x
+                                };
+
+                                match found_ref {
+                                    Some(i) => i,
+                                    None => res.borrow_mut().push_method_reference(ExternalMethodReference::new(
+                                        MethodReferenceParent::Type(parent),
+                                        method_name,
+                                        sig,
+                                    )),
+                                }
+                            }),
+                        }),
+                    }
+                }
+                "add" => Instruction::Add,
                 unknown => panic!("unknown instruction {}", unknown),
             });
-
-            instruction_counter += 1;
         }
 
-        method.body = Some(body::Method {
+        res.borrow_mut()[idx].body = Some(body::Method {
             header: body::Header {
                 initialize_locals,
                 maximum_stack_size,
@@ -664,9 +790,4 @@ fn main() {
     let written = DLL::write(&res, false, true).unwrap();
 
     std::fs::write(&module_name, &written).unwrap();
-
-    println!(
-        "{:#?}",
-        DLL::parse(&written).unwrap().resolve(Default::default()).unwrap()
-    );
 }

@@ -1,7 +1,5 @@
 assembly hello_world
 
-extern mscorlib v6.0.0.0
-
 uint enum Hello {
     ASDF
 }
@@ -13,30 +11,28 @@ interface IDoThing {
 public class Foo {
     private protected field string hi
 
-    public method void constructor() {
-        load argument this
-        call [mscorlib]System.Object.constructor()
-        return
-    }
-
     public static method void Main([string] args) entrypoint {
         load string "hello, world"
-        call [mscorlib]System.Console.WriteLine(string)
+        call static void [mscorlib]System.Console::WriteLine(string)
+        call static void Foo::Test()
         return
     }
 
     public static method void Test() {
-        locals {
+        locals init {
             uint counter
         }
 
-        load int 0
-        store local counter
     loop:
         load string "loop iteration {0}"
         load local counter
         box uint
-        call [mscorlib]System.Console.WriteLine(string, object)
+        call static void [mscorlib]System.Console::WriteLine(string, object)
+        load local counter
+        load int 1
+        add
+        store local counter
         branch loop
+        return
     }
 }
