@@ -256,7 +256,7 @@ pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
 fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig(
         custom_modifiers(&f.custom_modifiers),
-        f.return_type.as_sig(ctx)?,
+        f.field_type.as_sig(ctx)?,
     ))
 }
 

@@ -1356,7 +1356,7 @@ impl<'a> DLL<'a> {
                             .into_iter()
                             .map(|c| convert::read::custom_modifier(c, &ctx))
                             .collect::<Result<_>>()),
-                        return_type: filter_map_try!(MemberType::from_sig(field_sig.1, &ctx)),
+                        field_type: filter_map_try!(MemberType::from_sig(field_sig.1, &ctx)),
                     },
                 )))
             })

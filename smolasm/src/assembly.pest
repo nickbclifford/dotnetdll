@@ -22,8 +22,10 @@ enum_decl = { int_type? ~ "enum" ~ dotted ~ "{" ~ ident* ~ "}" }
 
 access = { "public" | ("private" ~ "protected"?) | ("protected" ~ "internal"?) | "internal" }
 
-method_name = ${ clitype ~ "::" ~ ident }
-method_ref = { "static"? ~ return_type ~ method_name ~ "(" ~ ((param_type ~ ",")* ~ param_type)? ~ ")" }
+// used inside instruction parsing
+member_name = ${ clitype ~ "::" ~ ident }
+field_ref = { clitype ~ member_name }
+method_ref = { "static"? ~ return_type ~ member_name ~ "(" ~ ((param_type ~ ",")* ~ param_type)? ~ ")" }
 
 local_var = { clitype ~ ident }
 locals = { "init"? ~ "{" ~ local_var* ~ "}" }

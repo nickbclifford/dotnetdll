@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -10,6 +9,7 @@ use super::{
 use crate::binary::signature::kinds::MarshalSpec;
 use crate::resolution::*;
 use dotnetdll_macros::From;
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
 macro_rules! name_display {
@@ -122,9 +122,20 @@ pub struct ExternalFieldReference<'a> {
     pub parent: FieldReferenceParent,
     pub name: &'a str,
     pub custom_modifiers: Vec<CustomTypeModifier>,
-    pub return_type: MemberType,
+    pub field_type: MemberType,
 }
 name_display!(ExternalFieldReference<'_>);
+impl<'a> ExternalFieldReference<'a> {
+    pub const fn new(parent: FieldReferenceParent, field_type: MemberType, name: &'a str) -> Self {
+        Self {
+            attributes: vec![],
+            parent,
+            name,
+            custom_modifiers: vec![],
+            field_type,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, From)]
 pub enum FieldSource {

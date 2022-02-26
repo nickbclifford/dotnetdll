@@ -9,7 +9,16 @@ interface IDoThing {
 }
 
 public class Foo {
-    private protected field string hi
+    private protected field string myString
+
+    public property string CapitalizedString {
+        get {
+            load argument this
+            load field string Foo::myString
+            call string string::ToUpper()
+            return
+        }
+    }
 
     public static method void Main([string] args) entrypoint {
         load string "hello, world"

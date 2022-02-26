@@ -1,4 +1,5 @@
 use debug_cell::RefCell;
+use dotnetdll::resolved::members::FieldSource;
 use dotnetdll::{
     dll::DLL,
     resolution::{AssemblyRefIndex, EntryPoint, Resolution},
@@ -8,7 +9,8 @@ use dotnetdll::{
         il::*,
         members::{Constant, Field, Property},
         members::{
-            Event, ExternalMethodReference, Method, MethodReferenceParent, MethodSource, ParameterMetadata, UserMethod,
+            Event, ExternalFieldReference, ExternalMethodReference, FieldReferenceParent, Method,
+            MethodReferenceParent, MethodSource, ParameterMetadata, UserMethod,
         },
         module::Module,
         signature::ManagedMethod,
@@ -637,10 +639,71 @@ fn main() {
                 }
             }
 
+            macro_rules! defined_here {
+                (match $t:ident { $def:ident => $def_e:expr, _ => $else:expr, }) => {
+                    match $t.as_base() {
+                        Some(BaseType::Type {
+                            source: TypeSource::User(UserType::Definition($def)),
+                            ..
+                        }) => $def_e,
+                        _ => $else,
+                    }
+                };
+            }
+
+            let field_source = |input| {
+                let field_ref = parse_single(Rule::field_ref, input);
+                let mut iter = field_ref.into_inner();
+
+                let field_type = clitype!(iter.next().unwrap());
+
+                let mut name_iter = iter.next().unwrap().into_inner();
+                let parent: MethodType = clitype!(name_iter.next().unwrap());
+                let name = name_iter.next().unwrap().as_str();
+
+                defined_here!(match parent {
+                    def => FieldSource::Definition(
+                        res.borrow()
+                            .enumerate_fields(*def)
+                            .find(|(_, f)| f.name == name && f.return_type == field_type)
+                            .unwrap_or_else(|| panic!(
+                                "could not find field {} on type {}",
+                                name,
+                                res.borrow()[*def].name
+                            ))
+                            .0
+                    ),
+                    _ => FieldSource::Reference({
+                        let found_ref = {
+                            let res_b = res.borrow();
+                            let x = res_b
+                                .enumerate_field_references()
+                                .find(|(_, r)| {
+                                    matches!(&r.parent, FieldReferenceParent::Type(p) if p == &parent)
+                                        && r.name == name
+                                        && r.field_type == field_type
+                                })
+                                .map(|(i, _)| i);
+                            x
+                        };
+
+                        match found_ref {
+                            Some(i) => i,
+                            None => res.borrow_mut().push_field_reference(ExternalFieldReference::new(
+                                FieldReferenceParent::Type(parent),
+                                field_type,
+                                name,
+                            )),
+                        }
+                    }),
+                })
+            };
+
             instructions.push(match mnemonic {
                 "return" => Instruction::Return,
                 "load" => {
                     let (kind, rest) = pop_token(instr_params);
+
                     match kind {
                         "int" => Instruction::LoadConstantInt32(rest.parse().unwrap()),
                         "long" => Instruction::LoadConstantInt64(rest.parse().unwrap()),
@@ -679,6 +742,22 @@ fn main() {
                                 .get(rest)
                                 .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
                         ),
+                        "field" => Instruction::LoadField {
+                            unaligned: None,
+                            volatile: false,
+                            field: field_source(rest),
+                        },
+                        "static" => {
+                            let (k, rest) = pop_token(rest);
+                            if k != "field" {
+                                panic!("the only static members that can be loaded are fields");
+                            }
+
+                            Instruction::LoadStaticField {
+                                volatile: false,
+                                field: field_source(rest),
+                            }
+                        }
                         unknown => panic!("unknown load kind {}", unknown),
                     }
                 }
@@ -691,6 +770,22 @@ fn main() {
                                 .get(rest)
                                 .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
                         ),
+                        "field" => Instruction::StoreField {
+                            unaligned: None,
+                            volatile: false,
+                            field: field_source(rest),
+                        },
+                        "static" => {
+                            let (k, rest) = pop_token(rest);
+                            if k != "field" {
+                                panic!("the only static members that can be stored are fields");
+                            }
+
+                            Instruction::StoreStaticField {
+                                volatile: false,
+                                field: field_source(rest),
+                            }
+                        }
                         unknown => panic!("unknown store kind {}", unknown),
                     }
                 }
@@ -715,11 +810,8 @@ fn main() {
 
                     Instruction::Call {
                         tail_call: false,
-                        method: MethodSource::User(match parent.as_base() {
-                            Some(BaseType::Type {
-                                source: TypeSource::User(UserType::Definition(d)),
-                                ..
-                            }) => UserMethod::Definition(
+                        method: MethodSource::User(defined_here!(match parent {
+                            d => UserMethod::Definition(
                                 res.borrow()
                                     .enumerate_methods(*d)
                                     .find(|(_, m)| m.name == method_name && m.signature == sig)
@@ -755,7 +847,7 @@ fn main() {
                                     )),
                                 }
                             }),
-                        }),
+                        })),
                     }
                 }
                 "add" => Instruction::Add,
