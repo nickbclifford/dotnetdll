@@ -122,7 +122,10 @@ fn pop_token(s: &str) -> (&str, &str) {
 }
 
 fn main() {
-    let mut pairs = match AssemblyParser::parse(Rule::assembly, include_str!("test.il")) {
+    let input_filename = std::env::args().nth(1).expect("missing required input filename");
+    let input = std::fs::read_to_string(input_filename).expect("could not open input file");
+
+    let mut pairs = match AssemblyParser::parse(Rule::assembly, &input) {
         Ok(a) => a,
         Err(e) => panic!("{}", e),
     };
