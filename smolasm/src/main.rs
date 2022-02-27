@@ -19,7 +19,7 @@ use dotnetdll::{
             Accessibility as TAccess, BaseType, ExternalTypeReference, LocalVariable, MemberType, MethodType,
             ResolutionScope, TypeDefinition, TypeSource, UserType, ValueKind,
         },
-        Accessibility, ResolvedDebug,
+        Accessibility,
     },
 };
 use pest::{iterators::Pair, Parser};
@@ -293,10 +293,26 @@ fn main() {
         };
     }
 
+    fn param_types<'i>(params: Vec<Pair<'i, Rule>>, user_type: impl Fn(Pair<'i, Rule>) -> UserType) -> Vec<Parameter> {
+        params
+            .into_iter()
+            .map(|p| {
+                let is_ref = p.as_str().starts_with("ref");
+                let clitype = clitype(p.into_inner().next().unwrap(), &user_type);
+
+                Parameter::new(if is_ref {
+                    ParameterType::Ref(clitype)
+                } else {
+                    ParameterType::Value(clitype)
+                })
+            })
+            .collect()
+    }
+
     fn method_signature<'i>(
         is_static: bool,
         return_type: Pair<'i, Rule>,
-        param_types: Vec<Pair<'i, Rule>>,
+        params: Vec<Pair<'i, Rule>>,
         user_type: impl Fn(Pair<'i, Rule>) -> UserType,
     ) -> ManagedMethod {
         MethodSignature::new(
@@ -306,19 +322,7 @@ fn main() {
             } else {
                 ReturnType::new(ParameterType::Value(clitype(return_type, &user_type)))
             },
-            param_types
-                .into_iter()
-                .map(|p| {
-                    let is_ref = p.as_str().starts_with("ref");
-                    let clitype = clitype(p.into_inner().next().unwrap(), &user_type);
-
-                    Parameter::new(if is_ref {
-                        ParameterType::Ref(clitype)
-                    } else {
-                        ParameterType::Value(clitype)
-                    })
-                })
-                .collect(),
+            param_types(params, user_type),
         )
     }
     let method_signature = |i, r, p| method_signature(i, r, p, user_type);
@@ -461,29 +465,32 @@ fn main() {
                             ));
                         }
                         Rule::method => {
-                            // TODO: constructors
-
-                            let return_type = inner.next().unwrap();
                             let ident = inner.next().unwrap();
                             let mut rest: Vec<_> = inner.collect();
 
-                            let body = if matches!(&rest[..], [.., last] if last.as_rule() == Rule::method_body) {
-                                Some(rest.pop().unwrap())
-                            } else {
-                                if !is_abstract {
-                                    panic!(
-                                        "method {} cannot have no body in non-abstract class {}",
-                                        ident.as_str(),
-                                        name
-                                    );
+                            let mut pop_optional = |rule| {
+                                if matches!(&rest[..], [.., last] if last.as_rule() == rule) {
+                                    Some(rest.pop().unwrap())
+                                } else {
+                                    None
                                 }
-                                None
                             };
 
-                            let is_entrypoint = matches!(&rest[..], [.., last] if last.as_rule() == Rule::entry_point);
-                            if is_entrypoint {
-                                rest.pop().unwrap();
+                            let body = pop_optional(Rule::method_body);
+                            if body.is_none() && !is_abstract {
+                                panic!(
+                                    "method {} cannot have no body in non-abstract class {}",
+                                    ident.as_str(),
+                                    name
+                                );
                             }
+
+                            let rt_special_name = pop_optional(Rule::rt_special_name).is_some();
+                            let special_name = pop_optional(Rule::special_name).is_some();
+                            let is_entrypoint = pop_optional(Rule::entry_point).is_some();
+                            let is_virtual = pop_optional(Rule::virtual_member).is_some();
+
+                            let return_type = rest.pop().unwrap();
 
                             let (param_types, param_names): (Vec<_>, Vec<_>) = rest
                                 .into_iter()
@@ -501,6 +508,9 @@ fn main() {
                                 .map(|i| Some(ParameterMetadata::name(i.as_str())))
                                 .collect();
                             method.abstract_member = body.is_none();
+                            method.special_name = special_name;
+                            method.runtime_special_name = rt_special_name;
+                            method.virtual_member = is_virtual;
 
                             let idx = res.borrow_mut().push_method(type_def, method);
                             if is_entrypoint {
@@ -633,7 +643,7 @@ fn main() {
                 continue;
             }
 
-            let (mnemonic, instr_params) = pop_token(pair.as_str().trim_end());
+            let (mnemonic, mut instr_params) = pop_token(pair.as_str().trim_end());
 
             fn parse_single(rule: Rule, s: &str) -> Pair<Rule> {
                 match AssemblyParser::parse(rule, s) {
@@ -702,6 +712,48 @@ fn main() {
                 })
             };
 
+            let user_method = |parent, method_name, sig| {
+                let parent: MethodType = parent;
+                defined_here!(match parent {
+                    d => UserMethod::Definition(
+                        res.borrow()
+                            .enumerate_methods(*d)
+                            .find(|(_, m)| m.name == method_name && m.signature == sig)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "could not find method {} on type {}",
+                                    method_name,
+                                    res.borrow()[*d].name
+                                )
+                            })
+                            .0,
+                    ),
+                    _ => UserMethod::Reference({
+                        let found_ref = {
+                            let res_b = res.borrow();
+                            let x = res_b
+                                .enumerate_method_references()
+                                .find(|(_, r)| {
+                                    matches!(&r.parent, MethodReferenceParent::Type(t) if t == &parent)
+                                        && r.name == method_name
+                                        && r.signature == sig
+                                })
+                                .map(|(i, _)| i);
+                            x
+                        };
+
+                        match found_ref {
+                            Some(i) => i,
+                            None => res.borrow_mut().push_method_reference(ExternalMethodReference::new(
+                                MethodReferenceParent::Type(parent),
+                                method_name,
+                                sig,
+                            )),
+                        }
+                    }),
+                })
+            };
+
             instructions.push(match mnemonic {
                 "return" => Instruction::Return,
                 "load" => {
@@ -761,6 +813,11 @@ fn main() {
                                 field: field_source(rest),
                             }
                         }
+                        "element" => Instruction::LoadElement {
+                            skip_range_check: false,
+                            skip_null_check: false,
+                            element_type: clitype!(parse_single(Rule::clitype, rest)),
+                        },
                         unknown => panic!("unknown load kind {}", unknown),
                     }
                 }
@@ -799,61 +856,57 @@ fn main() {
                 ),
                 "box" => Instruction::Box(clitype!(parse_single(Rule::clitype, instr_params))),
                 "call" => {
+                    let (v, params) = pop_token(instr_params);
+                    let is_virtual = v == "virtual";
+                    if is_virtual {
+                        instr_params = params;
+                    }
+
                     let method_ref = parse_single(Rule::method_ref, instr_params);
                     let is_static = method_ref.as_str().starts_with("static");
                     let mut iter = method_ref.into_inner();
-
-                    let return_type = iter.next().unwrap();
 
                     let mut name_iter = iter.next().unwrap().into_inner();
                     let parent: MethodType = clitype!(name_iter.next().unwrap());
                     let method_name = name_iter.next().unwrap().as_str();
 
-                    let sig = method_signature(is_static, return_type, iter.collect());
+                    let mut params: Vec<_> = iter.collect();
+                    let return_type = params.pop().unwrap();
 
-                    Instruction::Call {
-                        tail_call: false,
-                        method: MethodSource::User(defined_here!(match parent {
-                            d => UserMethod::Definition(
-                                res.borrow()
-                                    .enumerate_methods(*d)
-                                    .find(|(_, m)| m.name == method_name && m.signature == sig)
-                                    .unwrap_or_else(|| {
-                                        panic!(
-                                            "could not find method {} on type {}",
-                                            method_name,
-                                            res.borrow()[*d].name
-                                        )
-                                    })
-                                    .0,
-                            ),
-                            _ => UserMethod::Reference({
-                                let found_ref = {
-                                    let res_b = res.borrow();
-                                    let x = res_b
-                                        .enumerate_method_references()
-                                        .find(|(_, r)| {
-                                            matches!(&r.parent, MethodReferenceParent::Type(t) if t == &parent)
-                                                && r.name == method_name
-                                                && r.signature == sig
-                                        })
-                                        .map(|(i, _)| i);
-                                    x
-                                };
+                    let sig = method_signature(is_static, return_type, params);
 
-                                match found_ref {
-                                    Some(i) => i,
-                                    None => res.borrow_mut().push_method_reference(ExternalMethodReference::new(
-                                        MethodReferenceParent::Type(parent),
-                                        method_name,
-                                        sig,
-                                    )),
-                                }
-                            }),
-                        })),
+                    let method = MethodSource::User(user_method(parent, method_name, sig));
+
+                    if is_virtual {
+                        Instruction::CallVirtual {
+                            skip_null_check: false,
+                            method,
+                        }
+                    } else {
+                        Instruction::Call {
+                            tail_call: false,
+                            method,
+                        }
                     }
                 }
                 "add" => Instruction::Add,
+                "new" => Instruction::NewObject({
+                    let ctor_ref = parse_single(Rule::ctor_ref, instr_params);
+                    let mut iter = ctor_ref.into_inner();
+
+                    let parent: MethodType = clitype!(iter.next().unwrap());
+                    let sig = MethodSignature::new(true, ReturnType::VOID, param_types(iter.collect(), user_type));
+
+                    let method = user_method(parent, ".ctor", sig);
+                    if let UserMethod::Definition(m) = &method {
+                        let def = &res.borrow()[*m];
+                        if !(def.special_name && def.runtime_special_name) {
+                            panic!("constructor must have specialname and rtspecialname flags defined");
+                        }
+                    }
+
+                    method
+                }),
                 unknown => panic!("unknown instruction {}", unknown),
             });
         }
@@ -869,20 +922,9 @@ fn main() {
         });
     }
 
-    let res = res.into_inner();
-    for t in &res.type_definitions {
-        println!("{}", t.show(&res));
-
-        for f in &t.fields {
-            println!("\t{}", f.show(&res));
-        }
-
-        for m in &t.methods {
-            println!("\t{}", m.show(&res));
-        }
-    }
-
-    let written = DLL::write(&res, false, true).unwrap();
+    let written = DLL::write(&res.into_inner(), false, true).unwrap();
 
     std::fs::write(&module_name, &written).unwrap();
+
+    println!("wrote {}", module_name);
 }

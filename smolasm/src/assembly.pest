@@ -5,6 +5,7 @@ nat = { ASCII_DIGIT+ }
 
 ident = @{ XID_START ~ XID_CONTINUE* }
 dotted = @{ (ident ~ ".")* ~ ident }
+method_ident = @{ ".ctor" | ".cctor" | ident }
 
 version = ${ "v" ~ nat ~ ("." ~ nat){0,3} }
 asm_spec = _{ dotted ~ version? }
@@ -23,9 +24,11 @@ enum_decl = { int_type? ~ "enum" ~ dotted ~ "{" ~ ident* ~ "}" }
 access = { "public" | ("private" ~ "protected"?) | ("protected" ~ "internal"?) | "internal" }
 
 // used inside instruction parsing
-member_name = ${ clitype ~ "::" ~ ident }
-field_ref = { clitype ~ member_name }
-method_ref = { "static"? ~ return_type ~ member_name ~ "(" ~ ((param_type ~ ",")* ~ param_type)? ~ ")" }
+field_name = ${ clitype ~ "::" ~ ident }
+field_ref = { clitype ~ field_name }
+method_name = ${ clitype ~ "::" ~ method_ident }
+method_ref = { "static"? ~ method_name ~ "(" ~ ((param_type ~ ",")* ~ param_type)? ~ ")" ~ "->" ~ return_type }
+ctor_ref = { clitype ~ "(" ~ ((param_type ~ ",")* ~ param_type)? ~ ")" }
 
 local_var = { clitype ~ ident }
 locals = { "init"? ~ "{" ~ local_var* ~ "}" }
@@ -36,8 +39,11 @@ method_body = { ("maxstack" ~ nat)? ~ ("locals" ~ locals)? ~ (label | instructio
 param_type = { "ref"? ~ clitype }
 param = { param_type ~ ident }
 return_type = { "void" | param_type }
-entry_point = { "entrypoint" }
-method = { "method" ~ return_type ~ ident ~ "(" ~ ((param ~ ",")* ~ param)? ~ ")" ~ entry_point? ~ ("{" ~ method_body ~ "}")? }
+virtual_member = { "@virtual" }
+entry_point = { "@entrypoint" }
+special_name = { "@specialname" }
+rt_special_name = { "@rtspecialname" }
+method = { "method" ~ method_ident ~ "(" ~ ((param ~ ",")* ~ param)? ~ ")" ~ "->" ~ return_type ~ virtual_member? ~ entry_point? ~ special_name? ~ rt_special_name? ~ ("{" ~ method_body ~ "}")? }
 
 field = { "field" ~ clitype ~ ident }
 

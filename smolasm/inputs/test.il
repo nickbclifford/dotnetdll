@@ -5,7 +5,7 @@ uint enum Hello {
 }
 
 interface IDoThing {
-    public method void Yeet()
+    public method Yeet() -> void
 }
 
 public class Foo {
@@ -15,19 +15,19 @@ public class Foo {
         get {
             load argument this
             load field string Foo::myString
-            call string string::ToUpper()
+            call string::ToUpper() -> string
             return
         }
     }
 
-    public static method void Main([string] args) entrypoint {
+    public static method Main([string] args) -> void @entrypoint {
         load string "hello, world"
-        call static void [mscorlib]System.Console::WriteLine(string)
-        call static void Foo::Test()
+        call static [mscorlib]System.Console::WriteLine(string) -> void
+        call static Foo::Test() -> void
         return
     }
 
-    public static method void Test() {
+    public static method Test() -> void {
         locals init {
             uint counter
         }
@@ -36,7 +36,7 @@ public class Foo {
         load string "loop iteration {0}"
         load local counter
         box uint
-        call static void [mscorlib]System.Console::WriteLine(string, object)
+        call static [mscorlib]System.Console::WriteLine(string, object) -> void
         load local counter
         load int 1
         add
