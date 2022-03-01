@@ -1153,6 +1153,9 @@ impl<'a> DLL<'a> {
             }
         }
 
+        // sorts in preparation for the binary search below
+        methods.sort_unstable_by_key(|m| m.parent_type);
+
         // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
         // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
         macro_rules! extract_method {
@@ -1162,17 +1165,26 @@ impl<'a> DLL<'a> {
                     MethodMemberIndex::Method(i) => i,
                     _ => unreachable!(),
                 };
-                // NOTE: this is super inefficient, does a linear search every single time
-                for m in methods.iter_mut() {
-                    if m.parent_type == idx.parent_type {
-                        match &mut m.member {
-                            MethodMemberIndex::Method(i_idx) if *i_idx > internal_idx => {
-                                *i_idx -= 1;
+
+                if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
+                    // since we only sorted on parent_type, we could land anywhere in the group with the same parent
+                    // so we need to iterate in both directions to make sure we don't miss anything
+                    macro_rules! do_iter {
+                        ($i:expr) => {
+                            for m in $i.take_while(|m| m.parent_type == idx.parent_type) {
+                                match &mut m.member {
+                                    MethodMemberIndex::Method(i_idx) if *i_idx > internal_idx => {
+                                        *i_idx -= 1;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            _ => {}
                         }
                     }
+                    do_iter!(methods[..start_idx].iter_mut().rev());
+                    do_iter!(methods[start_idx..].iter_mut());
                 }
+
                 $parent.methods.remove(internal_idx)
             }};
         }

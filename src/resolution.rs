@@ -52,7 +52,7 @@ pub enum EntryPoint {
 macro_rules! basic_index {
     ($name:ident indexes $field:ident as $t:ty) => {
         paste! {
-            #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+            #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
             pub struct $name(pub(crate) usize);
 
             impl<'a> Index<$name> for Resolution<'a> {
@@ -100,7 +100,7 @@ basic_index!(TypeRefIndex indexes type_reference as types::ExternalTypeReference
 
 macro_rules! internal_index {
     ($name:ident indexes $sing:ident / $plural:ident as $t:ty) => {
-        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
         pub struct $name {
             pub(crate) parent_type: TypeIndex,
             pub(crate) $sing: usize,
