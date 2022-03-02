@@ -6,8 +6,8 @@ use crate::{
         ResolvedDebug,
     },
 };
-use std::fmt::Write;
 pub use dotnetdll_macros::msig;
+use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType {
@@ -112,7 +112,7 @@ impl ManagedMethod {
             calling_convention: CallingConvention::Default,
             parameters,
             return_type,
-            varargs: None
+            varargs: None,
         }
     }
 

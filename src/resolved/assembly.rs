@@ -39,7 +39,7 @@ impl Version {
         major: 0,
         minor: 0,
         build: 0,
-        revision: 0
+        revision: 0,
     };
 }
 
@@ -71,12 +71,12 @@ impl<'a> Assembly<'a> {
                 has_full_public_key: false,
                 retargetable: false,
                 disable_jit_optimizer: false,
-                enable_jit_tracking: false
+                enable_jit_tracking: false,
             },
             public_key: None,
             name,
             culture: None,
-            security: None
+            security: None,
         }
     }
 }
@@ -100,7 +100,7 @@ impl<'a> ExternalAssemblyReference<'a> {
             public_key_or_token: None,
             name,
             culture: None,
-            hash_value: None
+            hash_value: None,
         }
     }
 }

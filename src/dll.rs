@@ -1167,25 +1167,42 @@ impl<'a> DLL<'a> {
                 };
 
                 if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
-                    // since we only sorted on parent_type, we could land anywhere in the group with the same parent
-                    // so we need to iterate in both directions to make sure we don't miss anything
-                    macro_rules! do_iter {
-                        ($i:expr) => {
-                            for m in $i.take_while(|m| m.parent_type == idx.parent_type) {
-                                match &mut m.member {
-                                    MethodMemberIndex::Method(i_idx) if *i_idx > internal_idx => {
-                                        *i_idx -= 1;
-                                    }
+                    // first element is the index into methods, second element is the internal index
+                    let mut max_internal: Option<(usize, usize)> = None;
+
+                    // look for the maximum internal index for all methods in the same type
+                    macro_rules! find_max {
+                        ($start:expr, $inc:tt, $stop:expr) => {
+                            let mut current_index = $start;
+                            while methods[current_index].parent_type == idx.parent_type {
+                                match methods[current_index].member {
+                                    MethodMemberIndex::Method(i) => match &max_internal {
+                                        Some((_, max_i)) if i <= *max_i => {}
+                                        _ => { max_internal = Some((current_index, i)); }
+                                    },
                                     _ => {}
                                 }
+                                if current_index == $stop { break; }
+                                current_index $inc 1;
                             }
-                        }
+                        };
                     }
-                    do_iter!(methods[..start_idx].iter_mut().rev());
-                    do_iter!(methods[start_idx..].iter_mut());
+
+                    // since we only sorted on parent_type, we could land anywhere in the group with the same parent
+                    // so we need to iterate in both directions to make sure we don't miss anything
+                    find_max!(start_idx, +=, method_len - 1);
+                    if start_idx != 0 {
+                        find_max!(start_idx - 1, -=, 0);
+                    }
+
+                    // once we have the maximum internal index, this corresponds to the last method in the type
+                    // since we're about to swap_remove, change this method's internal index to where it's going to be put
+                    if let Some((max_index, _)) = max_internal {
+                        methods[max_index].member = MethodMemberIndex::Method(internal_idx);
+                    }
                 }
 
-                $parent.methods.remove(internal_idx)
+                $parent.methods.swap_remove(internal_idx)
             }};
         }
 

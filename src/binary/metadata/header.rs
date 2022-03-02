@@ -55,6 +55,7 @@ impl TryFromCtx<'_> for Header {
 
         let mut tables = Tables::new();
 
+        // NOTE: this would be easy to parallelize and is the main read bottleneck
         for (kind, size) in iter {
             for _ in 0..size {
                 tables_kind_push!(tables, kind, from.gread_with(offset, ctx)?);
