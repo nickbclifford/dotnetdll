@@ -278,7 +278,7 @@ pub struct SecurityDeclaration<'a> {
 
 #[derive(Debug, Clone)]
 pub struct PermissionAttribute<'a> {
-    pub type_name: &'a str,
+    pub type_name: Cow<'a, str>,
     pub fields: Vec<NamedArg<'a>>,
 }
 
@@ -303,7 +303,7 @@ impl<'a> SecurityDeclaration<'a> {
             .map(|_| {
                 let type_name = value.gread::<SerString>(offset)?.0.ok_or_else(|| {
                     scroll::Error::Custom("null attribute type name found when parsing security".to_string())
-                })?;
+                })?.into();
 
                 let fields = parse_named(value, offset, resolution, &|s| {
                     resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
@@ -322,7 +322,7 @@ impl<'a> SecurityDeclaration<'a> {
         buffer.gwrite(Unsigned(attrs.len() as u32), offset)?;
 
         for attr in attrs {
-            buffer.gwrite(SerString(Some(attr.type_name)), offset)?;
+            buffer.gwrite(SerString(Some(&attr.type_name)), offset)?;
             for arg in attr.fields {
                 buffer.gwrite(arg, offset)?;
             }

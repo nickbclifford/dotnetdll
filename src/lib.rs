@@ -290,35 +290,35 @@ mod tests {
 
         let mut res = Resolution::new(Module {
             attributes: vec![],
-            name: "test.dll",
+            name: "test.dll".into(),
             mvid: [
                 0x7d, 0xca, 0x02, 0xcd, 0xba, 0xd1, 0x4e, 0x45, 0xbf, 0x5f, 0x1b, 0x7d, 0xf1, 0x93, 0xce, 0x36,
             ],
         });
-        let mut assembly = Assembly::new("test");
+        let mut assembly = Assembly::new("test".into());
         assembly.version.major = 1;
         res.assembly = Some(assembly);
 
         // global module type
-        let mut module = TypeDefinition::new(None, "<Module>");
+        let mut module = TypeDefinition::new(None, "<Module>".into());
         module.flags.before_field_init = false;
         res.push_type_definition(module);
 
         let console_asm_ref = res.push_assembly_reference({
-            let mut val = ExternalAssemblyReference::new("System.Console");
+            let mut val = ExternalAssemblyReference::new("System.Console".into());
             val.version.major = 6;
-            val.public_key_or_token = Some(TOKEN);
+            val.public_key_or_token = Some(TOKEN.into());
             val
         });
         let runtime_ref = res.push_assembly_reference({
-            let mut val = ExternalAssemblyReference::new("System.Runtime");
+            let mut val = ExternalAssemblyReference::new("System.Runtime".into());
             val.version.major = 6;
-            val.public_key_or_token = Some(TOKEN);
+            val.public_key_or_token = Some(TOKEN.into());
             val
         });
         let object_ref = res.push_type_reference(ExternalTypeReference::new(
-            Some("System"),
-            "Object",
+            Some("System".into()),
+            "Object".into(),
             ResolutionScope::Assembly(runtime_ref),
         ));
         let ctor_sig = MethodSignature::instance(ReturnType::VOID, vec![]);
@@ -330,12 +330,12 @@ mod tests {
                 }
                 .into(),
             ),
-            ".ctor",
+            ".ctor".into(),
             ctor_sig.clone(),
         ));
         let console_type_ref = res.push_type_reference(ExternalTypeReference::new(
-            Some("System"),
-            "Console",
+            Some("System".into()),
+            "Console".into(),
             ResolutionScope::Assembly(console_asm_ref),
         ));
         let write_line_ref = res.push_method_reference(ExternalMethodReference::new(
@@ -346,11 +346,11 @@ mod tests {
                 }
                 .into(),
             ),
-            "WriteLine",
+            "WriteLine".into(),
             msig! { void (string) },
         ));
 
-        let mut foo_def = TypeDefinition::new(None, "Foo");
+        let mut foo_def = TypeDefinition::new(None, "Foo".into());
         foo_def.flags.accessibility = TAccess::Public;
         foo_def.extends = Some(object_ref.into());
         let mut method = Method::new(
@@ -401,7 +401,7 @@ mod tests {
                 data_sections: vec![],
             }),
         );
-        main.parameter_metadata.push(Some(ParameterMetadata::name("args")));
+        main.parameter_metadata.push(Some(ParameterMetadata::name("args".into())));
 
         let main_idx = res.push_method(class, main);
 

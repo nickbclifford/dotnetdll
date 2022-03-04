@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     generic::{show_constraints, TypeGeneric},
@@ -172,8 +173,8 @@ impl Default for TypeFlags {
 #[derive(Debug, Clone)]
 pub struct TypeDefinition<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
-    pub namespace: Option<&'a str>,
+    pub name: Cow<'a, str>,
+    pub namespace: Option<Cow<'a, str>>,
     pub fields: Vec<members::Field<'a>>,
     pub properties: Vec<members::Property<'a>>,
     pub methods: Vec<members::Method<'a>>,
@@ -250,7 +251,7 @@ impl ResolvedDebug for TypeDefinition<'_> {
 }
 
 impl<'a> TypeDefinition<'a> {
-    pub const fn new(namespace: Option<&'a str>, name: &'a str) -> Self {
+    pub const fn new(namespace: Option<Cow<'a, str>>, name: Cow<'a, str>) -> Self {
         Self {
             attributes: vec![],
             name,
@@ -289,8 +290,8 @@ pub enum ResolutionScope {
 #[derive(Debug, Clone)]
 pub struct ExternalTypeReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
-    pub namespace: Option<&'a str>,
+    pub name: Cow<'a, str>,
+    pub namespace: Option<Cow<'a, str>>,
     pub scope: ResolutionScope,
 }
 
@@ -311,8 +312,8 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
                 {
                     Some(e) => match e.implementation {
                         TypeImplementation::Nested(_) => panic!("exported type ref scopes cannot be nested"),
-                        TypeImplementation::ModuleFile { file, .. } => res[file].name,
-                        TypeImplementation::TypeForwarder(a) => res[a].name,
+                        TypeImplementation::ModuleFile { file, .. } => &res[file].name,
+                        TypeImplementation::TypeForwarder(a) => &res[a].name,
                     },
                     None => panic!("missing exported type entry for type ref"),
                 },
@@ -323,7 +324,7 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
 }
 
 impl<'a> ExternalTypeReference<'a> {
-    pub const fn new(namespace: Option<&'a str>, name: &'a str, scope: ResolutionScope) -> Self {
+    pub const fn new(namespace: Option<Cow<'a, str>>, name: Cow<'a, str>, scope: ResolutionScope) -> Self {
         Self {
             attributes: vec![],
             name,
@@ -344,8 +345,8 @@ pub enum TypeImplementation {
 pub struct ExportedType<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub flags: TypeFlags,
-    pub name: &'a str,
-    pub namespace: Option<&'a str>,
+    pub name: Cow<'a, str>,
+    pub namespace: Option<Cow<'a, str>>,
     pub implementation: TypeImplementation,
 }
 
@@ -353,8 +354,8 @@ macro_rules! type_name_impl {
     ($i:ty) => {
         impl $i {
             pub fn type_name(&self) -> String {
-                match self.namespace {
-                    Some(ns) => format!("{}.{}", ns, self.name),
+                match self.namespace.as_ref() {
+                    Some(ns) => format!("{}.{}", ns, &self.name),
                     None => self.name.to_string(),
                 }
             }

@@ -22,6 +22,7 @@ use object::{
 use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
+use std::borrow::Cow;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -173,7 +174,7 @@ impl<'a> DLL<'a> {
 
         macro_rules! heap_idx {
             ($heap:ident, $idx:expr) => {
-                $heap.at_index($idx)?
+                Cow::Borrowed($heap.at_index($idx)?)
             };
         }
 
@@ -384,7 +385,6 @@ impl<'a> DLL<'a> {
 
                 Ok(ManifestResource {
                     attributes: vec![],
-                    name,
                     visibility: match r.flags & 0x7 {
                         0x1 => Visibility::Public,
                         0x2 => Visibility::Private,
@@ -426,6 +426,7 @@ impl<'a> DLL<'a> {
                         ),
                         BinImpl::Null => Implementation::CurrentFile(self.at_rva(&self.cli.resources)?[offset..].into())
                     },
+                    name,
                 })
             })
             .collect::<Result<_>>()?;
@@ -442,7 +443,6 @@ impl<'a> DLL<'a> {
                 Ok(ExportedType {
                     attributes: vec![],
                     flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
-                    name,
                     namespace: optional_idx!(strings, e.type_namespace),
                     implementation: match e.implementation {
                         Implementation::File(f) => {
@@ -481,6 +481,7 @@ impl<'a> DLL<'a> {
                         }
                         Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
                     },
+                    name,
                 })
             })
             .collect::<Result<_>>()?;
@@ -492,7 +493,7 @@ impl<'a> DLL<'a> {
         let module = module::Module {
             attributes: vec![],
             name: heap_idx!(strings, module_row.name),
-            mvid: heap_idx!(guids, module_row.mvid),
+            mvid: guids.at_index(module_row.mvid)?,
         };
 
         debug!("resolving module {}", module.name);
@@ -522,7 +523,6 @@ impl<'a> DLL<'a> {
 
                 Ok(types::ExternalTypeReference {
                     attributes: vec![],
-                    name,
                     namespace,
                     scope: match r.resolution_scope {
                         BinRS::Module(_) => ResolutionScope::CurrentModule,
@@ -553,6 +553,7 @@ impl<'a> DLL<'a> {
                         }
                         BinRS::Null => ResolutionScope::Exported,
                     },
+                    name,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -669,7 +670,7 @@ impl<'a> DLL<'a> {
             let idx = rva.field.0 - 1;
             match fields.get(idx) {
                 Some(&field) => {
-                    get_field!(field).initial_value = Some(self.raw_rva(rva.rva)?);
+                    get_field!(field).initial_value = Some(self.raw_rva(rva.rva)?.into());
                 }
                 None => throw!("bad parent field index {} for field RVA specification", idx),
             }
@@ -689,7 +690,7 @@ impl<'a> DLL<'a> {
                 for (m_idx, m) in type_methods {
                     use members::*;
 
-                    let name = heap_idx!(strings, m.name);
+                    let name = heap_idx!(strings, m.name).into();
 
                     let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
 
@@ -699,7 +700,6 @@ impl<'a> DLL<'a> {
 
                     parent_methods.push(Method {
                         attributes: vec![],
-                        name: name.into(),
                         body: None,
                         signature: sig,
                         accessibility: member_accessibility(m.flags)?,
@@ -728,6 +728,7 @@ impl<'a> DLL<'a> {
                             0x3 => BodyFormat::Runtime,
                             _ => unreachable!(),
                         },
+                        name,
                         body_management: match m.impl_flags & 0x4 {
                             0x0 => BodyManagement::Unmanaged,
                             0x4 => BodyManagement::Managed,
@@ -802,7 +803,7 @@ impl<'a> DLL<'a> {
                         name
                     ),
                 },
-                import_name: name,
+                import_name: name.clone(),
                 import_scope: {
                     let idx = i.import_scope.0 - 1;
 
@@ -888,7 +889,6 @@ impl<'a> DLL<'a> {
                 () => {
                     Generic {
                         attributes: vec![],
-                        name,
                         variance: match p.flags & 0x3 {
                             0x0 => Variance::Invariant,
                             0x1 => Variance::Covariant,
@@ -897,6 +897,7 @@ impl<'a> DLL<'a> {
                                 throw!("invalid variance value 0x3 for generic parameter {}", name)
                             }
                         },
+                        name,
                         special_constraint: SpecialConstraint {
                             reference_type: check_bitmask!(p.flags, 0x04),
                             value_type: check_bitmask!(p.flags, 0x08),
@@ -1238,7 +1239,7 @@ impl<'a> DLL<'a> {
                                 use metadata::index::HasSemantics;
                                 check_bitmask!(s.semantics, $flag)
                                     && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
-                            }).ok_or(scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
+                            }).ok_or_else(|| scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
                             let m_idx = sem.method.0 - 1;
                             if m_idx < method_len {
                                 let method = extract_method!(parent, methods[m_idx]);
@@ -1252,10 +1253,10 @@ impl<'a> DLL<'a> {
 
                     parent_events.push(Event {
                         attributes: vec![],
-                        name,
                         delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
                         add_listener: get_listener!("add", 0x8, EventAdd),
                         remove_listener: get_listener!("remove", 0x10, EventRemove),
+                        name,
                         raise_event: None,
                         other: vec![],
                         special_name: check_bitmask!(event.event_flags, 0x200),
@@ -1341,7 +1342,7 @@ impl<'a> DLL<'a> {
                 use members::*;
                 use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI)).into();
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
                 // NOTE: discarding errors means wasted allocation of formatted messages
@@ -1406,7 +1407,7 @@ impl<'a> DLL<'a> {
                 use members::*;
                 use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI));
+                let name = filter_map_try!(strings.at_index(r.name).map_err(CLI)).into();
                 let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
 
                 let ref_sig: MethodRefSig = match sig_blob.pread(0) {
@@ -2137,13 +2138,13 @@ impl<'a> DLL<'a> {
 
         macro_rules! heap_idx {
             ($heap:ident, $val:expr) => {
-                $heap.write($val)?
+                $heap.write(&$val)?
             };
         }
 
         macro_rules! opt_heap {
             ($heap:ident, $val:expr) => {
-                match $val {
+                match &$val {
                     Some(v) => heap_idx!($heap, v),
                     None => 0.into(),
                 }
@@ -2486,7 +2487,7 @@ impl<'a> DLL<'a> {
 
                         macro_rules! blob {
                             ($v:expr) => {
-                                heap_idx!(blobs, &$v.to_le_bytes())
+                                heap_idx!(blobs, $v.to_le_bytes())
                             };
                         }
                         let (constant_type, value) = match c {
@@ -2567,12 +2568,12 @@ impl<'a> DLL<'a> {
                 write_marshal!(f.marshal, Field(table_idx));
                 write_default!(&f.default, Field(table_idx));
 
-                if let Some(v) = f.initial_value {
+                if let Some(v) = &f.initial_value {
                     tables.field_rva.push(FieldRva {
                         rva: current_rva!(),
                         field: table_idx.into(),
                     });
-                    text.extend_from_slice(v);
+                    text.extend_from_slice(&v);
                 }
 
                 if let Some(o) = f.offset {

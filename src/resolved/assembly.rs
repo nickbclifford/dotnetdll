@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use super::attribute::{Attribute, SecurityDeclaration};
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -56,13 +57,13 @@ pub struct Assembly<'a> {
     pub hash_algorithm: HashAlgorithm,
     pub version: Version,
     pub flags: Flags,
-    pub public_key: Option<&'a [u8]>,
-    pub name: &'a str,
-    pub culture: Option<&'a str>,
+    pub public_key: Option<Cow<'a, [u8]>>,
+    pub name: Cow<'a, str>,
+    pub culture: Option<Cow<'a, str>>,
     pub security: Option<SecurityDeclaration<'a>>,
 }
 impl<'a> Assembly<'a> {
-    pub const fn new(name: &'a str) -> Self {
+    pub const fn new(name: Cow<'a, str>) -> Self {
         Self {
             attributes: vec![],
             hash_algorithm: HashAlgorithm::None,
@@ -86,13 +87,13 @@ pub struct ExternalAssemblyReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub version: Version,
     pub has_full_public_key: bool,
-    pub public_key_or_token: Option<&'a [u8]>,
-    pub name: &'a str,
-    pub culture: Option<&'a str>,
-    pub hash_value: Option<&'a [u8]>,
+    pub public_key_or_token: Option<Cow<'a, [u8]>>,
+    pub name: Cow<'a, str>,
+    pub culture: Option<Cow<'a, str>>,
+    pub hash_value: Option<Cow<'a, [u8]>>,
 }
 impl<'a> ExternalAssemblyReference<'a> {
-    pub const fn new(name: &'a str) -> Self {
+    pub const fn new(name: Cow<'a, str>) -> Self {
         Self {
             attributes: vec![],
             version: Version::ZERO,

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use debug_cell::RefCell;
 use dotnetdll::resolved::members::FieldSource;
 use dotnetdll::{
@@ -53,10 +54,10 @@ fn asm_spec(spec: Pair<Rule>) -> (&str, Version) {
     (assembly_name, version)
 }
 
-fn dotted(s: &str) -> (Option<&str>, &str) {
+fn dotted(s: &str) -> (Option<Cow<str>>, Cow<str>) {
     match s.rfind('.') {
-        Some(i) => (Some(&s[..i]), &s[i + 1..]),
-        None => (None, s),
+        Some(i) => (Some(s[..i].into()), s[i + 1..].into()),
+        None => (None, s.into()),
     }
 }
 
@@ -133,20 +134,20 @@ fn main() {
     let asm_decl = pairs.next().unwrap();
     let (assembly_name, version) = asm_spec(asm_decl);
 
-    let module_name = format!("{}.dll", assembly_name);
-    let res = RefCell::new(Resolution::new(Module::new(&module_name)));
-    let mut assembly = Assembly::new(assembly_name);
+    let module_name: Cow<_> = format!("{}.dll", assembly_name).into();
+    let res = RefCell::new(Resolution::new(Module::new(module_name.clone())));
+    let mut assembly = Assembly::new(assembly_name.into());
     assembly.version = version;
     res.borrow_mut().assembly = Some(assembly);
 
     res.borrow_mut()
         .type_definitions
-        .push(TypeDefinition::new(None, "<Module>"));
+        .push(TypeDefinition::new(None, "<Module>".into()));
 
     let mut extern_map = HashMap::new();
     while matches!(pairs.peek(), Some(p) if p.as_rule() == Rule::extern_decl) {
         let (name, version) = asm_spec(pairs.next().unwrap());
-        let mut asm_ref = ExternalAssemblyReference::new(name);
+        let mut asm_ref = ExternalAssemblyReference::new(name.into());
         asm_ref.version = version;
         extern_map.insert(name, res.borrow_mut().push_assembly_reference(asm_ref));
     }
@@ -154,7 +155,7 @@ fn main() {
     // we always need an mscorlib reference, insert a default one if the user didn't specify a version
     let mscorlib = *extern_map.entry("mscorlib").or_insert_with(|| {
         res.borrow_mut()
-            .push_assembly_reference(ExternalAssemblyReference::new("mscorlib"))
+            .push_assembly_reference(ExternalAssemblyReference::new("mscorlib".into()))
     });
 
     let ref_map: RefCell<HashMap<(AssemblyRefIndex, &str), _>> = RefCell::new(HashMap::new());
@@ -163,8 +164,8 @@ fn main() {
         *ref_map.borrow_mut().entry((a, t)).or_insert_with(|| {
             let (namespace, name) = dotted(t);
             res.borrow_mut().push_type_reference(ExternalTypeReference::new(
-                namespace,
-                name,
+                namespace.into(),
+                name.into(),
                 ResolutionScope::Assembly(a),
             ))
         })
@@ -239,7 +240,7 @@ fn main() {
 
         let type_def = res
             .borrow_mut()
-            .push_type_definition(TypeDefinition::new(namespace, name));
+            .push_type_definition(TypeDefinition::new(namespace.into(), name.into()));
         types.insert(typename, type_def);
 
         res.borrow_mut()[type_def].flags.accessibility = access;
@@ -337,7 +338,7 @@ fn main() {
                 res.borrow_mut()[type_def].extends = Some(get_ref(mscorlib, "System.Enum").into());
                 let mut value_field = Field::new(
                     Accessibility::Public,
-                    "value__",
+                    "value__".into(),
                     match raw_type {
                         Some(s) => int_type(s),
                         None => BaseType::Int32,
@@ -350,7 +351,7 @@ fn main() {
                 for (idx, i) in idents.into_iter().enumerate() {
                     let mut field = Field::new(
                         Accessibility::Public,
-                        i,
+                        i.into(),
                         BaseType::Type {
                             value_kind: ValueKind::ValueType,
                             source: type_def.into(),
@@ -427,7 +428,7 @@ fn main() {
                             let field_type = inner.next().unwrap();
                             let ident = inner.next().unwrap();
 
-                            let mut field = Field::new(accessibility, ident.as_str(), clitype!(field_type));
+                            let mut field = Field::new(accessibility, ident.as_str().into(), clitype!(field_type));
                             field.static_member = is_static;
                             res.borrow_mut()[type_def].fields.push(field);
                         }
@@ -454,13 +455,13 @@ fn main() {
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
                                 let mut method = Method::new(accessibility, sig, name, None);
                                 if semantic == "set" {
-                                    method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
+                                    method.parameter_metadata.push(Some(ParameterMetadata::name("value".into())));
                                 }
                                 methods.push((res.borrow_mut().push_method(type_def, method), body));
                             }
 
                             res.borrow_mut()[type_def].properties.push(Property::new(
-                                ident.as_str(),
+                                ident.as_str().into(),
                                 Parameter::new(ParameterType::Value(property_type)),
                             ));
                         }
@@ -505,7 +506,7 @@ fn main() {
                             let mut method = Method::new(accessibility, sig, ident.as_str().into(), None);
                             method.parameter_metadata = param_names
                                 .into_iter()
-                                .map(|i| Some(ParameterMetadata::name(i.as_str())))
+                                .map(|i| Some(ParameterMetadata::name(i.as_str().into())))
                                 .collect();
                             method.abstract_member = body.is_none();
                             method.special_name = special_name;
@@ -539,7 +540,7 @@ fn main() {
 
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
                                 let mut method = Method::new(accessibility, sig.clone(), name, None);
-                                method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
+                                method.parameter_metadata.push(Some(ParameterMetadata::name("value".into())));
                                 let pair = Some((method, body));
 
                                 match semantic {
@@ -558,7 +559,7 @@ fn main() {
                             let (remove_m, remove_b) =
                                 remove.unwrap_or_else(|| panic!("missing remove method on event {}", ident.as_str()));
 
-                            let event = Event::new(ident.as_str(), property_type, add_m, remove_m);
+                            let event = Event::new(ident.as_str().into(), property_type, add_m, remove_m);
                             let event_idx = res.borrow_mut().push_event(type_def, event);
                             methods.push((res.borrow().event_add_index(event_idx), add_b));
                             methods.push((res.borrow().event_remove_index(event_idx), remove_b));
@@ -705,7 +706,7 @@ fn main() {
                             None => res.borrow_mut().push_field_reference(ExternalFieldReference::new(
                                 FieldReferenceParent::Type(parent),
                                 field_type,
-                                name,
+                                name.into(),
                             )),
                         }
                     }),
@@ -875,7 +876,7 @@ fn main() {
 
                     let sig = method_signature(is_static, return_type, params);
 
-                    let method = MethodSource::User(user_method(parent, method_name, sig));
+                    let method = MethodSource::User(user_method(parent, method_name.into(), sig));
 
                     if is_virtual {
                         Instruction::CallVirtual {
@@ -897,7 +898,7 @@ fn main() {
                     let parent: MethodType = clitype!(iter.next().unwrap());
                     let sig = MethodSignature::new(true, ReturnType::VOID, param_types(iter.collect(), user_type));
 
-                    let method = user_method(parent, ".ctor", sig);
+                    let method = user_method(parent, ".ctor".into(), sig);
                     if let UserMethod::Definition(m) = &method {
                         let def = &res.borrow()[*m];
                         if !(def.special_name && def.runtime_special_name) {
@@ -924,7 +925,7 @@ fn main() {
 
     let written = DLL::write(&res.into_inner(), false, true).unwrap();
 
-    std::fs::write(&module_name, &written).unwrap();
+    std::fs::write(&module_name.as_ref(), &written).unwrap();
 
     println!("wrote {}", module_name);
 }

@@ -18,7 +18,7 @@ pub enum Visibility {
 #[derive(Debug, Clone)]
 pub struct ManifestResource<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub visibility: Visibility,
     pub implementation: Implementation<'a>,
 }

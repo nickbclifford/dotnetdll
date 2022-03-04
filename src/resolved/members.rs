@@ -53,7 +53,7 @@ impl Accessibility {
 #[derive(Debug, Clone)]
 pub struct Field<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub type_modifiers: Vec<CustomTypeModifier>,
     pub return_type: MemberType,
     pub accessibility: Accessibility,
@@ -67,7 +67,7 @@ pub struct Field<'a> {
     pub runtime_special_name: bool,
     pub offset: Option<usize>,
     pub marshal: Option<MarshalSpec>,
-    pub initial_value: Option<&'a [u8]>,
+    pub initial_value: Option<Cow<'a, [u8]>>,
 }
 name_display!(Field<'_>);
 impl ResolvedDebug for Field<'_> {
@@ -88,7 +88,7 @@ impl ResolvedDebug for Field<'_> {
     }
 }
 impl<'a> Field<'a> {
-    pub const fn new(access: super::Accessibility, name: &'a str, return_type: MemberType) -> Self {
+    pub const fn new(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
         Self {
             attributes: vec![],
             name,
@@ -120,13 +120,13 @@ pub enum FieldReferenceParent {
 pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: FieldReferenceParent,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub custom_modifiers: Vec<CustomTypeModifier>,
     pub field_type: MemberType,
 }
 name_display!(ExternalFieldReference<'_>);
 impl<'a> ExternalFieldReference<'a> {
-    pub const fn new(parent: FieldReferenceParent, field_type: MemberType, name: &'a str) -> Self {
+    pub const fn new(parent: FieldReferenceParent, field_type: MemberType, name: Cow<'a, str>) -> Self {
         Self {
             attributes: vec![],
             parent,
@@ -170,7 +170,7 @@ impl ResolvedDebug for FieldSource {
 #[derive(Debug, Clone)]
 pub struct Property<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
     pub other: Vec<Method<'a>>,
@@ -230,7 +230,7 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 impl<'a> Property<'a> {
-    pub const fn new(name: &'a str, property_type: signature::Parameter) -> Self {
+    pub const fn new(name: Cow<'a, str>, property_type: signature::Parameter) -> Self {
         Self {
             attributes: vec![],
             name,
@@ -254,7 +254,7 @@ pub enum VtableLayout {
 #[derive(Debug, Clone)]
 pub struct ParameterMetadata<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub is_in: bool,
     pub is_out: bool,
     pub optional: bool,
@@ -263,7 +263,7 @@ pub struct ParameterMetadata<'a> {
 }
 name_display!(ParameterMetadata<'_>);
 impl<'a> ParameterMetadata<'a> {
-    pub const fn name(name: &'a str) -> Self {
+    pub const fn name(name: Cow<'a, str>) -> Self {
         Self {
             attributes: vec![],
             name,
@@ -422,13 +422,13 @@ pub enum UnmanagedCallingConvention {
     Fastcall,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct PInvoke<'a> {
     pub no_mangle: bool,
     pub character_set: CharacterSet,
     pub supports_last_error: bool,
     pub calling_convention: UnmanagedCallingConvention,
-    pub import_name: &'a str,
+    pub import_name: Cow<'a, str>,
     pub import_scope: ModuleRefIndex,
 }
 
@@ -443,12 +443,12 @@ pub enum MethodReferenceParent {
 pub struct ExternalMethodReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub parent: MethodReferenceParent,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub signature: signature::ManagedMethod,
 }
 name_display!(ExternalMethodReference<'_>);
 impl<'a> ExternalMethodReference<'a> {
-    pub const fn new(parent: MethodReferenceParent, name: &'a str, signature: signature::ManagedMethod) -> Self {
+    pub const fn new(parent: MethodReferenceParent, name: Cow<'a, str>, signature: signature::ManagedMethod) -> Self {
         Self {
             attributes: vec![],
             parent,
@@ -479,7 +479,7 @@ impl ResolvedDebug for UserMethod {
             UserMethod::Reference(i) => {
                 let r = &res[*i];
                 signature = &r.signature;
-                method_name = r.name;
+                method_name = &r.name;
 
                 use MethodReferenceParent::*;
                 parent_name = match &r.parent {
@@ -575,7 +575,7 @@ pub enum Constant {
 #[derive(Debug, Clone)]
 pub struct Event<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub delegate_type: MemberType, // standard says this can be null, but that doesn't make any sense
     pub add_listener: Method<'a>,
     pub remove_listener: Method<'a>,
@@ -605,7 +605,7 @@ impl ResolvedDebug for Event<'_> {
 }
 impl<'a> Event<'a> {
     pub const fn new(
-        name: &'a str,
+        name: Cow<'a, str>,
         delegate_type: MemberType,
         add_listener: Method<'a>,
         remove_listener: Method<'a>,

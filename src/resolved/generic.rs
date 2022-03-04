@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use super::{attribute::Attribute, types, ResolvedDebug};
 use crate::resolution::Resolution;
 
@@ -30,7 +31,7 @@ pub struct GenericConstraint<'a, ConstraintType> {
 #[derive(Debug, Clone)]
 pub struct Generic<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,
     pub type_constraints: Vec<GenericConstraint<'a, ConstraintType>>,
@@ -49,7 +50,7 @@ impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
             write!(
                 buf,
                 "<{}>",
-                self.iter().map(|p| p.name).collect::<Vec<&str>>().join(", ")
+                self.iter().map(|p| p.name.as_ref()).collect::<Vec<&str>>().join(", ")
             )
             .unwrap();
         }
