@@ -50,21 +50,21 @@ pub enum EntryPoint {
 // we can take advantage of this semantic guarantee to do unchecked zero-cost indexing (opt-in)
 
 fn slice_index<T>(s: &[T], index: usize) -> &T {
-    if cfg!(feature = "unsafe_indexing") {
+    if cfg!(feature = "unchecked_indexing") {
         unsafe { s.get_unchecked(index) }
     } else {
         &s[index]
     }
 }
 fn slice_index_mut<T>(s: &mut [T], index: usize) -> &mut T {
-    if cfg!(feature = "unsafe_indexing") {
+    if cfg!(feature = "unchecked_indexing") {
         unsafe { s.get_unchecked_mut(index) }
     } else {
         &mut s[index]
     }
 }
 fn unwrap<T>(o: Option<T>) -> T {
-    if cfg!(feature = "unsafe_indexing") {
+    if cfg!(feature = "unchecked_indexing") {
         unsafe { o.unwrap_unchecked() }
     } else {
         o.unwrap()
