@@ -10,7 +10,7 @@ use crate::resolution::*;
 use dotnetdll_macros::From;
 use std::fmt::{Display, Formatter, Write};
 
-pub use dotnetdll_macros::ctype;
+pub use dotnetdll_macros::{ctype, type_name, type_ref};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Kind {
@@ -548,6 +548,20 @@ impl<T> BaseType<T> {
 
     pub const fn pointer(pointee: T) -> Self {
         BaseType::ValuePointer(vec![], Some(pointee))
+    }
+
+    pub const fn class(source: TypeSource<T>) -> Self {
+        BaseType::Type {
+            value_kind: ValueKind::Class,
+            source
+        }
+    }
+
+    pub const fn valuetype(source: TypeSource<T>) -> Self {
+        BaseType::Type {
+            value_kind: ValueKind::ValueType,
+            source
+        }
     }
 }
 

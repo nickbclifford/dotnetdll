@@ -12,13 +12,13 @@ macro_rules! test {
 
             let dir = TempDir::new()?;
 
-            let dll_path = dir.path().join(format!("{}.dll", stringify!(name)));
+            let dll_path = dir.path().join(format!("{}.dll", stringify!($name)));
             std::fs::write(&dll_path, written)?;
 
             std::fs::copy(
                 "src/tests/test.runtimeconfig.json",
                 dir.path()
-                    .join(format!("{}.runtimeconfig.json", stringify!(name))),
+                    .join(format!("{}.runtimeconfig.json", stringify!($name))),
             )?;
 
             let output = Command::new("dotnet").arg(dll_path).output()?;
@@ -66,58 +66,31 @@ test!(
         module.flags.before_field_init = false;
         res.push_type_definition(module);
 
-        let console_asm_ref = res.push_assembly_reference({
+        let console_asm = res.push_assembly_reference({
             let mut val = ExternalAssemblyReference::new("System.Console".into());
             val.version.major = 6;
             val.public_key_or_token = Some(TOKEN.into());
             val
         });
-        let runtime_ref = res.push_assembly_reference({
+        let runtime = res.push_assembly_reference({
             let mut val = ExternalAssemblyReference::new("System.Runtime".into());
             val.version.major = 6;
             val.public_key_or_token = Some(TOKEN.into());
             val
         });
-        let object_ref = res.push_type_reference(ExternalTypeReference::new(
-            Some("System".into()),
-            "Object".into(),
-            ResolutionScope::Assembly(runtime_ref),
-        ));
-        let ctor_sig = MethodSignature::instance(ReturnType::VOID, vec![]);
-        let ctor_ref = res.push_method_reference(ExternalMethodReference::new(
-            MethodReferenceParent::Type(
-                BaseType::Type {
-                    value_kind: ValueKind::Class,
-                    source: object_ref.into(),
-                }
-                .into(),
-            ),
-            ".ctor".into(),
-            ctor_sig.clone(),
-        ));
-        let console_type_ref = res.push_type_reference(ExternalTypeReference::new(
-            Some("System".into()),
-            "Console".into(),
-            ResolutionScope::Assembly(console_asm_ref),
-        ));
-        let write_line_ref = res.push_method_reference(ExternalMethodReference::new(
-            MethodReferenceParent::Type(
-                BaseType::Type {
-                    value_kind: ValueKind::Class,
-                    source: console_type_ref.into(),
-                }
-                .into(),
-            ),
-            "WriteLine".into(),
-            msig! { static void (string) },
-        ));
+        let object_ref = res.push_type_reference(type_ref! { System.Object in #runtime });
+        let object_type = BaseType::class(object_ref.into()).into();
+        let ctor_ref = res.push_method_reference(method_ref! { void #object_type::.ctor() });
+        let console_ref = res.push_type_reference(type_ref! { System.Console in #console_asm });
+        let console_type = BaseType::class(console_ref.into()).into();
+        let write_line_ref = res.push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
 
         let mut foo_def = TypeDefinition::new(None, "Foo".into());
         foo_def.flags.accessibility = TAccess::Public;
         foo_def.extends = Some(object_ref.into());
         let mut method = Method::new(
             Accessibility::Public,
-            ctor_sig,
+            msig! { void () },
             ".ctor".into(),
             Some(body::Method {
                 header: body::Header {
