@@ -71,6 +71,23 @@ mod convert;
 pub mod dll;
 pub mod resolution;
 pub mod resolved;
+
+pub mod prelude {
+    pub use crate::{
+        dll::DLL,
+        resolution::*,
+        resolved::{
+            assembly::*,
+            body, il::*,
+            members::{Accessibility as MAccess, *},
+            module::*,
+            signature::*,
+            types::{Accessibility as TAccess, *},
+            Accessibility,
+        },
+    };
+}
+
 #[cfg(test)]
 mod tests;
 

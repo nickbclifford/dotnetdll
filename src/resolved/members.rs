@@ -90,14 +90,14 @@ impl ResolvedDebug for Field<'_> {
     }
 }
 impl<'a> Field<'a> {
-    pub const fn new(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
+    pub const fn new(static_member: bool, access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
         Self {
             attributes: vec![],
             name,
             type_modifiers: vec![],
             return_type,
             accessibility: Accessibility::Access(access),
-            static_member: false,
+            static_member,
             init_only: false,
             literal: false,
             default: None,
@@ -109,6 +109,14 @@ impl<'a> Field<'a> {
             marshal: None,
             initial_value: None,
         }
+    }
+
+    pub const fn instance(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
+        Self::new(false, access, name, return_type)
+    }
+
+    pub const fn static_member(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
+        Self::new(true, access, name, return_type)
     }
 }
 

@@ -336,7 +336,7 @@ fn main() {
             TypeKind::Enum { raw_type, idents, .. } => {
                 res.borrow_mut()[type_def].flags.sealed = true;
                 res.borrow_mut()[type_def].extends = Some(get_ref(mscorlib, "System.Enum").into());
-                let mut value_field = Field::new(
+                let mut value_field = Field::instance(
                     Accessibility::Public,
                     "value__".into(),
                     match raw_type {
@@ -349,7 +349,7 @@ fn main() {
                 value_field.runtime_special_name = true;
                 res.borrow_mut()[type_def].fields.push(value_field);
                 for (idx, i) in idents.into_iter().enumerate() {
-                    let mut field = Field::new(
+                    let mut field = Field::instance(
                         Accessibility::Public,
                         i.into(),
                         BaseType::Type {
@@ -428,7 +428,7 @@ fn main() {
                             let field_type = inner.next().unwrap();
                             let ident = inner.next().unwrap();
 
-                            let mut field = Field::new(accessibility, ident.as_str().into(), clitype!(field_type));
+                            let mut field = Field::instance(accessibility, ident.as_str().into(), clitype!(field_type));
                             field.static_member = is_static;
                             res.borrow_mut()[type_def].fields.push(field);
                         }

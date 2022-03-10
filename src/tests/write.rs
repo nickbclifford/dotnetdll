@@ -1,18 +1,88 @@
-use crate::dll::DLL;
+use crate::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
+struct Context<'a> {
+    resolution: Resolution<'a>,
+    console: TypeRefIndex,
+    object_ctor: MethodRefIndex,
+    class: TypeIndex,
+    default_ctor: MethodIndex,
+    main: MethodIndex,
+}
+
 macro_rules! test {
-    ($name:ident, $res:expr, $expect:expr) => {
+    ($name:ident, |$ctx:ident| $body:expr, $expect:expr) => {
         #[test]
         fn $name() -> Result<(), Box<dyn std::error::Error>> {
-            let res = $res;
+            let dll_name = format!("{}.dll", stringify!($name));
 
-            let written = DLL::write(&res, false, true)?;
+            let mut res = Resolution::new(Module::new((&dll_name).into()));
+            res.assembly = Some(Assembly::new(stringify!($name).into()));
+            res.push_global_module_type();
+
+            let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib".into()));
+
+            let console = res.push_type_reference(type_ref! { System.Console in #mscorlib });
+
+            let object = res.push_type_reference(type_ref! { System.Object in #mscorlib });
+
+            let class = res.push_type_definition(TypeDefinition::new(None, "Program".into()));
+            res[class].extends = Some(object.into());
+
+            let object_type = BaseType::class(object.into()).into();
+            let object_ctor = res.push_method_reference(method_ref! { void #object_type::.ctor() });
+
+            let default_ctor = res.push_method(
+                class,
+                Method::new(
+                    Accessibility::Public,
+                    msig! { void () },
+                    ".ctor".into(),
+                    Some(body::Method {
+                        instructions: vec![
+                            Instruction::LoadArgument(0),
+                            Instruction::Call {
+                                tail_call: false,
+                                method: object_ctor.into(),
+                            },
+                            Instruction::Return,
+                        ],
+                        ..Default::default()
+                    }),
+                ),
+            );
+            res[default_ctor].special_name = true;
+            res[default_ctor].runtime_special_name = true;
+
+            let main = res.push_method(
+                class,
+                Method::new(
+                    Accessibility::Public,
+                    msig! { static void (string[]) },
+                    "Main".into(),
+                    Some(Default::default()),
+                ),
+            );
+
+            res.entry_point = Some(main.into());
+
+            let mut $ctx = Context {
+                resolution: res,
+                console,
+                class,
+                default_ctor,
+                object_ctor,
+                main,
+            };
+
+            $body;
+
+            let written = DLL::write(&$ctx.resolution, false, true)?;
 
             let dir = TempDir::new()?;
 
-            let dll_path = dir.path().join(format!("{}.dll", stringify!($name)));
+            let dll_path = dir.path().join(&dll_name);
             std::fs::write(&dll_path, written)?;
 
             std::fs::copy(
@@ -21,9 +91,19 @@ macro_rules! test {
                     .join(format!("{}.runtimeconfig.json", stringify!($name))),
             )?;
 
-            let output = Command::new("dotnet").arg(dll_path).output()?;
+            let output = Command::new("dotnet").arg(&dll_path).output()?;
 
-            println!("{}", String::from_utf8(output.stderr)?);
+            let stderr = String::from_utf8(output.stderr)?;
+
+            println!("{}", stderr);
+            if stderr.contains("invalid program") {
+                let ilverify = Command::new("ilverify")
+                    .arg(dll_path)
+                    .arg("-r")
+                    .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
+                    .output()?;
+                println!("{}", String::from_utf8(ilverify.stdout)?);
+            }
 
             assert_eq!(output.stdout, $expect);
 
@@ -34,116 +114,108 @@ macro_rules! test {
 
 test!(
     hello_world,
-    {
-        use crate::{
-            resolution::Resolution,
-            resolved::{
-                assembly::*,
-                body, il,
-                members::*,
-                module::Module,
-                signature::*,
-                types::{Accessibility as TAccess, *},
-                Accessibility,
+    |ctx| {
+        let console_type = BaseType::class(ctx.console.into()).into();
+        let write_line = ctx
+            .resolution
+            .push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
+        ctx.resolution[ctx.main].body.as_mut().unwrap().instructions.extend([
+            Instruction::LoadString("Hello, world!".encode_utf16().collect()),
+            Instruction::Call {
+                tail_call: false,
+                method: write_line.into(),
             },
-        };
-
-        const TOKEN: &[u8] = &[0xB0, 0x3F, 0x5F, 0x7F, 0x11, 0xD5, 0x0A, 0x3A];
-
-        let mut res = Resolution::new(Module {
-            attributes: vec![],
-            name: "test.dll".into(),
-            mvid: [
-                0x7d, 0xca, 0x02, 0xcd, 0xba, 0xd1, 0x4e, 0x45, 0xbf, 0x5f, 0x1b, 0x7d, 0xf1, 0x93, 0xce, 0x36,
-            ],
-        });
-        let mut assembly = Assembly::new("test".into());
-        assembly.version.major = 1;
-        res.assembly = Some(assembly);
-
-        // global module type
-        let mut module = TypeDefinition::new(None, "<Module>".into());
-        module.flags.before_field_init = false;
-        res.push_type_definition(module);
-
-        let console_asm = res.push_assembly_reference({
-            let mut val = ExternalAssemblyReference::new("System.Console".into());
-            val.version.major = 6;
-            val.public_key_or_token = Some(TOKEN.into());
-            val
-        });
-        let runtime = res.push_assembly_reference({
-            let mut val = ExternalAssemblyReference::new("System.Runtime".into());
-            val.version.major = 6;
-            val.public_key_or_token = Some(TOKEN.into());
-            val
-        });
-        let object_ref = res.push_type_reference(type_ref! { System.Object in #runtime });
-        let object_type = BaseType::class(object_ref.into()).into();
-        let ctor_ref = res.push_method_reference(method_ref! { void #object_type::.ctor() });
-        let console_ref = res.push_type_reference(type_ref! { System.Console in #console_asm });
-        let console_type = BaseType::class(console_ref.into()).into();
-        let write_line_ref = res.push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
-
-        let mut foo_def = TypeDefinition::new(None, "Foo".into());
-        foo_def.flags.accessibility = TAccess::Public;
-        foo_def.extends = Some(object_ref.into());
-        let mut method = Method::new(
-            Accessibility::Public,
-            msig! { void () },
-            ".ctor".into(),
-            Some(body::Method {
-                header: body::Header {
-                    initialize_locals: false,
-                    maximum_stack_size: 0,
-                    local_variables: vec![],
-                },
-                instructions: vec![
-                    il::Instruction::LoadArgument(0),
-                    il::Instruction::Call {
-                        tail_call: false,
-                        method: ctor_ref.into(),
-                    },
-                    il::Instruction::Return,
-                ],
-                data_sections: vec![],
-            }),
-        );
-        method.special_name = true;
-        method.runtime_special_name = true;
-        foo_def.methods.push(method);
-
-        let class = res.push_type_definition(foo_def);
-
-        let mut main = Method::new(
-            Accessibility::Public,
-            msig! { static void (string[]) },
-            "Main".into(),
-            Some(body::Method {
-                header: body::Header {
-                    initialize_locals: false,
-                    maximum_stack_size: 0,
-                    local_variables: vec![],
-                },
-                instructions: vec![
-                    il::Instruction::LoadString("Hello, world!".encode_utf16().collect()),
-                    il::Instruction::Call {
-                        tail_call: false,
-                        method: write_line_ref.into(),
-                    },
-                    il::Instruction::Return,
-                ],
-                data_sections: vec![],
-            }),
-        );
-        main.parameter_metadata
-            .push(Some(ParameterMetadata::name("args".into())));
-
-        let main_idx = res.push_method(class, main);
-
-        res.entry_point = Some(main_idx.into());
-
-        res
+            Instruction::Return,
+        ]);
     },
     b"Hello, world!\n"
+);
+
+test!(
+    fields,
+    |ctx| {
+        let console_type = BaseType::class(ctx.console.into()).into();
+        let write_line = ctx
+            .resolution
+            .push_method_reference(method_ref! { static void #console_type::WriteLine(string, object, object) });
+
+        let static_field = ctx.resolution.push_field(
+            ctx.class,
+            Field::static_member(Accessibility::Public, "static_field".into(), ctype! { int }),
+        );
+        let instance_field = ctx.resolution.push_field(
+            ctx.class,
+            Field::instance(Accessibility::Public, "instance_field".into(), ctype! { uint }),
+        );
+
+        let main_body = ctx.resolution[ctx.main].body.as_mut().unwrap();
+        main_body
+            .header
+            .local_variables
+            .push(LocalVariable::new(BaseType::class(ctx.class.into()).into()));
+        main_body.instructions.extend([
+            // init static
+            Instruction::LoadConstantInt32(-1),
+            Instruction::StoreStaticField {
+                volatile: false,
+                field: static_field.into(),
+            },
+            // init instance
+            Instruction::NewObject(ctx.default_ctor.into()),
+            Instruction::Duplicate,
+            Instruction::StoreLocal(0),
+            Instruction::LoadConstantInt32(1),
+            Instruction::StoreField {
+                unaligned: None,
+                volatile: false,
+                field: instance_field.into(),
+            },
+            // increment static
+            Instruction::LoadStaticField {
+                volatile: false,
+                field: static_field.into(),
+            },
+            Instruction::LoadConstantInt32(1),
+            Instruction::Add,
+            Instruction::StoreStaticField {
+                volatile: false,
+                field: static_field.into(),
+            },
+            // increment instance
+            Instruction::LoadLocalVariable(0),
+            Instruction::Duplicate,
+            Instruction::LoadField {
+                unaligned: None,
+                volatile: false,
+                field: instance_field.into(),
+            },
+            Instruction::LoadConstantInt32(1),
+            Instruction::Add,
+            Instruction::StoreField {
+                unaligned: None,
+                volatile: false,
+                field: instance_field.into(),
+            },
+            // print
+            Instruction::LoadString("{0}, {1}".encode_utf16().collect()),
+            Instruction::LoadStaticField {
+                volatile: false,
+                field: static_field.into(),
+            },
+            Instruction::Box(ctype! { int }),
+            Instruction::LoadLocalVariable(0),
+            Instruction::LoadField {
+                unaligned: None,
+                volatile: false,
+                field: instance_field.into(),
+            },
+            Instruction::Box(ctype! { uint }),
+            Instruction::Call {
+                tail_call: false,
+                method: write_line.into(),
+            },
+            Instruction::Return,
+        ]);
+    },
+    b"0, 2\n"
 );

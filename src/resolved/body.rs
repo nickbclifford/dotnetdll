@@ -9,8 +9,17 @@ pub struct Header {
     pub maximum_stack_size: usize,
     pub local_variables: Vec<LocalVariable>,
 }
+impl Default for Header {
+    fn default() -> Self {
+        Self {
+            initialize_locals: false,
+            maximum_stack_size: 8,
+            local_variables: vec![]
+        }
+    }
+}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Method {
     pub header: Header,
     pub instructions: Vec<Instruction>,
