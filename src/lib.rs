@@ -89,10 +89,7 @@ pub mod prelude {
 }
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod standalone_tests {
+mod tests {
     use super::{
         binary::*,
         dll::{ResolveOptions, DLL},
