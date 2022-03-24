@@ -15,6 +15,7 @@ pub enum Visibility {
     Private,
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone)]
 pub struct ManifestResource<'a> {
     pub attributes: Vec<Attribute<'a>>,

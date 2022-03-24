@@ -82,7 +82,7 @@ impl InstructionFlag for (&'static str, bool) {
     }
 }
 fn show_flags<'a>(flags: impl IntoIterator<Item = &'a dyn InstructionFlag>) -> String {
-    let set_flags: Vec<_> = flags.into_iter().flat_map(InstructionFlag::show).collect();
+    let set_flags: Vec<_> = flags.into_iter().filter_map(InstructionFlag::show).collect();
     if set_flags.is_empty() {
         String::new()
     } else {

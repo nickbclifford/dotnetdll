@@ -40,6 +40,7 @@ impl Display for Accessibility {
     }
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub trait ResolvedDebug {
     fn show(&self, res: &crate::resolution::Resolution) -> String;
 }

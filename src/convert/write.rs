@@ -2,7 +2,7 @@ use super::TypeKind;
 use crate::dll::DLLError;
 use crate::{
     binary::{
-        heap::{BlobWriter, HeapWriter, UserStringWriter},
+        heap::{BlobWriter, UserStringWriter, Writer},
         il::Instruction as BInstruction,
         metadata::{
             index::{Blob, MethodDefOrRef, Token, TokenTarget, TypeDefOrRef},
@@ -330,6 +330,7 @@ pub struct MethodContext<'a, T, U> {
     pub field_source: &'a U,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn instruction(
     instruction: &Instruction,
     ctx: &mut Context,

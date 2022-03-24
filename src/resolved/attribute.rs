@@ -277,7 +277,7 @@ pub struct SecurityDeclaration<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PermissionAttribute<'a> {
+pub struct Permission<'a> {
     pub type_name: Cow<'a, str>,
     pub fields: Vec<NamedArg<'a>>,
 }
@@ -287,7 +287,7 @@ impl<'a> SecurityDeclaration<'a> {
         &'a self,
         resolution: &'a Resolution<'a>,
         resolver: &'a impl Resolver<'a>,
-    ) -> Result<Vec<PermissionAttribute<'a>>> {
+    ) -> Result<Vec<Permission<'a>>> {
         let offset = &mut 0;
 
         let value = self.value.as_ref();
@@ -313,12 +313,12 @@ impl<'a> SecurityDeclaration<'a> {
                     resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
                 })?;
 
-                Ok(PermissionAttribute { type_name, fields })
+                Ok(Permission { type_name, fields })
             })
             .collect()
     }
 
-    pub fn new(attributes: Vec<Attribute<'a>>, action: u16, attrs: Vec<PermissionAttribute<'a>>) -> Result<Self> {
+    pub fn new(attributes: Vec<Attribute<'a>>, action: u16, attrs: Vec<Permission<'a>>) -> Result<Self> {
         let mut buffer = DynamicBuffer::with_increment(8);
         let offset = &mut 0;
 

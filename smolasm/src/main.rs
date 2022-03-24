@@ -164,8 +164,8 @@ fn main() {
         *ref_map.borrow_mut().entry((a, t)).or_insert_with(|| {
             let (namespace, name) = dotted(t);
             res.borrow_mut().push_type_reference(ExternalTypeReference::new(
-                namespace.into(),
-                name.into(),
+                namespace,
+                name,
                 ResolutionScope::Assembly(a),
             ))
         })
@@ -240,7 +240,7 @@ fn main() {
 
         let type_def = res
             .borrow_mut()
-            .push_type_definition(TypeDefinition::new(namespace.into(), name.into()));
+            .push_type_definition(TypeDefinition::new(namespace, name));
         types.insert(typename, type_def);
 
         res.borrow_mut()[type_def].flags.accessibility = access;

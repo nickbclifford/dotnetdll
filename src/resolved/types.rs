@@ -1,6 +1,6 @@
 use super::{
     attribute::{Attribute, SecurityDeclaration},
-    generic::{show_constraints, TypeGeneric},
+    generic::{show_constraints, Type},
     members, signature, ResolvedDebug,
 };
 use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
@@ -183,7 +183,7 @@ pub struct TypeDefinition<'a> {
     pub overrides: Vec<MethodOverride>,
     pub extends: Option<TypeSource<MemberType>>,
     pub implements: Vec<(Vec<Attribute<'a>>, TypeSource<MemberType>)>,
-    pub generic_parameters: Vec<TypeGeneric<'a>>,
+    pub generic_parameters: Vec<Type<'a>>,
     pub flags: TypeFlags,
     pub security: Option<SecurityDeclaration<'a>>,
 }

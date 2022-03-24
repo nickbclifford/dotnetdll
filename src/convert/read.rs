@@ -1,7 +1,7 @@
 use super::TypeKind;
 use crate::{
     binary::{
-        heap::{BlobReader, HeapReader, UserStringReader},
+        heap::{BlobReader, Reader, UserStringReader},
         il,
         metadata::{
             index::{MethodDefOrRef, Token, TokenTarget, TypeDefOrRef},
@@ -331,6 +331,7 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn instruction<'r, 'data>(
     instruction: il::Instruction,
     index: usize,

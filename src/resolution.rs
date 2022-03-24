@@ -332,6 +332,10 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    // technically since this can be derived all from `event`, self is unnecessary
+    // however, it should match the rest of the indexing functions, especially if internal
+    // representations change and self is later needed
+    #[allow(clippy::unused_self)]
     pub fn event_add_index(&self, event: EventIndex) -> MethodIndex {
         MethodIndex {
             parent_type: event.parent_type,
@@ -339,6 +343,8 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    // ditto
+    #[allow(clippy::unused_self)]
     pub fn event_remove_index(&self, event: EventIndex) -> MethodIndex {
         MethodIndex {
             parent_type: event.parent_type,

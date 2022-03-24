@@ -1,3 +1,19 @@
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::enum_glob_use,
+    clippy::items_after_statements,
+    clippy::match_wildcard_for_single_variants,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::struct_excessive_bools,
+    clippy::wildcard_imports
+)]
+
 #[macro_use]
 mod utils {
     macro_rules! check_bitmask {

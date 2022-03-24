@@ -29,7 +29,7 @@ impl Method {
     pub fn new(instructions: Vec<Instruction>) -> Self {
         Self {
             instructions,
-            ..Default::default()
+            ..Method::default()
         }
     }
 

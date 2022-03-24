@@ -112,7 +112,7 @@ impl<'a> DLL<'a> {
         Ok(Some(&data[..header.size as usize]))
     }
 
-    pub fn get_heap<T: HeapReader<'a>>(&self) -> Result<T> {
+    pub fn get_heap<T: Reader<'a>>(&self) -> Result<T> {
         // heap names from the traits are known to be good
         // so if we can't find them, assume they are empty
         Ok(T::new(self.get_stream(T::NAME)?.unwrap_or(&[])))
@@ -140,7 +140,7 @@ impl<'a> DLL<'a> {
         bytes.pread(offset).map_err(CLI)
     }
 
-    #[allow(clippy::nonminimal_bool, unused_mut)]
+    #[allow(clippy::nonminimal_bool, clippy::too_many_lines, unused_mut)]
     pub fn resolve(&self, opts: ResolveOptions) -> Result<Resolution<'a>> {
         use convert::TypeKind;
         use resolved::{
@@ -912,7 +912,7 @@ impl<'a> DLL<'a> {
                                     let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(c.constraint, &ctx));
                                     Some(Ok((
                                         c_idx,
-                                        GenericConstraint {
+                                        Constraint {
                                             attributes: vec![],
                                             custom_modifiers: cmod,
                                             constraint_type: ty,
@@ -1665,7 +1665,7 @@ impl<'a> DLL<'a> {
                                 .as_mut()
                                 .unwrap()
                                 .attributes
-                                .push(attr)
+                                .push(attr);
                         },
                         None => throw!(
                             "invalid parameter index {} for parent of custom attribute {}",
@@ -2027,6 +2027,7 @@ impl<'a> DLL<'a> {
         Ok(res)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn write(res: &Resolution, is_32_bit: bool, is_executable: bool) -> Result<Vec<u8>> {
         use metadata::{header, index, table::*};
         use object::write::pe::*;
@@ -3017,9 +3018,9 @@ impl<'a> DLL<'a> {
 
             // fat method headers must be aligned
             if matches!(m.header, method::Header::Fat { .. }) {
-                let rem = text.len() % 4;
-                if rem != 0 {
-                    text.extend(vec![0; 4 - rem]);
+                let to_align = text.len() % 4;
+                if to_align != 0 {
+                    text.extend(vec![0; 4 - to_align]);
                 }
             }
 

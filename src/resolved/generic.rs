@@ -22,7 +22,7 @@ impl SpecialConstraint {
 }
 
 #[derive(Debug, Clone)]
-pub struct GenericConstraint<'a, ConstraintType> {
+pub struct Constraint<'a, ConstraintType> {
     pub attributes: Vec<Attribute<'a>>,
     pub custom_modifiers: Vec<types::CustomTypeModifier>,
     pub constraint_type: ConstraintType,
@@ -34,11 +34,11 @@ pub struct Generic<'a, ConstraintType> {
     pub name: Cow<'a, str>,
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,
-    pub type_constraints: Vec<GenericConstraint<'a, ConstraintType>>,
+    pub type_constraints: Vec<Constraint<'a, ConstraintType>>,
 }
 
-pub type TypeGeneric<'a> = Generic<'a, types::MemberType>;
-pub type MethodGeneric<'a> = Generic<'a, types::MethodType>;
+pub type Type<'a> = Generic<'a, types::MemberType>;
+pub type Method<'a> = Generic<'a, types::MethodType>;
 
 impl<T: ResolvedDebug> ResolvedDebug for Vec<Generic<'_, T>> {
     fn show(&self, _: &Resolution) -> String {

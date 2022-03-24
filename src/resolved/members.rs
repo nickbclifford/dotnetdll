@@ -1,7 +1,7 @@
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
-    generic::{show_constraints, MethodGeneric},
+    generic::{self, show_constraints},
     signature,
     types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
@@ -311,7 +311,7 @@ pub struct Method<'a> {
     pub body: Option<body::Method>,
     pub signature: signature::ManagedMethod,
     pub accessibility: Accessibility,
-    pub generic_parameters: Vec<MethodGeneric<'a>>,
+    pub generic_parameters: Vec<generic::Method<'a>>,
     pub return_type_metadata: Option<ParameterMetadata<'a>>,
     pub parameter_metadata: Vec<Option<ParameterMetadata<'a>>>,
     pub sealed: bool,

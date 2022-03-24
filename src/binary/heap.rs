@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 // TODO: seal these traits
 
-pub trait HeapReader<'a> {
+pub trait Reader<'a> {
     type Index;
     type Value;
 
@@ -22,7 +22,7 @@ macro_rules! heap_reader {
             bytes: &'a [u8],
         }
 
-        impl<'a> HeapReader<'a> for $name<'a> {
+        impl<'a> Reader<'a> for $name<'a> {
             type Index = $index;
             type Value = $value;
 
@@ -87,7 +87,7 @@ fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub trait HeapWriter {
+pub trait Writer {
     type Index;
     type Value: ?Sized;
 
@@ -102,10 +102,10 @@ macro_rules! heap_writer {
     ($name:ident, ($buf:expr, $map:expr), $index:ty, $value:ty, |$s:ident, $n:ident| $e:expr) => {
         pub struct $name {
             buffer: Vec<u8>,
-            index_cache: HashMap<u64, <Self as HeapWriter>::Index>,
+            index_cache: HashMap<u64, <Self as Writer>::Index>,
         }
 
-        impl HeapWriter for $name {
+        impl Writer for $name {
             type Index = $index;
             type Value = $value;
 

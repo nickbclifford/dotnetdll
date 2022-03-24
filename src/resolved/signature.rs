@@ -71,6 +71,7 @@ impl ReturnType {
     }
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodSignature<CallConv> {
     pub instance: bool,
