@@ -1,6 +1,6 @@
-use std::borrow::Cow;
 use super::{attribute::Attribute, types, ResolvedDebug};
 use crate::resolution::Resolution;
+use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Variance {

@@ -78,7 +78,8 @@ pub mod prelude {
         resolution::*,
         resolved::{
             assembly::*,
-            body, il::*,
+            body,
+            il::*,
             members::{Accessibility as MAccess, *},
             module::*,
             signature::*,

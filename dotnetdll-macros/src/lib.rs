@@ -4,8 +4,8 @@ use syn::parse_macro_input;
 
 mod binary_il;
 mod coded;
-mod from;
 mod constructors;
+mod from;
 
 macro_rules! def_macros {
     ($($mod:ident :: $name:ident),+) => {

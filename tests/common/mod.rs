@@ -9,12 +9,11 @@ pub struct WriteContext<'a> {
     pub object_ctor: MethodRefIndex,
     pub class: TypeIndex,
     pub default_ctor: MethodIndex,
-    pub main: MethodIndex,
 }
 
 pub fn write_fixture(
     name: &str,
-    test: impl FnOnce(&mut WriteContext),
+    test: impl FnOnce(&mut WriteContext) -> (Vec<LocalVariable>, Vec<Instruction>),
     expect: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dll_name = format!("{}.dll", name);
@@ -54,18 +53,6 @@ pub fn write_fixture(
     res[default_ctor].special_name = true;
     res[default_ctor].runtime_special_name = true;
 
-    let main = res.push_method(
-        class,
-        Method::new(
-            Accessibility::Public,
-            msig! { static void (string[]) },
-            "Main".into(),
-            Some(Default::default()),
-        ),
-    );
-
-    res.entry_point = Some(main.into());
-
     let mut ctx = WriteContext {
         resolution: res,
         mscorlib,
@@ -73,10 +60,21 @@ pub fn write_fixture(
         class,
         default_ctor,
         object_ctor,
-        main,
     };
 
-    test(&mut ctx);
+    let (vars, ins) = test(&mut ctx);
+
+    let main = ctx.resolution.push_method(
+        class,
+        Method::new(
+            Accessibility::Public,
+            msig! { static void (string[]) },
+            "Main".into(),
+            Some(body::Method::with_locals(vars, ins)),
+        ),
+    );
+
+    ctx.resolution.entry_point = Some(main.into());
 
     let written = DLL::write(&ctx.resolution, false, true)?;
 
@@ -96,6 +94,11 @@ pub fn write_fixture(
 
     println!("{}", stderr);
     if stderr.contains("invalid program") {
+        if let Ok(i) = std::env::var("ILDASM") {
+            let ildasm = Command::new(i).arg(&dll_path).output()?;
+            println!("{}", String::from_utf8(ildasm.stdout)?);
+        }
+
         let ilverify = Command::new("ilverify")
             .arg(dll_path)
             .arg("-r")

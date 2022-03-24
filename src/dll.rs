@@ -21,8 +21,8 @@ use object::{
 };
 use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
-use std::collections::HashMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -690,7 +690,7 @@ impl<'a> DLL<'a> {
                 for (m_idx, m) in type_methods {
                     use members::*;
 
-                    let name = heap_idx!(strings, m.name).into();
+                    let name = heap_idx!(strings, m.name);
 
                     let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
 
@@ -869,7 +869,7 @@ impl<'a> DLL<'a> {
             *parent = Some(SecurityDeclaration {
                 attributes: vec![],
                 action: s.action,
-                value: heap_idx!(blobs, s.permission_set).into(),
+                value: heap_idx!(blobs, s.permission_set),
             });
         }
 
@@ -1579,7 +1579,7 @@ impl<'a> DLL<'a> {
                         throw!("invalid null index for constructor of custom attribute {}", idx)
                     }
                 },
-                value: optional_idx!(blobs, a.value).map(|v| v.into()),
+                value: optional_idx!(blobs, a.value),
             };
 
             // panicking indexers after the indexes from the attribute are okay here,
@@ -2297,7 +2297,7 @@ impl<'a> DLL<'a> {
                 implementation,
             });
 
-            write_attrs!(r.attributes, ManifestResource(idx + 1))
+            write_attrs!(r.attributes, ManifestResource(idx + 1));
         }
 
         tables.module.push(Module {
@@ -2573,7 +2573,7 @@ impl<'a> DLL<'a> {
                         rva: current_rva!(),
                         field: table_idx.into(),
                     });
-                    text.extend_from_slice(&v);
+                    text.extend_from_slice(v);
                 }
 
                 if let Some(o) = f.offset {
@@ -2850,7 +2850,7 @@ impl<'a> DLL<'a> {
                 .iter()
                 .map(|i| convert::write::instruction(i, ctx, m_ctx))
                 .collect::<Result<_>>()?;
-            let offsets: Vec<_> = instructions
+            let mut offsets: Vec<_> = instructions
                 .iter()
                 .scan(0, |state, i| {
                     let my_offset = *state;
@@ -2861,13 +2861,26 @@ impl<'a> DLL<'a> {
 
             use crate::binary::il::Instruction;
 
-            // now that we have final bytesizes, we can fix offsets
-            for (i, &current_off) in instructions.iter_mut().zip(offsets.iter()) {
+            let mut n_short = 0;
+            let mut deltas = vec![];
+            for i in &instructions {
                 use Instruction::*;
 
+                deltas.push(3 * n_short);
+                if matches!(i, Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
+                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) if i8::try_from(*o).is_ok())
+                {
+                    n_short += 1;
+                }
+            }
+            for (offset, delta) in offsets.iter_mut().zip(deltas.into_iter()) {
+                *offset -= delta;
+            }
+
+            for (idx, i) in instructions.iter_mut().enumerate() {
                 let bytesize = i.bytesize();
                 let convert_offset = |o: &mut i32, can_shorten: bool| {
-                    let base = current_off + bytesize;
+                    let base = offsets[idx] + bytesize;
                     let target = offsets[*o as usize];
                     *o = (target as i32) - (base as i32);
                     if can_shorten && i8::try_from(*o).is_ok() {
@@ -2876,34 +2889,25 @@ impl<'a> DLL<'a> {
                     }
                 };
 
-                match i {
-                    Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
-                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => convert_offset(o, true),
-                    Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
-                    _ => continue,
-                }
-
                 use paste::paste;
-
-                macro_rules! make_short {
+                macro_rules! build_match {
                     ($($ins:ident),+) => {
                         match i {
                             $(
-                                $ins(o) => match i8::try_from(*o) {
-                                    Ok(s) => {
-                                        paste! {
-                                            *i = [<$ins S>](s);
-                                        }
-                                    },
-                                    _ => {}
+                                Instruction::$ins(o) => {
+                                    convert_offset(o, true);
+                                    if let Ok(int) = i8::try_from(*o) {
+                                        *i = paste! { Instruction::[<$ins S>](int) };
+                                    }
                                 }
                             )+
+                            Instruction::Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
                             _ => {}
                         }
                     }
                 }
 
-                make_short!(Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave);
+                build_match!(Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave);
             }
 
             let body_size = instructions.iter().map(Instruction::bytesize).sum();
@@ -3015,7 +3019,7 @@ impl<'a> DLL<'a> {
             if matches!(m.header, method::Header::Fat { .. }) {
                 let rem = text.len() % 4;
                 if rem != 0 {
-                    text.extend(vec![0; 4 - rem])
+                    text.extend(vec![0; 4 - rem]);
                 }
             }
 

@@ -59,6 +59,10 @@ pub fn write() {
                                 tail_call: false,
                                 method: combine.into(),
                             },
+                            Instruction::CastClass {
+                                skip_type_check: false,
+                                cast_type: handler_method.clone(),
+                            },
                             Instruction::StoreField {
                                 unaligned: None,
                                 volatile: false,
@@ -83,6 +87,10 @@ pub fn write() {
                             Instruction::Call {
                                 tail_call: false,
                                 method: remove.into(),
+                            },
+                            Instruction::CastClass {
+                                skip_type_check: false,
+                                cast_type: handler_method.clone(),
                             },
                             Instruction::StoreField {
                                 unaligned: None,
@@ -171,54 +179,55 @@ pub fn write() {
             let add = ctx.resolution.event_add_index(event);
             let remove = ctx.resolution.event_remove_index(event);
 
-            let body = ctx.resolution[ctx.main].body.as_mut().unwrap();
-            body.header.local_variables.extend([
-                LocalVariable::new(BaseType::class(ctx.class.into()).into()),
-                LocalVariable::new(handler_method),
-            ]);
-            body.instructions.extend([
-                // init obj
-                Instruction::NewObject(ctx.default_ctor.into()),
-                Instruction::StoreLocal(0),
-                // init delegate
-                Instruction::LoadNull,
-                Instruction::LoadMethodPointer(listener.into()),
-                Instruction::NewObject(handler_ctor.into()),
-                Instruction::StoreLocal(1),
-                // invoke first time (should have no output)
-                Instruction::LoadLocalVariable(0),
-                Instruction::Call {
-                    tail_call: false,
-                    method: invoke.into(),
-                },
-                // add delegate
-                Instruction::LoadLocalVariable(0),
-                Instruction::LoadLocalVariable(1),
-                Instruction::Call {
-                    tail_call: false,
-                    method: add.into(),
-                },
-                // invoke second time (should have output)
-                Instruction::LoadLocalVariable(0),
-                Instruction::Call {
-                    tail_call: false,
-                    method: invoke.into(),
-                },
-                // remove delegate
-                Instruction::LoadLocalVariable(0),
-                Instruction::LoadLocalVariable(1),
-                Instruction::Call {
-                    tail_call: false,
-                    method: remove.into(),
-                },
-                // invoke last time (should have no output)
-                Instruction::LoadLocalVariable(0),
-                Instruction::Call {
-                    tail_call: false,
-                    method: invoke.into(),
-                },
-                Instruction::Return,
-            ]);
+            (
+                vec![
+                    LocalVariable::new(BaseType::class(ctx.class.into()).into()),
+                    LocalVariable::new(handler_method),
+                ],
+                vec![
+                    // init obj
+                    Instruction::NewObject(ctx.default_ctor.into()),
+                    Instruction::StoreLocal(0),
+                    // init delegate
+                    Instruction::LoadNull,
+                    Instruction::LoadMethodPointer(listener.into()),
+                    Instruction::NewObject(handler_ctor.into()),
+                    Instruction::StoreLocal(1),
+                    // invoke first time (should have no output)
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: invoke.into(),
+                    },
+                    // add delegate
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::LoadLocalVariable(1),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: add.into(),
+                    },
+                    // invoke second time (should have output)
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: invoke.into(),
+                    },
+                    // remove delegate
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::LoadLocalVariable(1),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: remove.into(),
+                    },
+                    // invoke last time (should have no output)
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: invoke.into(),
+                    },
+                    Instruction::Return,
+                ],
+            )
         },
         b"listener triggered\n",
     )

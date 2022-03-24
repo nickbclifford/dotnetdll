@@ -1,5 +1,5 @@
-use std::borrow::Cow;
 use super::attribute::{Attribute, SecurityDeclaration};
+use std::borrow::Cow;
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Flags {

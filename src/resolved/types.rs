@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     generic::{show_constraints, TypeGeneric},
@@ -8,6 +7,7 @@ use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConv
 use crate::convert::TypeKind;
 use crate::resolution::*;
 use dotnetdll_macros::From;
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
 pub use dotnetdll_macros::{ctype, type_name, type_ref};
@@ -553,14 +553,14 @@ impl<T> BaseType<T> {
     pub const fn class(source: TypeSource<T>) -> Self {
         BaseType::Type {
             value_kind: ValueKind::Class,
-            source
+            source,
         }
     }
 
     pub const fn valuetype(source: TypeSource<T>) -> Self {
         BaseType::Type {
             value_kind: ValueKind::ValueType,
-            source
+            source,
         }
     }
 }

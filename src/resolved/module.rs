@@ -1,5 +1,5 @@
-use std::borrow::Cow;
 use super::attribute::Attribute;
+use std::borrow::Cow;
 
 #[derive(Debug, Clone)]
 pub struct Module<'a> {

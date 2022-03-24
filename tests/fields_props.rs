@@ -105,69 +105,68 @@ pub fn write() {
                 ),
             );
 
-            let body = ctx.resolution[ctx.main].body.as_mut().unwrap();
-            body.header
-                .local_variables
-                .push(LocalVariable::new(BaseType::class(ctx.class.into()).into()));
-            body.instructions.extend([
-                // init static
-                Instruction::LoadConstantInt32(-1),
-                Instruction::Call {
-                    tail_call: false,
-                    method: static_setter.into(),
-                },
-                // init object and instance
-                Instruction::NewObject(ctx.default_ctor.into()),
-                Instruction::Duplicate,
-                Instruction::StoreLocal(0),
-                Instruction::LoadConstantInt32(1),
-                Instruction::Call {
-                    tail_call: false,
-                    method: instance_setter.into(),
-                },
-                // increment static
-                Instruction::Call {
-                    tail_call: false,
-                    method: static_getter.into(),
-                },
-                Instruction::LoadConstantInt32(1),
-                Instruction::Add,
-                Instruction::Call {
-                    tail_call: false,
-                    method: static_setter.into(),
-                },
-                // increment instance
-                Instruction::LoadLocalVariable(0),
-                Instruction::Duplicate,
-                Instruction::Call {
-                    tail_call: false,
-                    method: instance_getter.into(),
-                },
-                Instruction::LoadConstantInt32(1),
-                Instruction::Add,
-                Instruction::Call {
-                    tail_call: false,
-                    method: instance_setter.into(),
-                },
-                // call writeline
-                Instruction::LoadString("{0}, {1}".encode_utf16().collect()),
-                Instruction::Call {
-                    tail_call: false,
-                    method: static_getter.into(),
-                },
-                Instruction::Box(static_type),
-                Instruction::LoadLocalVariable(0),
-                Instruction::Call {
-                    tail_call: false,
-                    method: instance_getter.into(),
-                },
-                Instruction::Box(instance_type),
-                Instruction::Call {
-                    tail_call: false,
-                    method: write_line.into(),
-                },
-                Instruction::Return,
-            ]);
+            (
+                vec![LocalVariable::new(BaseType::class(ctx.class.into()).into())],
+                vec![
+                    // init static
+                    Instruction::LoadConstantInt32(-1),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: static_setter.into(),
+                    },
+                    // init object and instance
+                    Instruction::NewObject(ctx.default_ctor.into()),
+                    Instruction::Duplicate,
+                    Instruction::StoreLocal(0),
+                    Instruction::LoadConstantInt32(1),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: instance_setter.into(),
+                    },
+                    // increment static
+                    Instruction::Call {
+                        tail_call: false,
+                        method: static_getter.into(),
+                    },
+                    Instruction::LoadConstantInt32(1),
+                    Instruction::Add,
+                    Instruction::Call {
+                        tail_call: false,
+                        method: static_setter.into(),
+                    },
+                    // increment instance
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::Duplicate,
+                    Instruction::Call {
+                        tail_call: false,
+                        method: instance_getter.into(),
+                    },
+                    Instruction::LoadConstantInt32(1),
+                    Instruction::Add,
+                    Instruction::Call {
+                        tail_call: false,
+                        method: instance_setter.into(),
+                    },
+                    // call writeline
+                    Instruction::LoadString("{0}, {1}".encode_utf16().collect()),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: static_getter.into(),
+                    },
+                    Instruction::Box(static_type),
+                    Instruction::LoadLocalVariable(0),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: instance_getter.into(),
+                    },
+                    Instruction::Box(instance_type),
+                    Instruction::Call {
+                        tail_call: false,
+                        method: write_line.into(),
+                    },
+                    Instruction::Return,
+                ],
+            )
         },
         b"0, 2\n",
     )

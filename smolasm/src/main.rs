@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use debug_cell::RefCell;
 use dotnetdll::resolved::members::FieldSource;
 use dotnetdll::{
@@ -25,6 +24,7 @@ use dotnetdll::{
 };
 use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 #[derive(Parser)]
@@ -455,7 +455,9 @@ fn main() {
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
                                 let mut method = Method::new(accessibility, sig, name, None);
                                 if semantic == "set" {
-                                    method.parameter_metadata.push(Some(ParameterMetadata::name("value".into())));
+                                    method
+                                        .parameter_metadata
+                                        .push(Some(ParameterMetadata::name("value".into())));
                                 }
                                 methods.push((res.borrow_mut().push_method(type_def, method), body));
                             }
@@ -540,7 +542,9 @@ fn main() {
 
                                 let name = format!("{}_{}", semantic, ident.as_str()).into();
                                 let mut method = Method::new(accessibility, sig.clone(), name, None);
-                                method.parameter_metadata.push(Some(ParameterMetadata::name("value".into())));
+                                method
+                                    .parameter_metadata
+                                    .push(Some(ParameterMetadata::name("value".into())));
                                 let pair = Some((method, body));
 
                                 match semantic {

@@ -118,7 +118,7 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
             },
         ),
         Class(tok) | ValueType(tok) => BaseType::Type {
-            value_kind: value_kind,
+            value_kind,
             source: TypeSource::User(user_type(tok, ctx)?),
         },
         FnPtr(s) => BaseType::FunctionPointer(maybe_unmanaged_method(*s, ctx)?),

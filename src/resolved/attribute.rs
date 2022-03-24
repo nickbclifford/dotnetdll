@@ -301,9 +301,13 @@ impl<'a> SecurityDeclaration<'a> {
 
         (0..num_attributes)
             .map(|_| {
-                let type_name = value.gread::<SerString>(offset)?.0.ok_or_else(|| {
-                    scroll::Error::Custom("null attribute type name found when parsing security".to_string())
-                })?.into();
+                let type_name = value
+                    .gread::<SerString>(offset)?
+                    .0
+                    .ok_or_else(|| {
+                        scroll::Error::Custom("null attribute type name found when parsing security".to_string())
+                    })?
+                    .into();
 
                 let fields = parse_named(value, offset, resolution, &|s| {
                     resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))

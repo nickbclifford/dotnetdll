@@ -59,9 +59,9 @@ impl Parse for Type {
                 // TODO: allow shaped arrays
                 if !content.is_empty() {
                     return Err(content.error("only empty arrays are currently allowed"));
-                } else {
-                    result = Type::Vector(Box::new(result));
                 }
+
+                result = Type::Vector(Box::new(result));
             }
             let has_asterisk = input.peek(Token![*]);
             if has_asterisk {
