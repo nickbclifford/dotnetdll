@@ -42,10 +42,7 @@ pub fn write_fixture(
             ".ctor".into(),
             Some(body::Method::new(vec![
                 Instruction::LoadArgument(0),
-                Instruction::Call {
-                    tail_call: false,
-                    method: object_ctor.into(),
-                },
+                Instruction::call(object_ctor),
                 Instruction::Return,
             ])),
         ),

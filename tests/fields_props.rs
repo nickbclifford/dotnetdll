@@ -36,10 +36,7 @@ pub fn write() {
                     msig! { static @static_type () },
                     "get_StaticProperty".into(),
                     Some(body::Method::new(vec![
-                        Instruction::LoadStaticField {
-                            volatile: false,
-                            field: static_field.into(),
-                        },
+                        Instruction::load_static_field(static_field),
                         Instruction::Return,
                     ])),
                 ),
@@ -52,10 +49,7 @@ pub fn write() {
                     "set_StaticProperty".into(),
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
-                        Instruction::StoreStaticField {
-                            volatile: false,
-                            field: static_field.into(),
-                        },
+                        Instruction::store_static_field(static_field),
                         Instruction::Return,
                     ])),
                 ),
@@ -77,11 +71,7 @@ pub fn write() {
                     "get_InstanceProperty".into(),
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
-                        Instruction::LoadField {
-                            unaligned: None,
-                            volatile: false,
-                            field: instance_field.into(),
-                        },
+                        Instruction::load_field(instance_field),
                         Instruction::Return,
                     ])),
                 ),
@@ -95,11 +85,7 @@ pub fn write() {
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
                         Instruction::LoadArgument(1),
-                        Instruction::StoreField {
-                            unaligned: None,
-                            volatile: false,
-                            field: instance_field.into(),
-                        },
+                        Instruction::store_field(instance_field),
                         Instruction::Return,
                     ])),
                 ),
@@ -110,60 +96,33 @@ pub fn write() {
                 vec![
                     // init static
                     Instruction::LoadConstantInt32(-1),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: static_setter.into(),
-                    },
+                    Instruction::call(static_setter),
                     // init object and instance
                     Instruction::NewObject(ctx.default_ctor.into()),
                     Instruction::Duplicate,
                     Instruction::StoreLocal(0),
                     Instruction::LoadConstantInt32(1),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: instance_setter.into(),
-                    },
+                    Instruction::call(instance_setter),
                     // increment static
-                    Instruction::Call {
-                        tail_call: false,
-                        method: static_getter.into(),
-                    },
+                    Instruction::call(static_getter),
                     Instruction::LoadConstantInt32(1),
                     Instruction::Add,
-                    Instruction::Call {
-                        tail_call: false,
-                        method: static_setter.into(),
-                    },
+                    Instruction::call(static_setter),
                     // increment instance
-                    Instruction::LoadLocalVariable(0),
+                    Instruction::LoadLocal(0),
                     Instruction::Duplicate,
-                    Instruction::Call {
-                        tail_call: false,
-                        method: instance_getter.into(),
-                    },
+                    Instruction::call(instance_getter),
                     Instruction::LoadConstantInt32(1),
                     Instruction::Add,
-                    Instruction::Call {
-                        tail_call: false,
-                        method: instance_setter.into(),
-                    },
+                    Instruction::call(instance_setter),
                     // call writeline
-                    Instruction::LoadString("{0}, {1}".encode_utf16().collect()),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: static_getter.into(),
-                    },
-                    Instruction::Box(static_type),
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: instance_getter.into(),
-                    },
-                    Instruction::Box(instance_type),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: write_line.into(),
-                    },
+                    Instruction::load_string("{0}, {1}"),
+                    Instruction::call(static_getter),
+                    Instruction::box_value(static_type),
+                    Instruction::LoadLocal(0),
+                    Instruction::call(instance_getter),
+                    Instruction::box_value(instance_type),
+                    Instruction::call(write_line),
                     Instruction::Return,
                 ],
             )

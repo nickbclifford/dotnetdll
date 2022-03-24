@@ -15,11 +15,8 @@ pub fn write() {
             (
                 vec![],
                 vec![
-                    Instruction::LoadString("Hello, world!".encode_utf16().collect()),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: write_line.into(),
-                    },
+                    Instruction::load_string("Hello, world!"),
+                    Instruction::call(write_line),
                     Instruction::Return,
                 ],
             )

@@ -339,16 +339,15 @@ pub fn instruction<'r, 'data>(
     m_ctx: &MethodContext<'r>,
 ) -> Result<resolved::il::Instruction> {
     use il::Instruction::*;
+    use num_traits::FromPrimitive;
     use resolved::il::*;
 
     macro_rules! alignment {
         ($i:expr) => {
-            Some(match $i {
-                1 => Alignment::Byte,
-                2 => Alignment::Double,
-                4 => Alignment::Quad,
-                other => throw!("invalid {}-byte alignment specification", other),
-            })
+            match Alignment::from_u8($i) {
+                None => throw!("invalid alignment {}", $i),
+                s => s,
+            }
         };
     }
 
@@ -356,7 +355,7 @@ pub fn instruction<'r, 'data>(
         ($t:ident | tailcall $tail:expr) => {
             Instruction::Call {
                 tail_call: $tail,
-                method: method_source($t, ctx, m_ctx)?,
+                param0: method_source($t, ctx, m_ctx)?,
             }
         };
     }
@@ -383,7 +382,7 @@ pub fn instruction<'r, 'data>(
                             }
                             Instruction::CallIndirect {
                                 tail_call: $tail,
-                                signature: parsed,
+                                param0: parsed,
                             }
                         }
                         None => throw!("invalid signature index {} for calli instruction", idx),
@@ -398,7 +397,7 @@ pub fn instruction<'r, 'data>(
         ($token:ident | typecheck $check:expr) => {
             Instruction::CastClass {
                 skip_type_check: $check,
-                cast_type: type_token($token, ctx)?,
+                param0: type_token($token, ctx)?,
             }
         };
     }
@@ -426,7 +425,7 @@ pub fn instruction<'r, 'data>(
             Instruction::LoadElement {
                 skip_range_check: $range,
                 skip_null_check: $null,
-                element_type: type_token($t, ctx)?,
+                param0: type_token($t, ctx)?,
             }
         };
     }
@@ -436,7 +435,7 @@ pub fn instruction<'r, 'data>(
             Instruction::LoadField {
                 unaligned: $align,
                 volatile: $vol,
-                field: field_source($t, m_ctx)?,
+                param0: field_source($t, m_ctx)?,
             }
         };
     }
@@ -446,7 +445,7 @@ pub fn instruction<'r, 'data>(
             Instruction::LoadObject {
                 unaligned: $align,
                 volatile: $vol,
-                object_type: type_token($t, ctx)?,
+                param0: type_token($t, ctx)?,
             }
         };
     }
@@ -455,7 +454,7 @@ pub fn instruction<'r, 'data>(
         ($t:ident | volatile $vol:expr) => {
             Instruction::LoadStaticField {
                 volatile: $vol,
-                field: field_source($t, m_ctx)?,
+                param0: field_source($t, m_ctx)?,
             }
         };
     }
@@ -464,7 +463,7 @@ pub fn instruction<'r, 'data>(
         ($t:ident | nullcheck $null:expr) => {
             Instruction::LoadVirtualMethodPointer {
                 skip_null_check: $null,
-                method: method_source($t, ctx, m_ctx)?,
+                param0: method_source($t, ctx, m_ctx)?,
             }
         };
     }
@@ -474,7 +473,7 @@ pub fn instruction<'r, 'data>(
             Instruction::LoadIndirect {
                 unaligned: $align,
                 volatile: $vol,
-                value_type: LoadType::$t,
+                param0: LoadType::$t,
             }
         };
     }
@@ -484,14 +483,14 @@ pub fn instruction<'r, 'data>(
             Instruction::LoadElementPrimitive {
                 skip_range_check: false,
                 skip_null_check: false,
-                element_type: LoadType::$t,
+                param0: LoadType::$t,
             }
         };
         ($t:ident | flags $f:expr) => {
             Instruction::LoadElementPrimitive {
                 skip_range_check: check_bitmask!($f, 0x2),
                 skip_null_check: check_bitmask!($f, 0x4),
-                element_type: LoadType::$t,
+                param0: LoadType::$t,
             }
         };
     }
@@ -502,7 +501,7 @@ pub fn instruction<'r, 'data>(
                 skip_type_check: $type,
                 skip_range_check: $range,
                 skip_null_check: $null,
-                element_type: type_token($t, ctx)?,
+                param0: type_token($t, ctx)?,
             }
         };
     }
@@ -512,7 +511,7 @@ pub fn instruction<'r, 'data>(
             Instruction::StoreField {
                 unaligned: $align,
                 volatile: $vol,
-                field: field_source($t, m_ctx)?,
+                param0: field_source($t, m_ctx)?,
             }
         };
     }
@@ -521,7 +520,7 @@ pub fn instruction<'r, 'data>(
         ($t:ident | volatile $vol:expr) => {
             Instruction::StoreStaticField {
                 volatile: $vol,
-                field: field_source($t, m_ctx)?,
+                param0: field_source($t, m_ctx)?,
             }
         };
     }
@@ -531,7 +530,7 @@ pub fn instruction<'r, 'data>(
             Instruction::StoreObject {
                 unaligned: $align,
                 volatile: $vol,
-                object_type: type_token($t, ctx)?,
+                param0: type_token($t, ctx)?,
             }
         };
     }
@@ -541,7 +540,7 @@ pub fn instruction<'r, 'data>(
             Instruction::StoreIndirect {
                 unaligned: $align,
                 volatile: $vol,
-                value_type: StoreType::$t,
+                param0: StoreType::$t,
             }
         };
     }
@@ -552,7 +551,7 @@ pub fn instruction<'r, 'data>(
                 skip_type_check: false,
                 skip_range_check: false,
                 skip_null_check: false,
-                element_type: StoreType::$t,
+                param0: StoreType::$t,
             }
         };
         ($t:ident | flags $f:expr) => {
@@ -560,7 +559,7 @@ pub fn instruction<'r, 'data>(
                 skip_type_check: check_bitmask!($f, 0x1),
                 skip_range_check: check_bitmask!($f, 0x2),
                 skip_null_check: check_bitmask!($f, 0x4),
-                element_type: StoreType::$t,
+                param0: StoreType::$t,
             }
         };
     }
@@ -569,7 +568,7 @@ pub fn instruction<'r, 'data>(
         ($t:ident | typecheck $type:expr) => {
             Instruction::UnboxIntoAddress {
                 skip_type_check: $type,
-                unbox_type: type_token($t, ctx)?,
+                param0: type_token($t, ctx)?,
             }
         };
     }
@@ -611,7 +610,7 @@ pub fn instruction<'r, 'data>(
         BltUnS(i) => Instruction::BranchLess(NumberSign::Unsigned, convert_offset(i as i32)?),
         BneUn(i) => Instruction::BranchNotEqual(convert_offset(i)?),
         BneUnS(i) => Instruction::BranchNotEqual(convert_offset(i as i32)?),
-        Box(t) => Instruction::Box(type_token(t, ctx)?),
+        Box(t) => Instruction::BoxValue(type_token(t, ctx)?),
         Br(i) => Instruction::Branch(convert_offset(i)?),
         BrS(i) => Instruction::Branch(convert_offset(i as i32)?),
         Break => Instruction::Breakpoint,
@@ -623,7 +622,7 @@ pub fn instruction<'r, 'data>(
         Calli(t) => calli!(t | tailcall false),
         Callvirt(t) => Instruction::CallVirtual {
             skip_null_check: false,
-            method: method_source(t, ctx, m_ctx)?,
+            param0: method_source(t, ctx, m_ctx)?,
         },
         Castclass(t) => castclass!(t | typecheck false),
         Ceq => Instruction::CompareEqual,
@@ -715,7 +714,7 @@ pub fn instruction<'r, 'data>(
             skip_type_check: false,
             skip_range_check: false,
             skip_null_check: false,
-            element_type: type_token(t, ctx)?,
+            param0: type_token(t, ctx)?,
         },
         Ldfld(t) => ldfld!(t | unaligned None, volatile false),
         Ldflda(t) => Instruction::LoadFieldAddress(field_source(t, m_ctx)?),
@@ -732,14 +731,14 @@ pub fn instruction<'r, 'data>(
         LdindU2 => load_indirect!(UInt16 | unaligned None, volatile false),
         LdindU4 => load_indirect!(UInt32 | unaligned None, volatile false),
         Ldlen => Instruction::LoadLength,
-        Ldloc(i) => Instruction::LoadLocalVariable(i),
-        Ldloc0 => Instruction::LoadLocalVariable(0),
-        Ldloc1 => Instruction::LoadLocalVariable(1),
-        Ldloc2 => Instruction::LoadLocalVariable(2),
-        Ldloc3 => Instruction::LoadLocalVariable(3),
-        LdlocS(i) => Instruction::LoadLocalVariable(i as u16),
-        Ldloca(i) => Instruction::LoadLocalVariableAddress(i),
-        LdlocaS(i) => Instruction::LoadLocalVariableAddress(i as u16),
+        Ldloc(i) => Instruction::LoadLocal(i),
+        Ldloc0 => Instruction::LoadLocal(0),
+        Ldloc1 => Instruction::LoadLocal(1),
+        Ldloc2 => Instruction::LoadLocal(2),
+        Ldloc3 => Instruction::LoadLocal(3),
+        LdlocS(i) => Instruction::LoadLocal(i as u16),
+        Ldloca(i) => Instruction::LoadLocalAddress(i),
+        LdlocaS(i) => Instruction::LoadLocalAddress(i as u16),
         Ldnull => Instruction::LoadNull,
         Ldobj(t) => ldobj!(t | unaligned None, volatile false),
         Ldsfld(t) => ldsfld!(t | volatile false),
@@ -830,13 +829,12 @@ pub fn instruction<'r, 'data>(
         Unbox(t) => unbox!(t | typecheck false),
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),
         Xor => Instruction::Xor,
-        ConstrainedCallvirt(c, t) => Instruction::CallVirtualConstrained {
-            constraint: type_token(c, ctx)?,
-            method: method_source(t, ctx, m_ctx)?,
-        },
+        ConstrainedCallvirt(c, t) => {
+            Instruction::CallVirtualConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
+        }
         NocheckCallvirt(flags, t) => Instruction::CallVirtual {
             skip_null_check: check_bitmask!(flags, 0x4),
-            method: method_source(t, ctx, m_ctx)?,
+            param0: method_source(t, ctx, m_ctx)?,
         },
         NocheckCastclass(flags, t) => castclass!(t | typecheck check_bitmask!(flags, 0x1)),
         NocheckLdelem(flags, t) => {
@@ -857,7 +855,7 @@ pub fn instruction<'r, 'data>(
             skip_type_check: check_bitmask!(flags, 0x1),
             skip_range_check: check_bitmask!(flags, 0x2),
             skip_null_check: check_bitmask!(flags, 0x4),
-            element_type: type_token(t, ctx)?,
+            param0: type_token(t, ctx)?,
         },
         NocheckLdfld(flags, t) => {
             let field = field_source(t, m_ctx)?;
@@ -867,7 +865,7 @@ pub fn instruction<'r, 'data>(
                 Instruction::LoadField {
                     unaligned: None,
                     volatile: false,
-                    field,
+                    param0: field,
                 }
             }
         }
@@ -893,7 +891,7 @@ pub fn instruction<'r, 'data>(
                 Instruction::StoreField {
                     unaligned: None,
                     volatile: false,
-                    field,
+                    param0: field,
                 }
             }
         }

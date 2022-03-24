@@ -49,25 +49,11 @@ pub fn write() {
                         Some(body::Method::new(vec![
                             Instruction::LoadArgument(0),
                             Instruction::Duplicate,
-                            Instruction::LoadField {
-                                unaligned: None,
-                                volatile: false,
-                                field: field.into(),
-                            },
+                            Instruction::load_field(field),
                             Instruction::LoadArgument(1),
-                            Instruction::Call {
-                                tail_call: false,
-                                method: combine.into(),
-                            },
-                            Instruction::CastClass {
-                                skip_type_check: false,
-                                cast_type: handler_method.clone(),
-                            },
-                            Instruction::StoreField {
-                                unaligned: None,
-                                volatile: false,
-                                field: field.into(),
-                            },
+                            Instruction::call(combine),
+                            Instruction::cast_class(handler_method.clone()),
+                            Instruction::store_field(field),
                             Instruction::Return,
                         ])),
                     ),
@@ -78,25 +64,11 @@ pub fn write() {
                         Some(body::Method::new(vec![
                             Instruction::LoadArgument(0),
                             Instruction::Duplicate,
-                            Instruction::LoadField {
-                                unaligned: None,
-                                volatile: false,
-                                field: field.into(),
-                            },
+                            Instruction::load_field(field),
                             Instruction::LoadArgument(1),
-                            Instruction::Call {
-                                tail_call: false,
-                                method: remove.into(),
-                            },
-                            Instruction::CastClass {
-                                skip_type_check: false,
-                                cast_type: handler_method.clone(),
-                            },
-                            Instruction::StoreField {
-                                unaligned: None,
-                                volatile: false,
-                                field: field.into(),
-                            },
+                            Instruction::call(remove),
+                            Instruction::cast_class(handler_method.clone()),
+                            Instruction::store_field(field),
                             Instruction::Return,
                         ])),
                     ),
@@ -122,11 +94,8 @@ pub fn write() {
                     msig! { static void (object, @event_args) },
                     "Listener".into(),
                     Some(body::Method::new(vec![
-                        Instruction::LoadString("listener triggered".encode_utf16().collect()),
-                        Instruction::Call {
-                            tail_call: false,
-                            method: write_line.into(),
-                        },
+                        Instruction::load_string("listener triggered"),
+                        Instruction::call(write_line),
                         Instruction::Return,
                     ])),
                 ),
@@ -148,24 +117,14 @@ pub fn write() {
                         vec![LocalVariable::new(handler_method.clone())],
                         vec![
                             Instruction::LoadArgument(0),
-                            Instruction::LoadField {
-                                unaligned: None,
-                                volatile: false,
-                                field: field.into(),
-                            },
+                            Instruction::load_field(field),
                             Instruction::Duplicate,
                             Instruction::StoreLocal(0),
                             Instruction::BranchFalsy(9),
-                            Instruction::LoadLocalVariable(0),
+                            Instruction::LoadLocal(0),
                             Instruction::LoadArgument(0),
-                            Instruction::LoadStaticField {
-                                volatile: false,
-                                field: empty.into(),
-                            },
-                            Instruction::CallVirtual {
-                                skip_null_check: false,
-                                method: delegate_invoke.into(),
-                            },
+                            Instruction::load_static_field(empty),
+                            Instruction::call_virtual(delegate_invoke),
                             Instruction::Return,
                         ],
                     )),
@@ -186,45 +145,30 @@ pub fn write() {
                 ],
                 vec![
                     // init obj
-                    Instruction::NewObject(ctx.default_ctor.into()),
+                    Instruction::new_object(ctx.default_ctor),
                     Instruction::StoreLocal(0),
                     // init delegate
                     Instruction::LoadNull,
-                    Instruction::LoadMethodPointer(listener.into()),
-                    Instruction::NewObject(handler_ctor.into()),
+                    Instruction::load_method_pointer(listener),
+                    Instruction::new_object(handler_ctor),
                     Instruction::StoreLocal(1),
                     // invoke first time (should have no output)
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: invoke.into(),
-                    },
+                    Instruction::LoadLocal(0),
+                    Instruction::call(invoke),
                     // add delegate
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::LoadLocalVariable(1),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: add.into(),
-                    },
+                    Instruction::LoadLocal(0),
+                    Instruction::LoadLocal(1),
+                    Instruction::call(add),
                     // invoke second time (should have output)
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: invoke.into(),
-                    },
+                    Instruction::LoadLocal(0),
+                    Instruction::call(invoke),
                     // remove delegate
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::LoadLocalVariable(1),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: remove.into(),
-                    },
+                    Instruction::LoadLocal(0),
+                    Instruction::LoadLocal(1),
+                    Instruction::call(remove),
                     // invoke last time (should have no output)
-                    Instruction::LoadLocalVariable(0),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: invoke.into(),
-                    },
+                    Instruction::LoadLocal(0),
+                    Instruction::call(invoke),
                     Instruction::Return,
                 ],
             )

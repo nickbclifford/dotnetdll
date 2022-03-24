@@ -6,6 +6,7 @@ mod binary_il;
 mod coded;
 mod constructors;
 mod from;
+mod resolved_il;
 
 macro_rules! def_macros {
     ($($mod:ident :: $name:ident),+) => {
@@ -26,7 +27,8 @@ def_macros! {
     constructors::type_name,
     constructors::type_ref,
     constructors::method_ref,
-    constructors::field_ref
+    constructors::field_ref,
+    resolved_il::r_instructions
 }
 
 // derive macro

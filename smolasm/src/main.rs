@@ -10,7 +10,7 @@ use dotnetdll::{
         members::{Constant, Field, Property},
         members::{
             Event, ExternalFieldReference, ExternalMethodReference, FieldReferenceParent, Method,
-            MethodReferenceParent, MethodSource, ParameterMetadata, UserMethod,
+            MethodReferenceParent, ParameterMetadata, UserMethod,
         },
         module::Module,
         signature::ManagedMethod,
@@ -797,32 +797,24 @@ fn main() {
                         "argument" => Instruction::LoadArgument(
                             *params.get(rest).unwrap_or_else(|| panic!("unknown argument {}", rest)),
                         ),
-                        "local" => Instruction::LoadLocalVariable(
+                        "local" => Instruction::LoadLocal(
                             *local_idxs
                                 .get(rest)
                                 .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
                         ),
-                        "field" => Instruction::LoadField {
-                            unaligned: None,
-                            volatile: false,
-                            field: field_source(rest),
-                        },
+                        "field" => Instruction::load_field(field_source(rest)),
                         "static" => {
                             let (k, rest) = pop_token(rest);
                             if k != "field" {
                                 panic!("the only static members that can be loaded are fields");
                             }
 
-                            Instruction::LoadStaticField {
-                                volatile: false,
-                                field: field_source(rest),
-                            }
+                            Instruction::load_static_field(field_source(rest))
                         }
-                        "element" => Instruction::LoadElement {
-                            skip_range_check: false,
-                            skip_null_check: false,
-                            element_type: clitype!(parse_single(Rule::clitype, rest)),
-                        },
+                        "element" => {
+                            let m: MethodType = clitype!(parse_single(Rule::clitype, rest));
+                            Instruction::load_element(m)
+                        }
                         unknown => panic!("unknown load kind {}", unknown),
                     }
                 }
@@ -835,21 +827,14 @@ fn main() {
                                 .get(rest)
                                 .unwrap_or_else(|| panic!("unknown local variable {}", rest)),
                         ),
-                        "field" => Instruction::StoreField {
-                            unaligned: None,
-                            volatile: false,
-                            field: field_source(rest),
-                        },
+                        "field" => Instruction::store_field(field_source(rest)),
                         "static" => {
                             let (k, rest) = pop_token(rest);
                             if k != "field" {
                                 panic!("the only static members that can be stored are fields");
                             }
 
-                            Instruction::StoreStaticField {
-                                volatile: false,
-                                field: field_source(rest),
-                            }
+                            Instruction::store_static_field(field_source(rest))
                         }
                         unknown => panic!("unknown store kind {}", unknown),
                     }
@@ -859,7 +844,7 @@ fn main() {
                         .get(instr_params)
                         .unwrap_or_else(|| panic!("unknown label {}", instr_params)),
                 ),
-                "box" => Instruction::Box(clitype!(parse_single(Rule::clitype, instr_params))),
+                "box" => Instruction::BoxValue(clitype!(parse_single(Rule::clitype, instr_params))),
                 "call" => {
                     let (v, params) = pop_token(instr_params);
                     let is_virtual = v == "virtual";
@@ -880,18 +865,12 @@ fn main() {
 
                     let sig = method_signature(is_static, return_type, params);
 
-                    let method = MethodSource::User(user_method(parent, method_name.into(), sig));
+                    let method = user_method(parent, method_name.into(), sig);
 
                     if is_virtual {
-                        Instruction::CallVirtual {
-                            skip_null_check: false,
-                            method,
-                        }
+                        Instruction::call_virtual(method)
                     } else {
-                        Instruction::Call {
-                            tail_call: false,
-                            method,
-                        }
+                        Instruction::call(method)
                     }
                 }
                 "add" => Instruction::Add,
