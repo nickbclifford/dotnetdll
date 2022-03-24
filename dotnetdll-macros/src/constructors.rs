@@ -3,64 +3,77 @@ use quote::{quote, ToTokens, TokenStreamExt};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::token::{Bracket, Paren};
+use syn::token::Bracket;
 use syn::{bracketed, parenthesized, Ident, Token};
 
-pub struct External(Ident);
+#[derive(Debug)]
+pub enum External {
+    Move(Ident),
+    Clone(Ident),
+}
 impl Parse for External {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        input.parse::<Token![#]>()?;
-        Ok(External(input.parse()?))
-    }
-}
-impl ToTokens for External {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.0.to_tokens(tokens)
-    }
-}
-
-enum TypeSegment {
-    Bare(Ident),
-    Brackets,
-    Asterisk,
-    Variable(Box<External>),
-}
-impl Parse for TypeSegment {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
-        if lookahead.peek(Ident::peek_any) {
-            input.parse().map(TypeSegment::Bare)
-        } else if lookahead.peek(Bracket) {
-            let content;
-            bracketed!(content in input);
-            // TODO: allow shaped arrays
-            if !content.is_empty() {
-                Err(content.error("only empty arrays are currently allowed"))
-            } else {
-                Ok(TypeSegment::Brackets)
-            }
-        } else if lookahead.peek(Token![*]) {
-            input.parse::<Token![*]>()?;
-            Ok(TypeSegment::Asterisk)
-        } else if lookahead.peek(Token![#]) {
-            Ok(TypeSegment::Variable(input.parse()?))
+        if lookahead.peek(Token![#]) {
+            input.parse::<Token![#]>()?;
+            input.parse().map(External::Move)
+        } else if lookahead.peek(Token![@]) {
+            input.parse::<Token![@]>()?;
+            input.parse().map(External::Clone)
         } else {
             Err(lookahead.error())
         }
     }
 }
+impl ToTokens for External {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            External::Move(i) => i.to_tokens(tokens),
+            External::Clone(i) => tokens.append_all(quote! { #i.clone() }),
+        }
+    }
+}
 
-pub struct Type(Vec<TypeSegment>);
+pub enum Type {
+    Bare(Ident),
+    External(External),
+    Pointer(Box<Self>),
+    Vector(Box<Self>),
+}
 impl Parse for Type {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut inner = vec![];
+        let lookahead = input.lookahead1();
+        let mut result = if lookahead.peek(Ident::peek_any) {
+            Type::Bare(input.parse()?)
+        } else if lookahead.peek(Token![#]) || lookahead.peek(Token![@]) {
+            Type::External(input.parse()?)
+        } else {
+            return Err(lookahead.error());
+        };
+
         loop {
-            inner.push(input.parse()?);
-            if input.peek(Paren) || input.peek(Token![,]) || input.is_empty() {
+            let has_bracket = input.peek(Bracket);
+            if has_bracket {
+                let content;
+                bracketed!(content in input);
+                // TODO: allow shaped arrays
+                if !content.is_empty() {
+                    return Err(content.error("only empty arrays are currently allowed"));
+                } else {
+                    result = Type::Vector(Box::new(result));
+                }
+            }
+            let has_asterisk = input.peek(Token![*]);
+            if has_asterisk {
+                input.parse::<Token![*]>()?;
+                result = Type::Pointer(Box::new(result));
+            }
+            if !has_bracket && !has_asterisk {
                 break;
             }
         }
-        Ok(Type(inner))
+
+        Ok(result)
     }
 }
 impl ToTokens for Type {
@@ -77,43 +90,40 @@ macro_rules! check_idents {
     }
 }
 
-pub fn ctype(Type(segments): &Type) -> TokenStream {
-    fn go(segments: &[TypeSegment]) -> TokenStream {
-        match segments {
-            [] => TokenStream::new(),
-            [TypeSegment::Bare(i)] => check_idents!(match i {
-                "bool" => Boolean,
-                "char" => Char,
-                "sbyte" => Int8,
-                "byte" => UInt8,
-                "short" => Int16,
-                "ushort" => UInt16,
-                "int" => Int32,
-                "uint" => UInt32,
-                "long" => Int64,
-                "ulong" => UInt64,
-                "float" => Float32,
-                "double" => Float64,
-                "nint" => IntPtr,
-                "nuint" => UIntPtr,
-                "object" => Object,
-                "string" => String,
-            }),
-            [TypeSegment::Variable(i)] => quote! { #i },
-            [ss @ .., TypeSegment::Brackets] => {
-                let first = go(ss);
-                quote! { BaseType::vector(#first).into() }
+pub fn ctype(t: &Type) -> TokenStream {
+    match t {
+        Type::Bare(i) => check_idents!(match i {
+            "bool" => Boolean,
+            "char" => Char,
+            "sbyte" => Int8,
+            "byte" => UInt8,
+            "short" => Int16,
+            "ushort" => UInt16,
+            "int" => Int32,
+            "uint" => UInt32,
+            "long" => Int64,
+            "ulong" => UInt64,
+            "float" => Float32,
+            "double" => Float64,
+            "nint" => IntPtr,
+            "nuint" => UIntPtr,
+            "object" => Object,
+            "string" => String,
+        }),
+        Type::External(e) => quote! { #e },
+        Type::Pointer(inner) => {
+            if matches!(&**inner, Type::Bare(i) if i == "void") {
+                quote! { BaseType::VOID_PTR.into() }
+            } else {
+                let t = ctype(inner);
+                quote! { BaseType::pointer(#t).into() }
             }
-            [TypeSegment::Bare(i), TypeSegment::Asterisk] if i == "void" => quote! { BaseType::VOID_PTR.into() }, // special case
-            [ss @ .., TypeSegment::Asterisk] => {
-                let first = go(ss);
-                quote! { BaseType::pointer(#first).into() }
-            }
-            _ => panic!("invalid type declaration"),
+        }
+        Type::Vector(inner) => {
+            let t = ctype(inner);
+            quote! { BaseType::vector(#t).into() }
         }
     }
-
-    go(segments)
 }
 
 pub enum Parameter {
@@ -125,9 +135,9 @@ impl Parse for Parameter {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Token![ref]) {
             input.parse::<Token![ref]>()?;
-            Ok(Parameter::Ref(input.parse()?))
+            input.parse().map(Parameter::Ref)
         } else {
-            Ok(Parameter::Value(input.parse()?))
+            input.parse().map(Parameter::Value)
         }
     }
 }
@@ -201,7 +211,7 @@ pub fn msig(sig: Signature) -> TokenStream {
 pub struct TypeName(Punctuated<Ident, Token![.]>);
 impl Parse for TypeName {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(TypeName(Punctuated::parse_separated_nonempty(input)?))
+        Punctuated::parse_separated_nonempty(input).map(TypeName)
     }
 }
 
@@ -228,7 +238,7 @@ impl Parse for TypeRef {
     }
 }
 
-pub fn type_ref(TypeRef(typename, External(asm)): TypeRef) -> TokenStream {
+pub fn type_ref(TypeRef(typename, asm): TypeRef) -> TokenStream {
     let tn = type_name(typename);
     quote! {{
         let (ns, name) = #tn;
@@ -286,6 +296,40 @@ pub fn method_ref(meth: MethodRef) -> TokenStream {
             MethodReferenceParent::Type(#parent),
             stringify!(#name).into(),
             #sig
+        )
+    }
+}
+
+pub struct FieldRef {
+    field_type: Type,
+    parent: External,
+    name: Ident,
+}
+impl Parse for FieldRef {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            field_type: input.parse()?,
+            parent: input.parse()?,
+            name: {
+                input.parse::<Token![::]>()?;
+                input.parse()?
+            },
+        })
+    }
+}
+
+pub fn field_ref(
+    FieldRef {
+        field_type,
+        parent,
+        name,
+    }: FieldRef,
+) -> TokenStream {
+    quote! {
+        ExternalFieldReference::new(
+            FieldReferenceParent::Type(#parent),
+            #field_type,
+            stringify!(#name).into()
         )
     }
 }

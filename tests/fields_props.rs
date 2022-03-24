@@ -22,94 +22,86 @@ pub fn write() {
             );
 
             let static_type: MethodType = ctx.resolution[static_field].return_type.clone().into();
-            let static_par = ParameterType::Value(static_type.clone());
             let static_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new("StaticProperty".into(), Parameter::new(static_par.clone())),
+                Property::new(
+                    "StaticProperty".into(),
+                    Parameter::new(ParameterType::Value(static_type.clone())),
+                ),
             );
             let static_getter = ctx.resolution.set_property_getter(
                 static_prop,
                 Method::new(
                     Accessibility::Public,
-                    MethodSignature::static_member(ReturnType::new(static_par.clone()), vec![]),
+                    msig! { static @static_type () },
                     "get_StaticProperty".into(),
-                    Some(body::Method {
-                        instructions: vec![
-                            Instruction::LoadStaticField {
-                                volatile: false,
-                                field: static_field.into(),
-                            },
-                            Instruction::Return,
-                        ],
-                        ..Default::default()
-                    }),
+                    Some(body::Method::new(vec![
+                        Instruction::LoadStaticField {
+                            volatile: false,
+                            field: static_field.into(),
+                        },
+                        Instruction::Return,
+                    ])),
                 ),
             );
             let static_setter = ctx.resolution.set_property_setter(
                 static_prop,
                 Method::new(
                     Accessibility::Public,
-                    MethodSignature::static_member(ReturnType::VOID, vec![Parameter::new(static_par)]),
+                    msig! { static void (@static_type) },
                     "set_StaticProperty".into(),
-                    Some(body::Method {
-                        instructions: vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::StoreStaticField {
-                                volatile: false,
-                                field: static_field.into(),
-                            },
-                            Instruction::Return,
-                        ],
-                        ..Default::default()
-                    }),
+                    Some(body::Method::new(vec![
+                        Instruction::LoadArgument(0),
+                        Instruction::StoreStaticField {
+                            volatile: false,
+                            field: static_field.into(),
+                        },
+                        Instruction::Return,
+                    ])),
                 ),
             );
 
             let instance_type: MethodType = ctx.resolution[instance_field].return_type.clone().into();
-            let instance_par = ParameterType::Value(instance_type.clone());
             let instance_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new("InstanceProperty".into(), Parameter::new(instance_par.clone())),
+                Property::new(
+                    "InstanceProperty".into(),
+                    Parameter::new(ParameterType::Value(instance_type.clone())),
+                ),
             );
             let instance_getter = ctx.resolution.set_property_getter(
                 instance_prop,
                 Method::new(
                     Accessibility::Public,
-                    MethodSignature::instance(ReturnType::new(instance_par.clone()), vec![]),
+                    msig! { @instance_type () },
                     "get_InstanceProperty".into(),
-                    Some(body::Method {
-                        instructions: vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::LoadField {
-                                unaligned: None,
-                                volatile: false,
-                                field: instance_field.into(),
-                            },
-                            Instruction::Return,
-                        ],
-                        ..Default::default()
-                    }),
+                    Some(body::Method::new(vec![
+                        Instruction::LoadArgument(0),
+                        Instruction::LoadField {
+                            unaligned: None,
+                            volatile: false,
+                            field: instance_field.into(),
+                        },
+                        Instruction::Return,
+                    ])),
                 ),
             );
             let instance_setter = ctx.resolution.set_property_setter(
                 instance_prop,
                 Method::new(
                     Accessibility::Public,
-                    MethodSignature::instance(ReturnType::VOID, vec![Parameter::new(instance_par)]),
+                    msig! { void (@instance_type) },
                     "set_InstanceProperty".into(),
-                    Some(body::Method {
-                        instructions: vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::LoadArgument(1),
-                            Instruction::StoreField {
-                                unaligned: None,
-                                volatile: false,
-                                field: instance_field.into(),
-                            },
-                            Instruction::Return,
-                        ],
-                        ..Default::default()
-                    }),
+                    Some(body::Method::new(vec![
+                        Instruction::LoadArgument(0),
+                        Instruction::LoadArgument(1),
+                        Instruction::StoreField {
+                            unaligned: None,
+                            volatile: false,
+                            field: instance_field.into(),
+                        },
+                        Instruction::Return,
+                    ])),
                 ),
             );
 

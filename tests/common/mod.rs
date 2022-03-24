@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 pub struct WriteContext<'a> {
     pub resolution: Resolution<'a>,
+    pub mscorlib: AssemblyRefIndex,
     pub console: TypeRefIndex,
     pub object_ctor: MethodRefIndex,
     pub class: TypeIndex,
@@ -40,17 +41,14 @@ pub fn write_fixture(
             Accessibility::Public,
             msig! { void () },
             ".ctor".into(),
-            Some(body::Method {
-                instructions: vec![
-                    Instruction::LoadArgument(0),
-                    Instruction::Call {
-                        tail_call: false,
-                        method: object_ctor.into(),
-                    },
-                    Instruction::Return,
-                ],
-                ..Default::default()
-            }),
+            Some(body::Method::new(vec![
+                Instruction::LoadArgument(0),
+                Instruction::Call {
+                    tail_call: false,
+                    method: object_ctor.into(),
+                },
+                Instruction::Return,
+            ])),
         ),
     );
     res[default_ctor].special_name = true;
@@ -70,6 +68,7 @@ pub fn write_fixture(
 
     let mut ctx = WriteContext {
         resolution: res,
+        mscorlib,
         console,
         class,
         default_ctor,

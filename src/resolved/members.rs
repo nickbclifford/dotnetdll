@@ -12,7 +12,7 @@ use dotnetdll_macros::From;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
-pub use dotnetdll_macros::method_ref;
+pub use dotnetdll_macros::{method_ref, field_ref};
 
 macro_rules! name_display {
     ($i:ty) => {

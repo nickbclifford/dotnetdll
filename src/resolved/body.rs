@@ -14,7 +14,7 @@ impl Default for Header {
         Self {
             initialize_locals: false,
             maximum_stack_size: 8,
-            local_variables: vec![]
+            local_variables: vec![],
         }
     }
 }
@@ -24,6 +24,20 @@ pub struct Method {
     pub header: Header,
     pub instructions: Vec<Instruction>,
     pub data_sections: Vec<DataSection>,
+}
+impl Method {
+    pub fn new(instructions: Vec<Instruction>) -> Self {
+        Self {
+            instructions,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_locals(locals: Vec<LocalVariable>, instructions: Vec<Instruction>) -> Self {
+        let mut m = Method::new(instructions);
+        m.header.local_variables = locals;
+        m
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -25,7 +25,8 @@ def_macros! {
     constructors::msig,
     constructors::type_name,
     constructors::type_ref,
-    constructors::method_ref
+    constructors::method_ref,
+    constructors::field_ref
 }
 
 // derive macro
