@@ -44,6 +44,14 @@ impl Parameter {
     pub const fn new(t: ParameterType) -> Self {
         Parameter(vec![], t)
     }
+
+    pub const fn value(t: MethodType) -> Self {
+        Self::new(ParameterType::Value(t))
+    }
+
+    pub const fn reference(t: MethodType) -> Self {
+        Self::new(ParameterType::Value(t))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,6 +76,14 @@ impl ReturnType {
 
     pub const fn new(t: ParameterType) -> Self {
         ReturnType(vec![], Some(t))
+    }
+
+    pub const fn value(t: MethodType) -> Self {
+        Self::new(ParameterType::Value(t))
+    }
+
+    pub const fn reference(t: MethodType) -> Self {
+        Self::new(ParameterType::Value(t))
     }
 }
 

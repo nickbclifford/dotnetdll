@@ -71,9 +71,8 @@ pub struct TypeFlags {
     pub before_field_init: bool,
     pub runtime_special_name: bool,
 }
-
-impl TypeFlags {
-    pub const fn default() -> Self {
+impl Default for TypeFlags {
+    fn default() -> Self {
         Self {
             accessibility: Accessibility::NotPublic,
             layout: Layout::Automatic,
@@ -88,7 +87,9 @@ impl TypeFlags {
             runtime_special_name: false,
         }
     }
+}
 
+impl TypeFlags {
     pub(crate) fn from_mask(bitmask: u32, layout: Layout) -> TypeFlags {
         use Accessibility::*;
 
@@ -162,11 +163,6 @@ impl TypeFlags {
             StringFormatting::Custom(val) => 0x30000 | (val & 0x00C0_0000),
         };
         mask
-    }
-}
-impl Default for TypeFlags {
-    fn default() -> Self {
-        Self::default()
     }
 }
 
@@ -251,11 +247,11 @@ impl ResolvedDebug for TypeDefinition<'_> {
 }
 
 impl<'a> TypeDefinition<'a> {
-    pub const fn new(namespace: Option<Cow<'a, str>>, name: Cow<'a, str>) -> Self {
+    pub fn new(namespace: Option<Cow<'a, str>>, name: impl Into<Cow<'a, str>>) -> Self {
         Self {
             attributes: vec![],
-            name,
-            namespace,
+            name: name.into(),
+            namespace: namespace.map(Into::into),
             fields: vec![],
             properties: vec![],
             methods: vec![],
@@ -324,10 +320,10 @@ impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
 }
 
 impl<'a> ExternalTypeReference<'a> {
-    pub const fn new(namespace: Option<Cow<'a, str>>, name: Cow<'a, str>, scope: ResolutionScope) -> Self {
+    pub fn new(namespace: Option<Cow<'a, str>>, name: impl Into<Cow<'a, str>>, scope: ResolutionScope) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             namespace,
             scope,
         }

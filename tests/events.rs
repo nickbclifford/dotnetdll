@@ -32,7 +32,7 @@ pub fn write() {
                 Field::new(
                     false,
                     Accessibility::Private,
-                    "eventHandler".into(),
+                    "eventHandler",
                     handler_member.clone(),
                 ),
             );
@@ -40,12 +40,12 @@ pub fn write() {
             let event = ctx.resolution.push_event(
                 ctx.class,
                 Event::new(
-                    "MyEvent".into(),
+                    "MyEvent",
                     handler_member,
                     Method::new(
                         Accessibility::Public,
                         event_sig.clone(),
-                        "add_MyEvent".into(),
+                        "add_MyEvent",
                         Some(body::Method::new(vec![
                             Instruction::LoadArgument(0),
                             Instruction::Duplicate,
@@ -60,7 +60,7 @@ pub fn write() {
                     Method::new(
                         Accessibility::Public,
                         event_sig,
-                        "remove_MyEvent".into(),
+                        "remove_MyEvent",
                         Some(body::Method::new(vec![
                             Instruction::LoadArgument(0),
                             Instruction::Duplicate,
@@ -92,7 +92,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Private,
                     msig! { static void (object, @event_args) },
-                    "Listener".into(),
+                    "Listener",
                     Some(body::Method::new(vec![
                         Instruction::load_string("listener triggered"),
                         Instruction::call(write_line),
@@ -112,7 +112,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Public,
                     msig! { void () },
-                    "Invoke".into(),
+                    "Invoke",
                     Some(body::Method::with_locals(
                         vec![LocalVariable::new(handler_method.clone())],
                         vec![

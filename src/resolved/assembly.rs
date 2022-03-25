@@ -63,7 +63,7 @@ pub struct Assembly<'a> {
     pub security: Option<SecurityDeclaration<'a>>,
 }
 impl<'a> Assembly<'a> {
-    pub const fn new(name: Cow<'a, str>) -> Self {
+    pub fn new(name: impl Into<Cow<'a, str>>) -> Self {
         Self {
             attributes: vec![],
             hash_algorithm: HashAlgorithm::None,
@@ -75,7 +75,7 @@ impl<'a> Assembly<'a> {
                 enable_jit_tracking: false,
             },
             public_key: None,
-            name,
+            name: name.into(),
             culture: None,
             security: None,
         }
@@ -93,13 +93,13 @@ pub struct ExternalAssemblyReference<'a> {
     pub hash_value: Option<Cow<'a, [u8]>>,
 }
 impl<'a> ExternalAssemblyReference<'a> {
-    pub const fn new(name: Cow<'a, str>) -> Self {
+    pub fn new(name: impl Into<Cow<'a, str>>) -> Self {
         Self {
             attributes: vec![],
             version: Version::ZERO,
             has_full_public_key: false,
             public_key_or_token: None,
-            name,
+            name: name.into(),
             culture: None,
             hash_value: None,
         }

@@ -3,6 +3,7 @@
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::enum_glob_use,
     clippy::items_after_statements,
@@ -148,7 +149,7 @@ mod tests {
                     println!(" {{");
 
                     if b.header.initialize_locals {
-                        println!("\t\tinit locals")
+                        println!("\t\tinit locals");
                     }
                     println!("\t\tmaximum stack size {}", b.header.maximum_stack_size);
                     let locals = &b.header.local_variables;
@@ -167,7 +168,7 @@ mod tests {
                     println!("\t\t---");
 
                     for (idx, instr) in b.instructions.iter().enumerate() {
-                        println!("\t\t{:1$}: {2}", idx, max_size, instr.show(&r))
+                        println!("\t\t{:1$}: {2}", idx, max_size, instr.show(&r));
                     }
 
                     println!("\t}}");
@@ -192,7 +193,7 @@ mod tests {
                 assert_eq!(val, $val);
 
                 // we need to include the variable for repetition, so discard its value
-                let mut buf = [$({ $byte; 0 }),+];
+                let mut buf = [$({ let _x = $byte; 0 }),+];
                 buf.pwrite($ty($val), 0).unwrap();
                 assert_eq!(buf, [$($byte),+]);
             }
@@ -206,8 +207,8 @@ mod tests {
         case!(Signed(-3) => [0x7B]);
         case!(Signed(64) => [0x80, 0x80]);
         case!(Signed(-8192) => [0x80, 0x01]);
-        case!(Signed(268435455) => [0xDF, 0xFF, 0xFF, 0xFE]);
-        case!(Signed(-268435456) => [0xC0, 0x00, 0x00, 0x01]);
+        case!(Signed(268_435_455) => [0xDF, 0xFF, 0xFF, 0xFE]);
+        case!(Signed(-268_435_456) => [0xC0, 0x00, 0x00, 0x01]);
     }
 
     #[test]

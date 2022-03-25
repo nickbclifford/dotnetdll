@@ -14,19 +14,19 @@ pub fn write() {
 
             let static_field = ctx.resolution.push_field(
                 ctx.class,
-                Field::static_member(Accessibility::Private, "static_field".into(), ctype! { int }),
+                Field::static_member(Accessibility::Private, "static_field", ctype! { int }),
             );
             let instance_field = ctx.resolution.push_field(
                 ctx.class,
-                Field::instance(Accessibility::Private, "instance_field".into(), ctype! { uint }),
+                Field::instance(Accessibility::Private, "instance_field", ctype! { uint }),
             );
 
             let static_type: MethodType = ctx.resolution[static_field].return_type.clone().into();
             let static_prop = ctx.resolution.push_property(
                 ctx.class,
                 Property::new(
-                    "StaticProperty".into(),
-                    Parameter::new(ParameterType::Value(static_type.clone())),
+                    "StaticProperty",
+                    Parameter::value(static_type.clone()),
                 ),
             );
             let static_getter = ctx.resolution.set_property_getter(
@@ -34,7 +34,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Public,
                     msig! { static @static_type () },
-                    "get_StaticProperty".into(),
+                    "get_StaticProperty",
                     Some(body::Method::new(vec![
                         Instruction::load_static_field(static_field),
                         Instruction::Return,
@@ -46,7 +46,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Public,
                     msig! { static void (@static_type) },
-                    "set_StaticProperty".into(),
+                    "set_StaticProperty",
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
                         Instruction::store_static_field(static_field),
@@ -59,8 +59,8 @@ pub fn write() {
             let instance_prop = ctx.resolution.push_property(
                 ctx.class,
                 Property::new(
-                    "InstanceProperty".into(),
-                    Parameter::new(ParameterType::Value(instance_type.clone())),
+                    "InstanceProperty",
+                    Parameter::value(instance_type.clone()),
                 ),
             );
             let instance_getter = ctx.resolution.set_property_getter(
@@ -68,7 +68,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Public,
                     msig! { @instance_type () },
-                    "get_InstanceProperty".into(),
+                    "get_InstanceProperty",
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
                         Instruction::load_field(instance_field),
@@ -81,7 +81,7 @@ pub fn write() {
                 Method::new(
                     Accessibility::Public,
                     msig! { void (@instance_type) },
-                    "set_InstanceProperty".into(),
+                    "set_InstanceProperty",
                     Some(body::Method::new(vec![
                         Instruction::LoadArgument(0),
                         Instruction::LoadArgument(1),

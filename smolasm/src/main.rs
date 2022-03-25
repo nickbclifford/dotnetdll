@@ -136,18 +136,18 @@ fn main() {
 
     let module_name: Cow<_> = format!("{}.dll", assembly_name).into();
     let res = RefCell::new(Resolution::new(Module::new(module_name.clone())));
-    let mut assembly = Assembly::new(assembly_name.into());
+    let mut assembly = Assembly::new(assembly_name);
     assembly.version = version;
     res.borrow_mut().assembly = Some(assembly);
 
     res.borrow_mut()
         .type_definitions
-        .push(TypeDefinition::new(None, "<Module>".into()));
+        .push(TypeDefinition::new(None, "<Module>"));
 
     let mut extern_map = HashMap::new();
     while matches!(pairs.peek(), Some(p) if p.as_rule() == Rule::extern_decl) {
         let (name, version) = asm_spec(pairs.next().unwrap());
-        let mut asm_ref = ExternalAssemblyReference::new(name.into());
+        let mut asm_ref = ExternalAssemblyReference::new(name);
         asm_ref.version = version;
         extern_map.insert(name, res.borrow_mut().push_assembly_reference(asm_ref));
     }
@@ -155,7 +155,7 @@ fn main() {
     // we always need an mscorlib reference, insert a default one if the user didn't specify a version
     let mscorlib = *extern_map.entry("mscorlib").or_insert_with(|| {
         res.borrow_mut()
-            .push_assembly_reference(ExternalAssemblyReference::new("mscorlib".into()))
+            .push_assembly_reference(ExternalAssemblyReference::new("mscorlib"))
     });
 
     let ref_map: RefCell<HashMap<(AssemblyRefIndex, &str), _>> = RefCell::new(HashMap::new());
@@ -338,7 +338,7 @@ fn main() {
                 res.borrow_mut()[type_def].extends = Some(get_ref(mscorlib, "System.Enum").into());
                 let mut value_field = Field::instance(
                     Accessibility::Public,
-                    "value__".into(),
+                    "value__",
                     match raw_type {
                         Some(s) => int_type(s),
                         None => BaseType::Int32,
@@ -351,7 +351,7 @@ fn main() {
                 for (idx, i) in idents.into_iter().enumerate() {
                     let mut field = Field::instance(
                         Accessibility::Public,
-                        i.into(),
+                        i,
                         BaseType::Type {
                             value_kind: ValueKind::ValueType,
                             source: type_def.into(),
@@ -428,7 +428,7 @@ fn main() {
                             let field_type = inner.next().unwrap();
                             let ident = inner.next().unwrap();
 
-                            let mut field = Field::instance(accessibility, ident.as_str().into(), clitype!(field_type));
+                            let mut field = Field::instance(accessibility, ident.as_str(), clitype!(field_type));
                             field.static_member = is_static;
                             res.borrow_mut()[type_def].fields.push(field);
                         }
@@ -452,18 +452,18 @@ fn main() {
                                 };
                                 sig.instance = !is_static;
 
-                                let name = format!("{}_{}", semantic, ident.as_str()).into();
+                                let name = format!("{}_{}", semantic, ident.as_str());
                                 let mut method = Method::new(accessibility, sig, name, None);
                                 if semantic == "set" {
                                     method
                                         .parameter_metadata
-                                        .push(Some(ParameterMetadata::name("value".into())));
+                                        .push(Some(ParameterMetadata::name("value")));
                                 }
                                 methods.push((res.borrow_mut().push_method(type_def, method), body));
                             }
 
                             res.borrow_mut()[type_def].properties.push(Property::new(
-                                ident.as_str().into(),
+                                ident.as_str(),
                                 Parameter::new(ParameterType::Value(property_type)),
                             ));
                         }
@@ -505,10 +505,10 @@ fn main() {
 
                             let sig = method_signature(is_static, return_type, param_types);
 
-                            let mut method = Method::new(accessibility, sig, ident.as_str().into(), None);
+                            let mut method = Method::new(accessibility, sig, ident.as_str(), None);
                             method.parameter_metadata = param_names
                                 .into_iter()
-                                .map(|i| Some(ParameterMetadata::name(i.as_str().into())))
+                                .map(|i| Some(ParameterMetadata::name(i.as_str())))
                                 .collect();
                             method.abstract_member = body.is_none();
                             method.special_name = special_name;
@@ -540,11 +540,11 @@ fn main() {
                                 let mut sig = msig! { void (#t) };
                                 sig.instance = !is_static;
 
-                                let name = format!("{}_{}", semantic, ident.as_str()).into();
+                                let name = format!("{}_{}", semantic, ident.as_str());
                                 let mut method = Method::new(accessibility, sig.clone(), name, None);
                                 method
                                     .parameter_metadata
-                                    .push(Some(ParameterMetadata::name("value".into())));
+                                    .push(Some(ParameterMetadata::name("value")));
                                 let pair = Some((method, body));
 
                                 match semantic {
@@ -563,7 +563,7 @@ fn main() {
                             let (remove_m, remove_b) =
                                 remove.unwrap_or_else(|| panic!("missing remove method on event {}", ident.as_str()));
 
-                            let event = Event::new(ident.as_str().into(), property_type, add_m, remove_m);
+                            let event = Event::new(ident.as_str(), property_type, add_m, remove_m);
                             let event_idx = res.borrow_mut().push_event(type_def, event);
                             methods.push((res.borrow().event_add_index(event_idx), add_b));
                             methods.push((res.borrow().event_remove_index(event_idx), remove_b));
@@ -865,7 +865,7 @@ fn main() {
 
                     let sig = method_signature(is_static, return_type, params);
 
-                    let method = user_method(parent, method_name.into(), sig);
+                    let method = user_method(parent, method_name, sig);
 
                     if is_virtual {
                         Instruction::call_virtual(method)
@@ -881,7 +881,7 @@ fn main() {
                     let parent: MethodType = clitype!(iter.next().unwrap());
                     let sig = MethodSignature::new(true, ReturnType::VOID, param_types(iter.collect(), user_type));
 
-                    let method = user_method(parent, ".ctor".into(), sig);
+                    let method = user_method(parent, ".ctor", sig);
                     if let UserMethod::Definition(m) = &method {
                         let def = &res.borrow()[*m];
                         if !(def.special_name && def.runtime_special_name) {

@@ -18,17 +18,17 @@ pub fn write_fixture(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dll_name = format!("{}.dll", name);
 
-    let mut res = Resolution::new(Module::new((&dll_name).into()));
-    res.assembly = Some(Assembly::new(name.into()));
+    let mut res = Resolution::new(Module::new(&dll_name));
+    res.assembly = Some(Assembly::new(name));
     res.push_global_module_type();
 
-    let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib".into()));
+    let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
 
     let console = res.push_type_reference(type_ref! { System.Console in #mscorlib });
 
     let object = res.push_type_reference(type_ref! { System.Object in #mscorlib });
 
-    let class = res.push_type_definition(TypeDefinition::new(None, "Program".into()));
+    let class = res.push_type_definition(TypeDefinition::new(None, "Program"));
     res[class].extends = Some(object.into());
 
     let object_type = BaseType::class(object.into()).into();
@@ -39,7 +39,7 @@ pub fn write_fixture(
         Method::new(
             Accessibility::Public,
             msig! { void () },
-            ".ctor".into(),
+            ".ctor",
             Some(body::Method::new(vec![
                 Instruction::LoadArgument(0),
                 Instruction::call(object_ctor),
@@ -66,7 +66,7 @@ pub fn write_fixture(
         Method::new(
             Accessibility::Public,
             msig! { static void (string[]) },
-            "Main".into(),
+            "Main",
             Some(body::Method::with_locals(vars, ins)),
         ),
     );

@@ -90,15 +90,15 @@ impl ResolvedDebug for Field<'_> {
     }
 }
 impl<'a> Field<'a> {
-    pub const fn new(
+    pub fn new(
         static_member: bool,
         access: super::Accessibility,
-        name: Cow<'a, str>,
+        name: impl Into<Cow<'a, str>>,
         return_type: MemberType,
     ) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             type_modifiers: vec![],
             return_type,
             accessibility: Accessibility::Access(access),
@@ -116,11 +116,11 @@ impl<'a> Field<'a> {
         }
     }
 
-    pub const fn instance(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
+    pub fn instance(access: super::Accessibility, name: impl Into<Cow<'a, str>>, return_type: MemberType) -> Self {
         Self::new(false, access, name, return_type)
     }
 
-    pub const fn static_member(access: super::Accessibility, name: Cow<'a, str>, return_type: MemberType) -> Self {
+    pub fn static_member(access: super::Accessibility, name: impl Into<Cow<'a, str>>, return_type: MemberType) -> Self {
         Self::new(true, access, name, return_type)
     }
 }
@@ -245,10 +245,10 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 impl<'a> Property<'a> {
-    pub const fn new(name: Cow<'a, str>, property_type: signature::Parameter) -> Self {
+    pub fn new(name: impl Into<Cow<'a, str>>, property_type: signature::Parameter) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             getter: None,
             setter: None,
             other: vec![],
@@ -278,10 +278,10 @@ pub struct ParameterMetadata<'a> {
 }
 name_display!(ParameterMetadata<'_>);
 impl<'a> ParameterMetadata<'a> {
-    pub const fn name(name: Cow<'a, str>) -> Self {
+    pub fn name(name: impl Into<Cow<'a, str>>) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             is_in: false,
             is_out: false,
             optional: false,
@@ -379,15 +379,15 @@ impl ResolvedDebug for Method<'_> {
     }
 }
 impl<'a> Method<'a> {
-    pub const fn new(
+    pub fn new(
         access: super::Accessibility,
         signature: signature::ManagedMethod,
-        name: Cow<'a, str>,
+        name: impl Into<Cow<'a, str>>,
         body: Option<body::Method>,
     ) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             body,
             signature,
             accessibility: Accessibility::Access(access),
@@ -463,11 +463,15 @@ pub struct ExternalMethodReference<'a> {
 }
 name_display!(ExternalMethodReference<'_>);
 impl<'a> ExternalMethodReference<'a> {
-    pub const fn new(parent: MethodReferenceParent, name: Cow<'a, str>, signature: signature::ManagedMethod) -> Self {
+    pub fn new(
+        parent: MethodReferenceParent,
+        name: impl Into<Cow<'a, str>>,
+        signature: signature::ManagedMethod,
+    ) -> Self {
         Self {
             attributes: vec![],
             parent,
-            name,
+            name: name.into(),
             signature,
         }
     }
@@ -619,15 +623,15 @@ impl ResolvedDebug for Event<'_> {
     }
 }
 impl<'a> Event<'a> {
-    pub const fn new(
-        name: Cow<'a, str>,
+    pub fn new(
+        name: impl Into<Cow<'a, str>>,
         delegate_type: MemberType,
         add_listener: Method<'a>,
         remove_listener: Method<'a>,
     ) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             delegate_type,
             add_listener,
             remove_listener,

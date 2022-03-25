@@ -8,10 +8,10 @@ pub struct Module<'a> {
     pub mvid: [u8; 16],
 }
 impl<'a> Module<'a> {
-    pub const fn new(name: Cow<'a, str>) -> Self {
+    pub fn new(name: impl Into<Cow<'a, str>>) -> Self {
         Self {
             attributes: vec![],
-            name,
+            name: name.into(),
             mvid: [0; 16],
         }
     }

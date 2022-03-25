@@ -38,7 +38,7 @@ impl Resolution<'_> {
     }
 
     pub fn push_global_module_type(&mut self) -> TypeIndex {
-        self.push_type_definition(types::TypeDefinition::new(None, "<Module>".into()))
+        self.push_type_definition(types::TypeDefinition::new(None, "<Module>"))
     }
 }
 

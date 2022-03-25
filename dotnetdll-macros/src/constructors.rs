@@ -242,7 +242,7 @@ pub fn type_ref(TypeRef(typename, asm): TypeRef) -> TokenStream {
     let tn = type_name(typename);
     quote! {{
         let (ns, name) = #tn;
-        ExternalTypeReference::new(ns.map(Into::into), name.into(), ResolutionScope::Assembly(#asm))
+        ExternalTypeReference::new(ns.map(Into::into), name, ResolutionScope::Assembly(#asm))
     }}
 }
 
@@ -294,7 +294,7 @@ pub fn method_ref(meth: MethodRef) -> TokenStream {
     quote! {
         ExternalMethodReference::new(
             MethodReferenceParent::Type(#parent),
-            stringify!(#name).into(),
+            stringify!(#name),
             #sig
         )
     }

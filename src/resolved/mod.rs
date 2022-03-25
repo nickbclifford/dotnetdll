@@ -19,6 +19,28 @@ pub enum Accessibility {
     Public,
 }
 
+macro_rules! access {
+    (public) => {
+        Accessibility::Public
+    };
+    (private) => {
+        Accessibility::Private
+    };
+    (protected) => {
+        Accessibility::Family
+    };
+    (internal) => {
+        Accessibility::Assembly
+    };
+    (protected internal) => {
+        Accessibility::FamilyORAssembly
+    };
+    (private protected) => {
+        Accessibility::FamilyANDAssembly
+    };
+}
+pub(crate) use access;
+
 use std::fmt::{Display, Formatter};
 
 impl Display for Accessibility {
