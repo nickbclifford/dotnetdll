@@ -147,6 +147,7 @@ r_instructions! {
     BranchTruthy(usize),
     #[flags(tail_call)]
     Call(MethodSource),
+    CallConstrained(MethodType, MethodSource),
     #[flags(tail_call)]
     CallIndirect(signature::MaybeUnmanagedMethod),
     CompareEqual,

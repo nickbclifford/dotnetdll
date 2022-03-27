@@ -3,7 +3,7 @@ use dotnetdll_macros::instructions;
 
 instructions! {
     prefixes {
-        #[target(Callvirt)]
+        #[target(Call, Callvirt)]
         Constrained(Token) = 0x16,
         #[target(Castclass, Unbox, Ldelem*, Stelem*, Ldfld, Stfld, Callvirt, Ldvirtftn)]
         Nocheck(u8) = 0x19,

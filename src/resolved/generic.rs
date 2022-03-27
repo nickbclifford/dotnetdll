@@ -9,7 +9,7 @@ pub enum Variance {
     Contravariant,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct SpecialConstraint {
     pub reference_type: bool,
     pub value_type: bool,
@@ -35,6 +35,18 @@ pub struct Generic<'a, ConstraintType> {
     pub variance: Variance,
     pub special_constraint: SpecialConstraint,
     pub type_constraints: Vec<Constraint<'a, ConstraintType>>,
+}
+
+impl<'a, T> Generic<'a, T> {
+    pub fn new(name: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            attributes: vec![],
+            name: name.into(),
+            variance: Variance::Invariant,
+            special_constraint: SpecialConstraint::default(),
+            type_constraints: vec![],
+        }
+    }
 }
 
 pub type Type<'a> = Generic<'a, types::MemberType>;

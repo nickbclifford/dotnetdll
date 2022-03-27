@@ -95,7 +95,7 @@ pub mod prelude {
         resolution::*,
         resolved::{
             assembly::*,
-            body,
+            body, generic,
             il::*,
             members::{Accessibility as MAccess, *},
             module::*,
@@ -113,11 +113,12 @@ mod tests {
         dll::{ResolveOptions, DLL},
         resolved::ResolvedDebug,
     };
+    use crate::prelude::TypeImplementation;
     use scroll::{Pread, Pwrite};
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/home/nick/Desktop/test/bin/Debug/net6.0/test.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/System.Private.CoreLib.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve(ResolveOptions::default())?;
@@ -129,6 +130,12 @@ mod tests {
             match e {
                 EntryPoint::Method(m) => println!("{}", UserMethod::Definition(*m).show(&r)),
                 EntryPoint::File(f) => println!("external file {}", r[*f].name),
+            }
+        }
+
+        for e in &r.exported_types {
+            if let TypeImplementation::TypeForwarder(a) = e.implementation {
+                println!("re-exports {} from {}", e.type_name(), r[a].name);
             }
         }
 

@@ -11,6 +11,25 @@ pub struct WriteContext<'a> {
     pub default_ctor: MethodIndex,
 }
 
+#[allow(unused_macros)]
+macro_rules! asm {
+    ($ins:ident) => {
+        Instruction::$ins
+    };
+    ($ins:ident $($param:expr),+) => {
+        Instruction::$ins($($param),+)
+    };
+    ($($ins:ident $($param:expr),*;)*) => {
+        vec![
+            $(
+                $crate::common::asm! { $ins $($param),* }
+            ),*
+        ]
+    }
+}
+#[allow(unused_imports)]
+pub(crate) use asm;
+
 pub fn write_fixture(
     name: &str,
     test: impl FnOnce(&mut WriteContext) -> (Vec<LocalVariable>, Vec<Instruction>),
@@ -31,7 +50,7 @@ pub fn write_fixture(
     let class = res.push_type_definition(TypeDefinition::new(None, "Program"));
     res[class].extends = Some(object.into());
 
-    let object_type = BaseType::class(object.into()).into();
+    let object_type = BaseType::class(object).into();
     let object_ctor = res.push_method_reference(method_ref! { void #object_type::.ctor() });
 
     let default_ctor = res.push_method(
@@ -90,11 +109,22 @@ pub fn write_fixture(
     let stderr = String::from_utf8(output.stderr)?;
 
     println!("{}", stderr);
-    if stderr.contains("invalid program") {
+    if stderr.contains("Unhandled exception") {
         if let Ok(i) = std::env::var("ILDASM") {
             let ildasm = Command::new(i).arg(&dll_path).output()?;
             println!("{}", String::from_utf8(ildasm.stdout)?);
         }
+
+        // Command::new("gdb")
+        //     .arg("-ex")
+        //     .arg("set substitute-path /runtime /home/nick/Desktop/runtime")
+        //     .arg("--args")
+        //     .arg("/home/nick/Desktop/runtime/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun")
+        //     .arg(&dll_path)
+        //     .spawn()
+        //     .unwrap()
+        //     .wait()
+        //     .unwrap();
 
         let ilverify = Command::new("ilverify")
             .arg(dll_path)

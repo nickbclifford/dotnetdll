@@ -36,6 +36,7 @@ impl Method {
     pub fn with_locals(locals: Vec<LocalVariable>, instructions: Vec<Instruction>) -> Self {
         let mut m = Method::new(instructions);
         m.header.local_variables = locals;
+        m.header.initialize_locals = true;
         m
     }
 }

@@ -57,30 +57,46 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
     }
 }
 
-pub fn source_index(t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
+fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
+    let value_kind = match value_kind {
+        Some(vk) => vk,
+        None => {
+            return Err(DLLError::CLI(scroll::Error::Custom(
+                "attempted to use type of unknown value kind inside a signature".to_string(),
+            )))
+        }
+    };
     Ok(match t {
-        TypeSource::User(u) => user_index(*u),
-        TypeSource::Generic {
-            base_kind,
-            base,
-            parameters,
-        } => {
+        TypeSource::User(u) => match value_kind {
+            ValueKind::Class => SType::Class(user_index(*u).into()),
+            ValueKind::ValueType => SType::ValueType(user_index(*u).into()),
+        },
+        TypeSource::Generic { base, parameters } => {
             let base = user_index(*base).into();
             let params = parameters.iter().map(|g| g.as_sig(ctx)).collect::<Result<_>>()?;
-            into_index(
-                match base_kind {
-                    InstantiationKind::Class => SType::GenericInstClass(base, params),
-                    InstantiationKind::ValueType => SType::GenericInstValueType(base, params),
-                },
-                ctx,
-            )?
+            match value_kind {
+                ValueKind::Class => SType::GenericInstClass(base, params),
+                ValueKind::ValueType => SType::GenericInstValueType(base, params),
+            }
         }
     })
 }
 
+pub fn source_index(
+    value_kind: Option<ValueKind>,
+    t: &TypeSource<impl TypeKind>,
+    ctx: &mut Context,
+) -> Result<TypeDefOrRef> {
+    if let TypeSource::User(u) = t {
+        Ok(user_index(*u))
+    } else {
+        into_index(source_sig(value_kind, t, ctx)?, ctx)
+    }
+}
+
 pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match base {
-        BaseType::Type { source, .. } => source_index(source, ctx)?,
+        BaseType::Type { value_kind, source } => source_index(*value_kind, source, ctx)?,
         rest => into_index(base_sig(rest, ctx)?, ctx)?,
     })
 }
@@ -111,18 +127,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     use BaseType::*;
 
     Ok(match base {
-        Type { value_kind, source } => {
-            let idx = source_index(source, ctx)?.into();
-            match value_kind {
-                ValueKind::Class => SType::Class(idx),
-                ValueKind::ValueType => SType::ValueType(idx),
-                ValueKind::Unknown => {
-                    return Err(DLLError::CLI(scroll::Error::Custom(
-                        "attempted to use type of unknown value kind inside a signature".to_string(),
-                    )));
-                }
-            }
-        }
+        Type { value_kind, source } => source_sig(*value_kind, source, ctx)?,
         Boolean => SType::Boolean,
         Char => SType::Char,
         Int8 => SType::Int8,
@@ -528,6 +533,9 @@ pub fn instruction(
             tail_call: true,
             param0: method,
         } => BInstruction::TailCall(method_source!(method)),
+        CallConstrained(constraint, method) => {
+            BInstruction::ConstrainedCall(constraint.as_idx(ctx)?.into(), method_source!(method))
+        }
         CallIndirect {
             tail_call: false,
             param0: signature,

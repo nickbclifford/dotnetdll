@@ -1,10 +1,10 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Bracket;
-use syn::{bracketed, parenthesized, Ident, Token};
+use syn::{bracketed, parenthesized, Ident, LitInt, Token};
 
 #[derive(Debug)]
 pub enum External {
@@ -83,8 +83,8 @@ impl ToTokens for Type {
 }
 
 macro_rules! check_idents {
-    (match $i:ident { $($src:literal => $dest:ident,)* }) => {
-        $(if $i == $src { quote! { BaseType::$dest.into() } } else )+ {
+    (match $i:ident { $($src:literal => $dest:ident,)* $(let $p:pat = $e:expr => $body:expr,)* }) => {
+        $(if $i == $src { quote! { BaseType::$dest.into() } } else )+ $(if let $p = $e { $body } else)* {
             panic!("unknown type {:?}", $i)
         }
     }
@@ -109,6 +109,14 @@ pub fn ctype(t: &Type) -> TokenStream {
             "nuint" => UIntPtr,
             "object" => Object,
             "string" => String,
+            let Some(num) = i.to_string().strip_prefix('T') => {
+                let lit = LitInt::new(num, Span::call_site());
+                quote! { MemberType::TypeGeneric(#lit).into() }
+            },
+            let Some(num) = i.to_string().strip_prefix('M') => {
+                let lit = LitInt::new(num, Span::call_site());
+                quote! { MethodType::MethodGeneric(#lit) }
+            },
         }),
         Type::External(e) => quote! { #e },
         Type::Pointer(inner) => {
@@ -177,6 +185,7 @@ impl Parse for ParameterList {
 pub struct Signature {
     is_static: Option<Token![static]>,
     return_type: ReturnType,
+    generics: GenericNum,
     parameters: ParameterList,
 }
 impl Parse for Signature {
@@ -184,8 +193,23 @@ impl Parse for Signature {
         Ok(Self {
             is_static: input.parse()?,
             return_type: input.parse()?,
+            generics: input.parse()?,
             parameters: input.parse()?,
         })
+    }
+}
+
+pub struct GenericNum(Option<LitInt>);
+impl Parse for GenericNum {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self(if input.peek(Token![<]) {
+            input.parse::<Token![<]>()?;
+            let num = input.parse()?;
+            input.parse::<Token![>]>()?;
+            Some(num)
+        } else {
+            None
+        }))
     }
 }
 
@@ -203,19 +227,29 @@ pub fn msig(sig: Signature) -> TokenStream {
 
     let params = sig.parameters.0.into_iter();
 
-    quote! {
+    let mut result = quote! {
         MethodSignature::#constructor(#return_type, vec![#(Parameter::new(#params)),*])
+    };
+
+    if let Some(num_generics) = sig.generics.0 {
+        result = quote! {{
+            let mut sig = #result;
+            sig.calling_convention = CallingConvention::Generic(#num_generics);
+            sig
+        }};
     }
+
+    result
 }
 
-pub struct TypeName(Punctuated<Ident, Token![.]>);
+pub struct TypeName(Punctuated<Ident, Token![.]>, GenericNum);
 impl Parse for TypeName {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Punctuated::parse_separated_nonempty(input).map(TypeName)
+        Ok(TypeName(Punctuated::parse_separated_nonempty(input)?, input.parse()?))
     }
 }
 
-pub fn type_name(TypeName(qualified): TypeName) -> TokenStream {
+pub fn type_name(TypeName(qualified, GenericNum(generic)): TypeName) -> TokenStream {
     let mut names: Vec<_> = qualified.into_iter().collect();
 
     let name = names.pop();
@@ -225,7 +259,9 @@ pub fn type_name(TypeName(qualified): TypeName) -> TokenStream {
         quote! { Some(stringify!(#(#names).*)) }
     };
 
-    quote! { (#namespace, stringify!(#name)) }
+    let generic = generic.map(|g| quote! { , "`", #g });
+
+    quote! { (#namespace, concat!(stringify!(#name) #generic)) }
 }
 
 pub struct TypeRef(TypeName, External);
@@ -261,7 +297,7 @@ impl ToTokens for MethodName {
 }
 
 pub struct MethodRef {
-    parent: External,
+    parent: Type,
     name: MethodName,
     signature: Signature,
 }
@@ -272,6 +308,7 @@ impl Parse for MethodRef {
         let parent = input.parse()?;
         input.parse::<Token![::]>()?;
         let name = input.parse()?;
+        let generics = input.parse()?;
         let parameters = input.parse()?;
 
         Ok(MethodRef {
@@ -280,6 +317,7 @@ impl Parse for MethodRef {
             signature: Signature {
                 is_static,
                 return_type,
+                generics,
                 parameters,
             },
         })

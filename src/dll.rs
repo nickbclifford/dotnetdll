@@ -2041,6 +2041,7 @@ impl<'a> DLL<'a> {
                 MethodReferenceParent, UnmanagedCallingConvention, UserMethod, VtableLayout,
             },
             resource::{Implementation, Visibility},
+            signature::CallingConvention,
             types::{Layout, ResolutionScope, TypeImplementation},
         };
 
@@ -2383,7 +2384,7 @@ impl<'a> DLL<'a> {
                 type_name: heap_idx!(strings, t.name),
                 type_namespace: opt_heap!(strings, t.namespace),
                 extends: match &t.extends {
-                    Some(t) => convert::write::source_index(t, build_ctx!())?,
+                    Some(t) => convert::write::source_index(None, t, build_ctx!())?,
                     None => metadata::index::TypeDefOrRef::Null,
                 },
                 // for some reason, things break if I use 0 for null index instead of 1
@@ -2404,7 +2405,7 @@ impl<'a> DLL<'a> {
                 let impl_idx = tables.interface_impl.len() + 1;
                 tables.interface_impl.push(InterfaceImpl {
                     class: idx.into(),
-                    interface: convert::write::source_index(i, build_ctx!())?,
+                    interface: convert::write::source_index(None, i, build_ctx!())?,
                 });
                 write_attrs!(attrs, InterfaceImpl(impl_idx));
             }
@@ -2772,7 +2773,16 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, &m.name),
-                    signature: convert::write::method_def(&m.signature, build_ctx!())?,
+                    signature: {
+                        let ctx = build_ctx!();
+                        if m.generic_parameters.is_empty() {
+                            convert::write::method_def(&m.signature, ctx)?
+                        } else {
+                            let mut sig = m.signature.clone();
+                            sig.calling_convention = CallingConvention::Generic(m.generic_parameters.len());
+                            convert::write::method_def(&sig, ctx)?
+                        }
+                    },
                     param_list: (tables.param.len() + 1).into(),
                 });
 

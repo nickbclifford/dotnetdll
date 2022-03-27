@@ -11,13 +11,12 @@ pub fn write() {
             let handler_del = ctx
                 .resolution
                 .push_type_reference(type_ref! { System.EventHandler in #mscorlib });
-            let handler_member: MemberType = BaseType::class(handler_del.into()).into();
+            let handler_member: MemberType = BaseType::class(handler_del).into();
             let handler_method: MethodType = handler_member.clone().into();
 
             let delegate_t: MethodType = BaseType::class(
                 ctx.resolution
-                    .push_type_reference(type_ref! { System.Delegate in #mscorlib })
-                    .into(),
+                    .push_type_reference(type_ref! { System.Delegate in #mscorlib }),
             )
             .into();
             let combine = ctx.resolution.push_method_reference(
@@ -29,12 +28,7 @@ pub fn write() {
 
             let field = ctx.resolution.push_field(
                 ctx.class,
-                Field::new(
-                    false,
-                    Accessibility::Private,
-                    "eventHandler",
-                    handler_member.clone(),
-                ),
+                Field::new(false, Accessibility::Private, "eventHandler", handler_member.clone()),
             );
             let event_sig = msig! { void (@handler_method) };
             let event = ctx.resolution.push_event(
@@ -77,13 +71,12 @@ pub fn write() {
 
             let event_args_member: MemberType = BaseType::class(
                 ctx.resolution
-                    .push_type_reference(type_ref! { System.EventArgs in #mscorlib })
-                    .into(),
+                    .push_type_reference(type_ref! { System.EventArgs in #mscorlib }),
             )
             .into();
             let event_args: MethodType = event_args_member.clone().into();
 
-            let console: MethodType = BaseType::class(ctx.console.into()).into();
+            let console: MethodType = BaseType::class(ctx.console).into();
             let write_line = ctx
                 .resolution
                 .push_method_reference(method_ref! { static void #console::WriteLine(string) });
@@ -140,7 +133,7 @@ pub fn write() {
 
             (
                 vec![
-                    LocalVariable::new(BaseType::class(ctx.class.into()).into()),
+                    LocalVariable::new(BaseType::class(ctx.class).into()),
                     LocalVariable::new(handler_method),
                 ],
                 vec![

@@ -67,17 +67,10 @@ pub fn custom_modifier(src: CustomMod, ctx: &Context) -> Result<CustomTypeModifi
 pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<BaseType<T>> {
     use Type::*;
 
-    let value_kind = match sig {
-        ValueType(_) => ValueKind::ValueType,
-        Class(_) => ValueKind::Class,
-        _ => ValueKind::Unknown,
-    };
-
     let generic_inst = |tok, types: Vec<Type>, kind| -> Result<BaseType<T>> {
         Ok(BaseType::Type {
-            value_kind,
+            value_kind: Some(kind),
             source: TypeSource::Generic {
-                base_kind: kind,
                 base: user_type(tok, ctx)?,
                 parameters: types.into_iter().map(|t| T::from_sig(t, ctx)).collect::<Result<_>>()?,
             },
@@ -117,13 +110,17 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
                 None => None,
             },
         ),
-        Class(tok) | ValueType(tok) => BaseType::Type {
-            value_kind,
+        Class(tok) => BaseType::Type {
+            value_kind: Some(ValueKind::Class),
+            source: TypeSource::User(user_type(tok, ctx)?),
+        },
+        ValueType(tok) => BaseType::Type {
+            value_kind: Some(ValueKind::ValueType),
             source: TypeSource::User(user_type(tok, ctx)?),
         },
         FnPtr(s) => BaseType::FunctionPointer(maybe_unmanaged_method(*s, ctx)?),
-        GenericInstClass(tok, types) => generic_inst(tok, types, InstantiationKind::Class)?,
-        GenericInstValueType(tok, types) => generic_inst(tok, types, InstantiationKind::ValueType)?,
+        GenericInstClass(tok, types) => generic_inst(tok, types, ValueKind::Class)?,
+        GenericInstValueType(tok, types) => generic_inst(tok, types, ValueKind::ValueType)?,
         bad => throw!("invalid type signature for base type {:?}", bad),
     })
 }
@@ -134,8 +131,8 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
             let idx = i - 1;
             if idx < ctx.def_len {
                 Ok(T::from_base(BaseType::Type {
-                    value_kind: ValueKind::Unknown,
-                    source: TypeSource::User(UserType::Definition(TypeIndex(idx))),
+                    value_kind: None,
+                    source: TypeIndex(idx).into(),
                 }))
             } else {
                 throw!("invalid type definition index {} while parsing a type", idx)
@@ -145,8 +142,8 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
             let idx = i - 1;
             if idx < ctx.ref_len {
                 Ok(T::from_base(BaseType::Type {
-                    value_kind: ValueKind::Unknown,
-                    source: TypeSource::User(UserType::Reference(TypeRefIndex(idx))),
+                    value_kind: None,
+                    source: TypeRefIndex(idx).into(),
                 }))
             } else {
                 throw!("invalid type reference index {} while parsing a type", idx)
@@ -830,6 +827,7 @@ pub fn instruction<'r, 'data>(
         Unbox(t) => unbox!(t | typecheck false),
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),
         Xor => Instruction::Xor,
+        ConstrainedCall(c, t) => Instruction::CallConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?),
         ConstrainedCallvirt(c, t) => {
             Instruction::CallVirtualConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
         }

@@ -7,7 +7,7 @@ pub fn write() {
     common::write_fixture(
         "hello_world",
         |ctx| {
-            let console_type = BaseType::class(ctx.console.into()).into();
+            let console_type = BaseType::class(ctx.console).into();
             let write_line = ctx
                 .resolution
                 .push_method_reference(method_ref! { static void #console_type::WriteLine(string) });

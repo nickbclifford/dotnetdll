@@ -532,7 +532,7 @@ impl TryIntoCtx<(), DynamicBuffer> for MethodSpec {
     fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        into.gwrite_with(0x0a, offset, scroll::LE)?;
+        into.gwrite_with(0x0a_u8, offset, scroll::LE)?;
 
         into.gwrite(compressed::Unsigned(self.0.len() as u32), offset)?;
         for t in self.0 {

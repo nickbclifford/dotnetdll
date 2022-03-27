@@ -408,8 +408,8 @@ impl ResolvedDebug for CustomTypeModifier {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum InstantiationKind {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ValueKind {
     Class,
     ValueType,
 }
@@ -420,7 +420,6 @@ pub enum InstantiationKind {
 pub enum TypeSource<EnclosingType> {
     User(#[nested(TypeIndex, TypeRefIndex)] UserType),
     Generic {
-        base_kind: InstantiationKind,
         base: UserType,
         parameters: Vec<EnclosingType>,
     },
@@ -439,17 +438,10 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum ValueKind {
-    Class,
-    ValueType,
-    Unknown,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseType<EnclosingType> {
     Type {
-        value_kind: ValueKind,
+        value_kind: Option<ValueKind>,
         source: TypeSource<EnclosingType>,
     },
     Boolean,
@@ -484,7 +476,7 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
             } => {
                 format!(
                     "{}{}",
-                    if *value_type == ValueKind::ValueType {
+                    if matches!(value_type, Some(ValueKind::ValueType)) {
                         "valuetype "
                     } else {
                         ""
@@ -534,6 +526,14 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
         }
     }
 }
+impl<T> From<TypeSource<T>> for BaseType<T> {
+    fn from(source: TypeSource<T>) -> Self {
+        BaseType::Type {
+            value_kind: None,
+            source,
+        }
+    }
+}
 
 impl<T> BaseType<T> {
     pub const fn vector(inner: T) -> Self {
@@ -546,26 +546,26 @@ impl<T> BaseType<T> {
         BaseType::ValuePointer(vec![], Some(pointee))
     }
 
-    pub const fn class(source: TypeSource<T>) -> Self {
+    pub fn class(source: impl Into<TypeSource<T>>) -> Self {
         BaseType::Type {
-            value_kind: ValueKind::Class,
-            source,
+            value_kind: Some(ValueKind::Class),
+            source: source.into(),
         }
     }
 
-    pub const fn valuetype(source: TypeSource<T>) -> Self {
+    pub fn valuetype(source: impl Into<TypeSource<T>>) -> Self {
         BaseType::Type {
-            value_kind: ValueKind::ValueType,
-            source,
+            value_kind: Some(ValueKind::ValueType),
+            source: source.into(),
         }
     }
 }
 
 macro_rules! impl_typekind {
     ($t:ty) => {
-        impl From<BaseType<$t>> for $t {
-            fn from(b: BaseType<$t>) -> Self {
-                TypeKind::from_base(b)
+        impl<T: Into<BaseType<$t>>> From<T> for $t {
+            fn from(t: T) -> Self {
+                TypeKind::from_base(t.into())
             }
         }
         impl $t {

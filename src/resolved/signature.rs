@@ -1,5 +1,5 @@
+pub use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
 use crate::{
-    binary::signature::kinds::{CallingConvention, StandAloneCallingConvention},
     resolution::Resolution,
     resolved::{
         types::{CustomTypeModifier, MethodType},
