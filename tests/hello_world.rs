@@ -14,11 +14,11 @@ pub fn write() {
 
             (
                 vec![],
-                vec![
-                    Instruction::load_string("Hello, world!"),
-                    Instruction::call(write_line),
-                    Instruction::Return,
-                ],
+                common::asm! {
+                    load_string "Hello, world!";
+                    call write_line;
+                    Return;
+                },
             )
         },
         b"Hello, world!\n",

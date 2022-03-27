@@ -24,10 +24,7 @@ pub fn write() {
             let static_type: MethodType = ctx.resolution[static_field].return_type.clone().into();
             let static_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new(
-                    "StaticProperty",
-                    Parameter::value(static_type.clone()),
-                ),
+                Property::new("StaticProperty", Parameter::value(static_type.clone())),
             );
             let static_getter = ctx.resolution.set_property_getter(
                 static_prop,
@@ -35,10 +32,10 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { static @static_type () },
                     "get_StaticProperty",
-                    Some(body::Method::new(vec![
-                        Instruction::load_static_field(static_field),
-                        Instruction::Return,
-                    ])),
+                    Some(body::Method::new(common::asm! {
+                        load_static_field static_field;
+                        Return;
+                    })),
                 ),
             );
             let static_setter = ctx.resolution.set_property_setter(
@@ -47,21 +44,18 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { static void (@static_type) },
                     "set_StaticProperty",
-                    Some(body::Method::new(vec![
-                        Instruction::LoadArgument(0),
-                        Instruction::store_static_field(static_field),
-                        Instruction::Return,
-                    ])),
+                    Some(body::Method::new(common::asm! {
+                        LoadArgument 0;
+                        store_static_field static_field;
+                        Return;
+                    })),
                 ),
             );
 
             let instance_type: MethodType = ctx.resolution[instance_field].return_type.clone().into();
             let instance_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new(
-                    "InstanceProperty",
-                    Parameter::value(instance_type.clone()),
-                ),
+                Property::new("InstanceProperty", Parameter::value(instance_type.clone())),
             );
             let instance_getter = ctx.resolution.set_property_getter(
                 instance_prop,
@@ -69,11 +63,11 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { @instance_type () },
                     "get_InstanceProperty",
-                    Some(body::Method::new(vec![
-                        Instruction::LoadArgument(0),
-                        Instruction::load_field(instance_field),
-                        Instruction::Return,
-                    ])),
+                    Some(body::Method::new(common::asm! {
+                        LoadArgument 0;
+                        load_field instance_field;
+                        Return;
+                    })),
                 ),
             );
             let instance_setter = ctx.resolution.set_property_setter(
@@ -82,49 +76,49 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { void (@instance_type) },
                     "set_InstanceProperty",
-                    Some(body::Method::new(vec![
-                        Instruction::LoadArgument(0),
-                        Instruction::LoadArgument(1),
-                        Instruction::store_field(instance_field),
-                        Instruction::Return,
-                    ])),
+                    Some(body::Method::new(common::asm! {
+                        LoadArgument 0;
+                        LoadArgument 1;
+                        store_field instance_field;
+                        Return;
+                    })),
                 ),
             );
 
             (
                 vec![LocalVariable::new(BaseType::class(ctx.class).into())],
-                vec![
+                common::asm! {
                     // init static
-                    Instruction::LoadConstantInt32(-1),
-                    Instruction::call(static_setter),
+                    LoadConstantInt32 -1;
+                    call static_setter;
                     // init object and instance
-                    Instruction::NewObject(ctx.default_ctor.into()),
-                    Instruction::Duplicate,
-                    Instruction::StoreLocal(0),
-                    Instruction::LoadConstantInt32(1),
-                    Instruction::call(instance_setter),
+                    new_object ctx.default_ctor;
+                    Duplicate;
+                    StoreLocal 0;
+                    LoadConstantInt32 1;
+                    call instance_setter;
                     // increment static
-                    Instruction::call(static_getter),
-                    Instruction::LoadConstantInt32(1),
-                    Instruction::Add,
-                    Instruction::call(static_setter),
+                    call static_getter;
+                    LoadConstantInt32 1;
+                    Add;
+                    call static_setter;
                     // increment instance
-                    Instruction::LoadLocal(0),
-                    Instruction::Duplicate,
-                    Instruction::call(instance_getter),
-                    Instruction::LoadConstantInt32(1),
-                    Instruction::Add,
-                    Instruction::call(instance_setter),
+                    LoadLocal 0;
+                    Duplicate;
+                    call instance_getter;
+                    LoadConstantInt32 1;
+                    Add;
+                    call instance_setter;
                     // call writeline
-                    Instruction::load_string("{0}, {1}"),
-                    Instruction::call(static_getter),
-                    Instruction::box_value(static_type),
-                    Instruction::LoadLocal(0),
-                    Instruction::call(instance_getter),
-                    Instruction::box_value(instance_type),
-                    Instruction::call(write_line),
-                    Instruction::Return,
-                ],
+                    load_string "{0}; {1}";
+                    call static_getter;
+                    box_value static_type;
+                    LoadLocal 0;
+                    call instance_getter;
+                    box_value instance_type;
+                    call write_line;
+                    Return;
+                },
             )
         },
         b"0, 2\n",

@@ -59,11 +59,11 @@ pub fn write_fixture(
             Accessibility::Public,
             msig! { void () },
             ".ctor",
-            Some(body::Method::new(vec![
-                Instruction::LoadArgument(0),
-                Instruction::call(object_ctor),
-                Instruction::Return,
-            ])),
+            Some(body::Method::new(asm! {
+                LoadArgument 0;
+                call object_ctor;
+                Return;
+            })),
         ),
     );
     res[default_ctor].special_name = true;

@@ -40,31 +40,31 @@ pub fn write() {
                         Accessibility::Public,
                         event_sig.clone(),
                         "add_MyEvent",
-                        Some(body::Method::new(vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::Duplicate,
-                            Instruction::load_field(field),
-                            Instruction::LoadArgument(1),
-                            Instruction::call(combine),
-                            Instruction::cast_class(handler_method.clone()),
-                            Instruction::store_field(field),
-                            Instruction::Return,
-                        ])),
+                        Some(body::Method::new(common::asm! {
+                            LoadArgument 0;
+                            Duplicate;
+                            load_field field;
+                            LoadArgument 1;
+                            call combine;
+                            cast_class handler_method.clone();
+                            store_field field;
+                            Return;
+                        })),
                     ),
                     Method::new(
                         Accessibility::Public,
                         event_sig,
                         "remove_MyEvent",
-                        Some(body::Method::new(vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::Duplicate,
-                            Instruction::load_field(field),
-                            Instruction::LoadArgument(1),
-                            Instruction::call(remove),
-                            Instruction::cast_class(handler_method.clone()),
-                            Instruction::store_field(field),
-                            Instruction::Return,
-                        ])),
+                        Some(body::Method::new(common::asm! {
+                            LoadArgument 0;
+                            Duplicate;
+                            load_field field;
+                            LoadArgument 1;
+                            call remove;
+                            cast_class handler_method.clone();
+                            store_field field;
+                            Return;
+                        })),
                     ),
                 ),
             );
@@ -86,11 +86,11 @@ pub fn write() {
                     Accessibility::Private,
                     msig! { static void (object, @event_args) },
                     "Listener",
-                    Some(body::Method::new(vec![
-                        Instruction::load_string("listener triggered"),
-                        Instruction::call(write_line),
-                        Instruction::Return,
-                    ])),
+                    Some(body::Method::new(common::asm! {
+                        load_string "listener triggered";
+                        call write_line;
+                        Return;
+                    })),
                 ),
             );
 
@@ -108,18 +108,18 @@ pub fn write() {
                     "Invoke",
                     Some(body::Method::with_locals(
                         vec![LocalVariable::new(handler_method.clone())],
-                        vec![
-                            Instruction::LoadArgument(0),
-                            Instruction::load_field(field),
-                            Instruction::Duplicate,
-                            Instruction::StoreLocal(0),
-                            Instruction::BranchFalsy(9),
-                            Instruction::LoadLocal(0),
-                            Instruction::LoadArgument(0),
-                            Instruction::load_static_field(empty),
-                            Instruction::call_virtual(delegate_invoke),
-                            Instruction::Return,
-                        ],
+                        common::asm! {
+                            LoadArgument 0;
+                            load_field field;
+                            Duplicate;
+                            StoreLocal 0;
+                            BranchFalsy 9;
+                            LoadLocal 0;
+                            LoadArgument 0;
+                            load_static_field empty;
+                            call_virtual delegate_invoke;
+                            Return;
+                        },
                     )),
                 ),
             );
@@ -136,34 +136,34 @@ pub fn write() {
                     LocalVariable::new(BaseType::class(ctx.class).into()),
                     LocalVariable::new(handler_method),
                 ],
-                vec![
+                common::asm! {
                     // init obj
-                    Instruction::new_object(ctx.default_ctor),
-                    Instruction::StoreLocal(0),
+                    new_object ctx.default_ctor;
+                    StoreLocal 0;
                     // init delegate
-                    Instruction::LoadNull,
-                    Instruction::load_method_pointer(listener),
-                    Instruction::new_object(handler_ctor),
-                    Instruction::StoreLocal(1),
+                    LoadNull;
+                    load_method_pointer listener;
+                    new_object handler_ctor;
+                    StoreLocal 1;
                     // invoke first time (should have no output)
-                    Instruction::LoadLocal(0),
-                    Instruction::call(invoke),
+                    LoadLocal 0;
+                    call invoke;
                     // add delegate
-                    Instruction::LoadLocal(0),
-                    Instruction::LoadLocal(1),
-                    Instruction::call(add),
+                    LoadLocal 0;
+                    LoadLocal 1;
+                    call add;
                     // invoke second time (should have output)
-                    Instruction::LoadLocal(0),
-                    Instruction::call(invoke),
+                    LoadLocal 0;
+                    call invoke;
                     // remove delegate
-                    Instruction::LoadLocal(0),
-                    Instruction::LoadLocal(1),
-                    Instruction::call(remove),
+                    LoadLocal 0;
+                    LoadLocal 1;
+                    call remove;
                     // invoke last time (should have no output)
-                    Instruction::LoadLocal(0),
-                    Instruction::call(invoke),
-                    Instruction::Return,
-                ],
+                    LoadLocal 0;
+                    call invoke;
+                    Return;
+                },
             )
         },
         b"listener triggered\n",
