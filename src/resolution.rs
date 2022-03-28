@@ -1,26 +1,26 @@
-use super::resolved::*;
+use crate::prelude::*;
 use dotnetdll_macros::From;
 use paste::paste;
 use std::ops::{Index, IndexMut};
 
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
-    pub assembly: Option<assembly::Assembly<'a>>,
-    pub assembly_references: Vec<assembly::ExternalAssemblyReference<'a>>,
+    pub assembly: Option<Assembly<'a>>,
+    pub assembly_references: Vec<ExternalAssemblyReference<'a>>,
     pub entry_point: Option<EntryPoint>,
-    pub exported_types: Vec<types::ExportedType<'a>>,
-    pub field_references: Vec<members::ExternalFieldReference<'a>>,
-    pub files: Vec<module::File<'a>>,
+    pub exported_types: Vec<ExportedType<'a>>,
+    pub field_references: Vec<ExternalFieldReference<'a>>,
+    pub files: Vec<File<'a>>,
     pub manifest_resources: Vec<resource::ManifestResource<'a>>,
-    pub method_references: Vec<members::ExternalMethodReference<'a>>,
-    pub module: module::Module<'a>,
-    pub module_references: Vec<module::ExternalModuleReference<'a>>,
-    pub type_definitions: Vec<types::TypeDefinition<'a>>,
-    pub type_references: Vec<types::ExternalTypeReference<'a>>,
+    pub method_references: Vec<ExternalMethodReference<'a>>,
+    pub module: Module<'a>,
+    pub module_references: Vec<ExternalModuleReference<'a>>,
+    pub type_definitions: Vec<TypeDefinition<'a>>,
+    pub type_references: Vec<ExternalTypeReference<'a>>,
 }
 
-impl Resolution<'_> {
-    pub fn new(module: module::Module) -> Resolution {
+impl<'a> Resolution<'a> {
+    pub fn new(module: Module<'a>) -> Resolution<'a> {
         Resolution {
             assembly: None,
             assembly_references: vec![],
@@ -32,13 +32,29 @@ impl Resolution<'_> {
             method_references: vec![],
             module,
             module_references: vec![],
-            type_definitions: vec![],
+            type_definitions: vec![TypeDefinition::new(None, "<Module>")],
             type_references: vec![],
         }
     }
 
-    pub fn push_global_module_type(&mut self) -> TypeIndex {
-        self.push_type_definition(types::TypeDefinition::new(None, "<Module>"))
+    pub fn add_default_ctor(&mut self, parent: TypeIndex) -> MethodIndex {
+        let object_ctor = self.push_method_reference(method_ref! { void object::.ctor() });
+        let m = self.push_method(
+            parent,
+            Method::new(
+                Accessibility::Public,
+                msig! { void () },
+                ".ctor",
+                Some(body::Method::new(asm! {
+                    LoadArgument 0;
+                    call object_ctor;
+                    Return;
+                })),
+            ),
+        );
+        self[m].special_name = true;
+        self[m].runtime_special_name = true;
+        m
     }
 }
 
@@ -115,14 +131,14 @@ macro_rules! basic_index {
     };
 }
 
-basic_index!(AssemblyRefIndex indexes assembly_reference as assembly::ExternalAssemblyReference<'a>);
-basic_index!(ExportedTypeIndex indexes exported_type as types::ExportedType<'a>);
-basic_index!(FieldRefIndex indexes field_reference as members::ExternalFieldReference<'a>);
-basic_index!(FileIndex indexes file as module::File<'a>);
-basic_index!(MethodRefIndex indexes method_reference as members::ExternalMethodReference<'a>);
-basic_index!(ModuleRefIndex indexes module_reference as module::ExternalModuleReference<'a>);
-basic_index!(TypeIndex indexes type_definition as types::TypeDefinition<'a>);
-basic_index!(TypeRefIndex indexes type_reference as types::ExternalTypeReference<'a>);
+basic_index!(AssemblyRefIndex indexes assembly_reference as ExternalAssemblyReference<'a>);
+basic_index!(ExportedTypeIndex indexes exported_type as ExportedType<'a>);
+basic_index!(FieldRefIndex indexes field_reference as ExternalFieldReference<'a>);
+basic_index!(FileIndex indexes file as File<'a>);
+basic_index!(MethodRefIndex indexes method_reference as ExternalMethodReference<'a>);
+basic_index!(ModuleRefIndex indexes module_reference as ExternalModuleReference<'a>);
+basic_index!(TypeIndex indexes type_definition as TypeDefinition<'a>);
+basic_index!(TypeRefIndex indexes type_reference as ExternalTypeReference<'a>);
 
 macro_rules! internal_index {
     ($name:ident indexes $sing:ident / $plural:ident as $t:ty) => {
@@ -179,9 +195,9 @@ macro_rules! internal_index {
     };
 }
 
-internal_index!(FieldIndex indexes field / fields as members::Field<'a>);
-internal_index!(PropertyIndex indexes property / properties as members::Property<'a>);
-internal_index!(EventIndex indexes event / events as members::Event<'a>);
+internal_index!(FieldIndex indexes field / fields as Field<'a>);
+internal_index!(PropertyIndex indexes property / properties as Property<'a>);
+internal_index!(EventIndex indexes event / events as Event<'a>);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum MethodMemberIndex {
@@ -201,7 +217,7 @@ pub struct MethodIndex {
 }
 
 impl<'a> Index<MethodIndex> for Resolution<'a> {
-    type Output = members::Method<'a>;
+    type Output = Method<'a>;
 
     fn index(&self, index: MethodIndex) -> &Self::Output {
         let parent = &self[index.parent_type];
@@ -241,7 +257,7 @@ impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
     }
 }
 impl<'a> Resolution<'a> {
-    pub fn push_method(&mut self, parent: TypeIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn push_method(&mut self, parent: TypeIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[parent].methods;
         methods.push(method);
         MethodIndex {
@@ -259,7 +275,7 @@ impl<'a> Resolution<'a> {
             None
         }
     }
-    pub fn enumerate_methods(&self, parent: TypeIndex) -> impl Iterator<Item = (MethodIndex, &members::Method<'a>)> {
+    pub fn enumerate_methods(&self, parent: TypeIndex) -> impl Iterator<Item = (MethodIndex, &Method<'a>)> {
         self[parent].methods.iter().enumerate().map(move |(i, f)| {
             (
                 MethodIndex {
@@ -271,7 +287,7 @@ impl<'a> Resolution<'a> {
         })
     }
 
-    pub fn set_property_getter(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn set_property_getter(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         self[property].getter = Some(method);
         MethodIndex {
             parent_type: property.parent_type,
@@ -289,7 +305,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn set_property_setter(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn set_property_setter(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         self[property].setter = Some(method);
         MethodIndex {
             parent_type: property.parent_type,
@@ -307,7 +323,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn push_property_other(&mut self, property: PropertyIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn push_property_other(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[property].other;
         methods.push(method);
         MethodIndex {
@@ -352,7 +368,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn set_event_raise(&mut self, event: EventIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn set_event_raise(&mut self, event: EventIndex, method: Method<'a>) -> MethodIndex {
         self[event].raise_event = Some(method);
         MethodIndex {
             parent_type: event.parent_type,
@@ -370,7 +386,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    pub fn push_event_other(&mut self, event: EventIndex, method: members::Method<'a>) -> MethodIndex {
+    pub fn push_event_other(&mut self, event: EventIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[event].other;
         methods.push(method);
         MethodIndex {

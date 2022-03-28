@@ -6,29 +6,10 @@ pub struct WriteContext<'a> {
     pub resolution: Resolution<'a>,
     pub mscorlib: AssemblyRefIndex,
     pub console: TypeRefIndex,
-    pub object_ctor: MethodRefIndex,
     pub class: TypeIndex,
     pub default_ctor: MethodIndex,
+    pub object: TypeRefIndex,
 }
-
-#[allow(unused_macros)]
-macro_rules! asm {
-    ($ins:ident) => {
-        Instruction::$ins
-    };
-    ($ins:ident $($param:expr),+) => {
-        Instruction::$ins($($param),+)
-    };
-    ($($ins:ident $($param:expr),*;)*) => {
-        vec![
-            $(
-                $crate::common::asm! { $ins $($param),* }
-            ),*
-        ]
-    }
-}
-#[allow(unused_imports)]
-pub(crate) use asm;
 
 pub fn write_fixture(
     name: &str,
@@ -39,7 +20,6 @@ pub fn write_fixture(
 
     let mut res = Resolution::new(Module::new(&dll_name));
     res.assembly = Some(Assembly::new(name));
-    res.push_global_module_type();
 
     let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
 
@@ -49,25 +29,7 @@ pub fn write_fixture(
 
     let class = res.push_type_definition(TypeDefinition::new(None, "Program"));
     res[class].extends = Some(object.into());
-
-    let object_type = BaseType::class(object).into();
-    let object_ctor = res.push_method_reference(method_ref! { void #object_type::.ctor() });
-
-    let default_ctor = res.push_method(
-        class,
-        Method::new(
-            Accessibility::Public,
-            msig! { void () },
-            ".ctor",
-            Some(body::Method::new(asm! {
-                LoadArgument 0;
-                call object_ctor;
-                Return;
-            })),
-        ),
-    );
-    res[default_ctor].special_name = true;
-    res[default_ctor].runtime_special_name = true;
+    let default_ctor = res.add_default_ctor(class);
 
     let mut ctx = WriteContext {
         resolution: res,
@@ -75,7 +37,7 @@ pub fn write_fixture(
         console,
         class,
         default_ctor,
-        object_ctor,
+        object,
     };
 
     let (vars, ins) = test(&mut ctx);
@@ -115,23 +77,28 @@ pub fn write_fixture(
             println!("{}", String::from_utf8(ildasm.stdout)?);
         }
 
-        // Command::new("gdb")
-        //     .arg("-ex")
-        //     .arg("set substitute-path /runtime /home/nick/Desktop/runtime")
-        //     .arg("--args")
-        //     .arg("/home/nick/Desktop/runtime/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun")
-        //     .arg(&dll_path)
-        //     .spawn()
-        //     .unwrap()
-        //     .wait()
-        //     .unwrap();
+        if let Ok(r) = std::env::var("RUNTIME") {
+            Command::new("gdb")
+                .arg("-ex")
+                .arg(format!("set substitute-path /runtime {}", r))
+                .arg("--args")
+                .arg(format!(
+                    "{}/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun",
+                    r
+                ))
+                .arg(&dll_path)
+                .spawn()?
+                .wait()?;
+        }
 
-        let ilverify = Command::new("ilverify")
-            .arg(dll_path)
-            .arg("-r")
-            .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
-            .output()?;
-        println!("{}", String::from_utf8(ilverify.stdout)?);
+        if let Ok(i) = std::env::var("ILVERIFY") {
+            let ilverify = Command::new(i)
+                .arg(dll_path)
+                .arg("-r")
+                .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
+                .output()?;
+            println!("{}", String::from_utf8(ilverify.stdout)?);
+        }
     }
 
     assert_eq!(output.stdout, expect);

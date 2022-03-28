@@ -18,7 +18,7 @@ pub fn write() {
 
             let ctor_body = &mut ctx.resolution[ctx.default_ctor].body.as_mut().unwrap().instructions;
             ctor_body.pop(); // remove ret we automatically inserted
-            ctor_body.extend(common::asm! {
+            ctor_body.extend(asm! {
                 LoadArgument 0;
                 load_static_field count;
                 Duplicate;
@@ -67,7 +67,7 @@ pub fn write() {
                     "Init",
                     Some(body::Method::with_locals(
                         vec![LocalVariable::new(list_t), LocalVariable::new(ctype! { int })],
-                        common::asm! {
+                        asm! {
                             new_object list_ctor;
                             StoreLocal 0;
                             LoadConstantInt32 0;
@@ -144,7 +144,7 @@ pub fn write() {
 
             (
                 vec![LocalVariable::new(enum_class)],
-                common::asm! {
+                asm! {
                     LoadConstantInt32 5;
                     call init_class;
                     call_virtual get_enum;

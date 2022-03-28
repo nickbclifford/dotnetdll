@@ -91,6 +91,7 @@ pub mod resolved;
 
 pub mod prelude {
     pub use crate::{
+        access, asm,
         dll::DLL,
         resolution::*,
         resolved::{
@@ -99,6 +100,7 @@ pub mod prelude {
             il::*,
             members::{Accessibility as MAccess, *},
             module::*,
+            resource,
             signature::*,
             types::{Accessibility as TAccess, *},
             Accessibility,

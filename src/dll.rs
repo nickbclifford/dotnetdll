@@ -2371,7 +2371,8 @@ impl<'a> DLL<'a> {
 
         tables.type_def.reserve(res.type_definitions.len());
         for (idx, t) in res.type_definitions.iter().enumerate() {
-            let simple_idx = idx.into();
+            // I think we're supposed to ignore the <Module> type entry
+            let simple_idx = (idx + 1).into();
 
             tables.type_def.push(TypeDef {
                 flags: {
@@ -2404,7 +2405,7 @@ impl<'a> DLL<'a> {
             for (attrs, i) in &t.implements {
                 let impl_idx = tables.interface_impl.len() + 1;
                 tables.interface_impl.push(InterfaceImpl {
-                    class: idx.into(),
+                    class: simple_idx,
                     interface: convert::write::source_index(None, i, build_ctx!())?,
                 });
                 write_attrs!(attrs, InterfaceImpl(impl_idx));

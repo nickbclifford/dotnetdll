@@ -19,6 +19,7 @@ pub enum Accessibility {
     Public,
 }
 
+#[macro_export]
 macro_rules! access {
     (public) => {
         Accessibility::Public
@@ -39,7 +40,6 @@ macro_rules! access {
         Accessibility::FamilyANDAssembly
     };
 }
-pub(crate) use access;
 
 use std::fmt::{Display, Formatter};
 

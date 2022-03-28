@@ -14,7 +14,7 @@ pub fn write() {
 
             (
                 vec![],
-                common::asm! {
+                asm! {
                     load_string "Hello, world!";
                     call write_line;
                     Return;

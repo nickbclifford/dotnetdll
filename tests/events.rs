@@ -40,7 +40,7 @@ pub fn write() {
                         Accessibility::Public,
                         event_sig.clone(),
                         "add_MyEvent",
-                        Some(body::Method::new(common::asm! {
+                        Some(body::Method::new(asm! {
                             LoadArgument 0;
                             Duplicate;
                             load_field field;
@@ -55,7 +55,7 @@ pub fn write() {
                         Accessibility::Public,
                         event_sig,
                         "remove_MyEvent",
-                        Some(body::Method::new(common::asm! {
+                        Some(body::Method::new(asm! {
                             LoadArgument 0;
                             Duplicate;
                             load_field field;
@@ -86,7 +86,7 @@ pub fn write() {
                     Accessibility::Private,
                     msig! { static void (object, @event_args) },
                     "Listener",
-                    Some(body::Method::new(common::asm! {
+                    Some(body::Method::new(asm! {
                         load_string "listener triggered";
                         call write_line;
                         Return;
@@ -108,7 +108,7 @@ pub fn write() {
                     "Invoke",
                     Some(body::Method::with_locals(
                         vec![LocalVariable::new(handler_method.clone())],
-                        common::asm! {
+                        asm! {
                             LoadArgument 0;
                             load_field field;
                             Duplicate;
@@ -136,7 +136,7 @@ pub fn write() {
                     LocalVariable::new(BaseType::class(ctx.class).into()),
                     LocalVariable::new(handler_method),
                 ],
-                common::asm! {
+                asm! {
                     // init obj
                     new_object ctx.default_ctor;
                     StoreLocal 0;

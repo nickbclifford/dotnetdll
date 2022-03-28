@@ -265,3 +265,20 @@ impl Instruction {
         Instruction::LoadString(s.as_ref().encode_utf16().collect())
     }
 }
+
+#[macro_export]
+macro_rules! asm {
+    ($ins:ident) => {
+        Instruction::$ins
+    };
+    ($ins:ident $($param:expr),+) => {
+        Instruction::$ins($($param),+)
+    };
+    ($($ins:ident $($param:expr),*;)*) => {
+        vec![
+            $(
+                $crate::asm! { $ins $($param),* }
+            ),*
+        ]
+    }
+}

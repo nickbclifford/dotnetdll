@@ -32,7 +32,7 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { static @static_type () },
                     "get_StaticProperty",
-                    Some(body::Method::new(common::asm! {
+                    Some(body::Method::new(asm! {
                         load_static_field static_field;
                         Return;
                     })),
@@ -44,7 +44,7 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { static void (@static_type) },
                     "set_StaticProperty",
-                    Some(body::Method::new(common::asm! {
+                    Some(body::Method::new(asm! {
                         LoadArgument 0;
                         store_static_field static_field;
                         Return;
@@ -63,7 +63,7 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { @instance_type () },
                     "get_InstanceProperty",
-                    Some(body::Method::new(common::asm! {
+                    Some(body::Method::new(asm! {
                         LoadArgument 0;
                         load_field instance_field;
                         Return;
@@ -76,7 +76,7 @@ pub fn write() {
                     Accessibility::Public,
                     msig! { void (@instance_type) },
                     "set_InstanceProperty",
-                    Some(body::Method::new(common::asm! {
+                    Some(body::Method::new(asm! {
                         LoadArgument 0;
                         LoadArgument 1;
                         store_field instance_field;
@@ -87,7 +87,7 @@ pub fn write() {
 
             (
                 vec![LocalVariable::new(BaseType::class(ctx.class).into())],
-                common::asm! {
+                asm! {
                     // init static
                     LoadConstantInt32 -1;
                     call static_setter;

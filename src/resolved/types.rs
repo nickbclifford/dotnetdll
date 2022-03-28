@@ -272,6 +272,10 @@ impl<'a> TypeDefinition<'a> {
             None => self.type_name(),
         }
     }
+
+    pub fn add_implementation(&mut self, interface_type: impl Into<TypeSource<MemberType>>) {
+        self.implements.push((vec![], interface_type.into()));
+    }
 }
 
 #[derive(Debug, Copy, Clone, From)]
