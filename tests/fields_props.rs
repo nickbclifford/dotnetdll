@@ -110,7 +110,7 @@ pub fn write() {
                     Add;
                     call instance_setter;
                     // call writeline
-                    load_string "{0}; {1}";
+                    load_string "{0}, {1}";
                     call static_getter;
                     box_value static_type;
                     LoadLocal 0;
