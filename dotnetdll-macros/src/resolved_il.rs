@@ -131,7 +131,7 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
                     let bindings: Vec<_> = (0..fields.len())
                         .map(|i| format_ident!("f{}", i))
                         .collect();
-                    let f_str = format!("{{}}({})", std::iter::repeat("{}").take(bindings.len()).collect::<Vec<_>>().join(", "));
+                    let f_str = format!("{{}}({})", vec!["{}"; bindings.len()].join(", "));
                     quote! {
                         Instruction::#name(#(#bindings),*) => format!(#f_str, stringify!(#name), #(InstructionShow::show(#bindings, res)),*)
                     }
@@ -152,7 +152,7 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
                         Instruction::#name #pattern => format!("{}{}", stringify!(#name), show_flags([#(#to_show),*]))
                     }
                 } else {
-                    let f_str = format!("{{}}{{}}({})", std::iter::repeat("{}").take(field_names.len()).collect::<Vec<_>>().join(", "));
+                    let f_str = format!("{{}}{{}}({})", vec!["{}"; field_names.len()].join(", "));
                     quote! {
                         Instruction::#name #pattern => {
                             format!(#f_str,

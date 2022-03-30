@@ -6,7 +6,7 @@ pub fn derive_from(input: DeriveInput) -> TokenStream {
     let type_name = input.ident;
     let variants = match input.data {
         Data::Enum(e) => e.variants,
-        _ => panic!("derive(Into) is only valid for enums"),
+        _ => panic!("derive(From) is only valid for enums"),
     };
     let generics = input.generics;
 

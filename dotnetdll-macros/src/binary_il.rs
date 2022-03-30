@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{braced, Field, Fields, Result, Token, Variant};
@@ -104,7 +104,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                 continue;
             }
 
-            let new_name = Ident::new(&format!("{}{}", prefix.ident, t_str), Span::call_site());
+            let new_name = format_ident!("{}{}", prefix.ident, t_str);
             let mut new_fields = fields(prefix);
             new_fields.extend(src_map[&t].clone());
             dest_map.insert(new_name, new_fields);
@@ -148,7 +148,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
     // build parameters with simple indexes
     fn build_ident(c: char) -> impl FnMut(usize) -> Ident {
-        move |i| Ident::new(&format!("{}{}", c, i), Span::call_site())
+        move |i| format_ident!("{}{}", c, i)
     }
 
     // builds a sorted iterator of variants
