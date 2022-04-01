@@ -103,7 +103,7 @@ pub mod prelude {
             resource,
             signature::*,
             types::{Accessibility as TAccess, *},
-            Accessibility,
+            Accessibility, ResolvedDebug,
         },
     };
 }

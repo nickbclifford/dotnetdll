@@ -72,7 +72,8 @@ pub fn write() {
                             StoreLocal 0;
                             LoadConstantInt32 0;
                             StoreLocal 1;
-                            Branch 12;
+                            Branch condition;
+                        @loop_body
                             LoadLocal 0;
                             call create_instance;
                             call_virtual list_add;
@@ -80,9 +81,10 @@ pub fn write() {
                             LoadConstantInt32 1;
                             Add;
                             StoreLocal 1;
+                        @condition
                             LoadLocal 1;
                             LoadArgument 0;
-                            BranchLess NumberSign::Signed, 5;
+                            BranchLess NumberSign::Signed, loop_body;
                             LoadLocal 0;
                             Return;
                         },
@@ -149,16 +151,18 @@ pub fn write() {
                     call init_class;
                     call_virtual get_enum;
                     StoreLocal 0;
-                    Branch 11;
+                    Branch condition;
+                @loop_body
                     load_string "{0}";
                     LoadLocal 0;
                     call_virtual get_current;
                     load_field my_count;
                     BoxValue ctype! { int };
                     call write_line;
+                @condition
                     LoadLocal 0;
                     call_virtual move_next;
-                    BranchTruthy 5;
+                    BranchTruthy loop_body;
                     Return;
                 },
             )

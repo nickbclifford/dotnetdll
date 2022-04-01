@@ -455,9 +455,7 @@ fn main() {
                                 let name = format!("{}_{}", semantic, ident.as_str());
                                 let mut method = Method::new(accessibility, sig, name, None);
                                 if semantic == "set" {
-                                    method
-                                        .parameter_metadata
-                                        .push(Some(ParameterMetadata::name("value")));
+                                    method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
                                 }
                                 methods.push((res.borrow_mut().push_method(type_def, method), body));
                             }
@@ -542,9 +540,7 @@ fn main() {
 
                                 let name = format!("{}_{}", semantic, ident.as_str());
                                 let mut method = Method::new(accessibility, sig.clone(), name, None);
-                                method
-                                    .parameter_metadata
-                                    .push(Some(ParameterMetadata::name("value")));
+                                method.parameter_metadata.push(Some(ParameterMetadata::name("value")));
                                 let pair = Some((method, body));
 
                                 match semantic {

@@ -113,11 +113,12 @@ pub fn write() {
                             load_field field;
                             Duplicate;
                             StoreLocal 0;
-                            BranchFalsy 9;
+                            BranchFalsy ret;
                             LoadLocal 0;
                             LoadArgument 0;
                             load_static_field empty;
                             call_virtual delegate_invoke;
+                        @ret
                             Return;
                         },
                     )),

@@ -134,16 +134,24 @@ pub fn ctype(t: &Type) -> TokenStream {
     }
 }
 
+mod kw {
+    syn::custom_keyword!(void);
+    syn::custom_keyword!(typedref);
+}
+
 pub enum Parameter {
     Value(Type),
     Ref(Type),
-    // if you need a typedref in your method signature, you can deal with constructing the signature yourself
+    TypedRef,
 }
 impl Parse for Parameter {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Token![ref]) {
             input.parse::<Token![ref]>()?;
             input.parse().map(Parameter::Ref)
+        } else if input.peek(kw::typedref) {
+            input.parse::<kw::typedref>()?;
+            Ok(Parameter::TypedRef)
         } else {
             input.parse().map(Parameter::Value)
         }
@@ -154,17 +162,15 @@ impl ToTokens for Parameter {
         tokens.append_all(match self {
             Parameter::Value(t) => quote! { ParameterType::Value(#t) },
             Parameter::Ref(t) => quote! { ParameterType::Ref(#t) },
+            Parameter::TypedRef => quote! { ParameterType::TypedReference },
         });
     }
 }
 
-mod kw {
-    syn::custom_keyword!(void);
-}
 pub struct ReturnType(Option<Parameter>);
 impl Parse for ReturnType {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(ReturnType(if input.peek(kw::void) {
+        Ok(ReturnType(if input.peek(kw::void) && !input.peek2(Token![*]) {
             input.parse::<kw::void>()?;
             None
         } else {

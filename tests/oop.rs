@@ -136,16 +136,18 @@ pub fn write() {
                     LoadLocal 0;
                     call_virtual ctx.resolution.push_method_reference(method_ref! { @enumerator #array_list::GetEnumerator() });
                     StoreLocal 1;
-                    Branch 22;
+                    Branch condition;
+                @loop_body
                     LoadLocal 1;
                     call_virtual ctx.resolution.push_method_reference(method_ref! { object @enumerator::get_Current() });
                     cast_class BaseType::class(ivehicle);
                     call_virtual max_distance;
                     BoxValue ctype! { int };
                     call ctx.resolution.push_method_reference(method_ref! { static void #console::WriteLine(object) });
+                @condition
                     LoadLocal 1;
                     call_virtual ctx.resolution.push_method_reference(method_ref! { bool @enumerator::MoveNext() });
-                    BranchTruthy 16;
+                    BranchTruthy loop_body;
                     Return;
                 },
             )

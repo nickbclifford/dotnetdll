@@ -968,7 +968,7 @@ impl<'a> DLL<'a> {
 
                     let param_val = Some(ParameterMetadata {
                         attributes: vec![],
-                        name: heap_idx!(strings, param.name),
+                        name: optional_idx!(strings, param.name),
                         is_in: check_bitmask!(param.flags, 0x1),
                         is_out: check_bitmask!(param.flags, 0x2),
                         optional: check_bitmask!(param.flags, 0x10),
@@ -2816,7 +2816,7 @@ impl<'a> DLL<'a> {
                                 mask
                             },
                             sequence: idx as u16,
-                            name: heap_idx!(strings, p.name),
+                            name: opt_heap!(strings, p.name),
                         });
 
                         write_attrs!(p.attributes, Param(param_idx));

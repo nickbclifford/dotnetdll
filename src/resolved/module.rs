@@ -22,6 +22,14 @@ pub struct ExternalModuleReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: Cow<'a, str>,
 }
+impl<'a> ExternalModuleReference<'a> {
+    pub fn new(name: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            attributes: vec![],
+            name: name.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct File<'a> {

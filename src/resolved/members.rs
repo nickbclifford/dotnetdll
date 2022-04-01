@@ -6,12 +6,12 @@ use super::{
     types::{CustomTypeModifier, MemberType, MethodType},
     ResolvedDebug,
 };
-use crate::binary::signature::kinds::MarshalSpec;
 use crate::resolution::*;
 use dotnetdll_macros::From;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
+pub use crate::binary::signature::{encoded::NativeIntrinsic, kinds::MarshalSpec};
 pub use dotnetdll_macros::{field_ref, method_ref};
 
 macro_rules! name_display {
@@ -266,27 +266,33 @@ pub enum VtableLayout {
     NewSlot,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ParameterMetadata<'a> {
     pub attributes: Vec<Attribute<'a>>,
-    pub name: Cow<'a, str>,
+    pub name: Option<Cow<'a, str>>,
     pub is_in: bool,
     pub is_out: bool,
     pub optional: bool,
     pub default: Option<Constant>,
     pub marshal: Option<MarshalSpec>,
 }
-name_display!(ParameterMetadata<'_>);
+impl Display for ParameterMetadata<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name.as_deref().unwrap_or(""))
+    }
+}
 impl<'a> ParameterMetadata<'a> {
     pub fn name(name: impl Into<Cow<'a, str>>) -> Self {
         Self {
-            attributes: vec![],
-            name: name.into(),
-            is_in: false,
-            is_out: false,
-            optional: false,
-            default: None,
-            marshal: None,
+            name: Some(name.into()),
+            ..Self::default()
+        }
+    }
+
+    pub fn marshal(marshal: MarshalSpec) -> Self {
+        Self {
+            marshal: Some(marshal),
+            ..Self::default()
         }
     }
 }
@@ -445,6 +451,18 @@ pub struct PInvoke<'a> {
     pub calling_convention: UnmanagedCallingConvention,
     pub import_name: Cow<'a, str>,
     pub import_scope: ModuleRefIndex,
+}
+impl<'a> PInvoke<'a> {
+    pub fn new(import_scope: ModuleRefIndex, import_name: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            no_mangle: false,
+            character_set: CharacterSet::NotSpecified,
+            supports_last_error: false,
+            calling_convention: UnmanagedCallingConvention::Platformapi,
+            import_name: import_name.into(),
+            import_scope,
+        }
+    }
 }
 
 #[derive(Debug, Clone, From)]
