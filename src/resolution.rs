@@ -39,22 +39,18 @@ impl<'a> Resolution<'a> {
 
     pub fn add_default_ctor(&mut self, parent: TypeIndex) -> MethodIndex {
         let object_ctor = self.push_method_reference(method_ref! { void object::.ctor() });
-        let m = self.push_method(
+        self.push_method(
             parent,
-            Method::new(
+            Method::constructor(
                 Accessibility::Public,
                 msig! { void () },
-                ".ctor",
                 Some(body::Method::new(asm! {
                     LoadArgument 0;
                     call object_ctor;
                     Return;
                 })),
             ),
-        );
-        self[m].special_name = true;
-        self[m].runtime_special_name = true;
-        m
+        )
     }
 }
 

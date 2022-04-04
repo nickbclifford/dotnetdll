@@ -2,8 +2,13 @@ use scroll::{Pread, Pwrite, Result};
 use scroll_buffer::DynamicBuffer;
 use std::borrow::Cow;
 
-use crate::binary::signature::{attribute::*, compressed::Unsigned};
+use crate::binary::signature::{
+    attribute::{self, *},
+    compressed::Unsigned,
+};
 use crate::resolution::Resolution;
+
+pub use attribute::{CustomAttributeData, FixedArg, IntegralParam, NamedArg};
 
 use super::{
     members,
@@ -254,15 +259,17 @@ impl<'a> Attribute<'a> {
         })
     }
 
-    pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'a>) -> Result<Self> {
+    pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'a>) -> Self {
         let mut buffer = DynamicBuffer::with_increment(8);
 
-        buffer.pwrite(data, 0)?;
+        // currently, there are no explicit throws in attribute data TryIntoCtx impls
+        // so since the buffer always expands, this should be infallible
+        buffer.pwrite(data, 0).unwrap();
 
-        Ok(Attribute {
+        Attribute {
             constructor,
             value: Some(buffer.into_vec().into()),
-        })
+        }
     }
 }
 

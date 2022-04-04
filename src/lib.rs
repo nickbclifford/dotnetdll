@@ -96,6 +96,7 @@ pub mod prelude {
         resolution::*,
         resolved::{
             assembly::*,
+            attribute::*,
             body, generic,
             il::*,
             members::{Accessibility as MAccess, *},

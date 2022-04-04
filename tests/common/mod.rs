@@ -68,9 +68,10 @@ pub fn write_fixture(
 
     let output = Command::new("dotnet").arg(&dll_path).output()?;
 
+    eprintln!("{}", std::str::from_utf8(&output.stdout)?);
+
     let stderr = String::from_utf8(output.stderr)?;
 
-    println!("{}", stderr);
     if stderr.contains("Unhandled exception") {
         if let Ok(i) = std::env::var("ILDASM") {
             let ildasm = Command::new(i).arg(&dll_path).output()?;
@@ -99,6 +100,8 @@ pub fn write_fixture(
                 .output()?;
             println!("{}", String::from_utf8(ilverify.stdout)?);
         }
+
+        panic!("{}", stderr);
     }
 
     assert_eq!(output.stdout, expect);

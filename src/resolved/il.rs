@@ -275,11 +275,9 @@ macro_rules! asm {
         Instruction::$ins($($param),+)
     };
     ($($(@ $label:ident)? $ins:ident $($param:expr),*;)*) => {{
-        $($(let $label: usize;)?)*
-
         let mut _counter = 0;
         $(
-            $($label = _counter;)?
+            $(let $label = _counter;)?
             _counter += 1;
         )*
 

@@ -461,6 +461,7 @@ fn main() {
                             }
 
                             res.borrow_mut()[type_def].properties.push(Property::new(
+                                false,
                                 ident.as_str(),
                                 Parameter::new(ParameterType::Value(property_type)),
                             ));

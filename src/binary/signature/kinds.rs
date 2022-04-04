@@ -380,26 +380,23 @@ impl TryFromCtx<'_> for PropertySig {
         ))
     }
 }
-impl TryIntoCtx for PropertySig {
-    type Error = scroll::Error;
+try_into_ctx!(PropertySig, |self, into| {
+    let offset = &mut 0;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
-        let offset = &mut 0;
+    into.gwrite_with(if self.has_this { 0x28_u8 } else { 0x8_u8 }, offset, scroll::LE)?;
 
-        into.gwrite_with(if self.has_this { 0x28_u8 } else { 0x8_u8 }, offset, scroll::LE)?;
+    into.gwrite(compressed::Unsigned(self.params.len() as u32), offset)?;
 
-        into.gwrite(compressed::Unsigned(self.params.len() as u32), offset)?;
+    // includes mods and type
 
-        // includes mods and type
-        into.gwrite(self.property_type, offset)?;
+    into.gwrite(self.property_type, offset)?;
 
-        for p in self.params {
-            into.gwrite(p, offset)?;
-        }
-
-        Ok(*offset)
+    for p in self.params {
+        into.gwrite(p, offset)?;
     }
-}
+
+    Ok(*offset)
+});
 
 #[derive(Debug)]
 pub enum LocalVar {

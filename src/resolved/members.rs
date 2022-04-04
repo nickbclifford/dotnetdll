@@ -189,7 +189,9 @@ pub struct Property<'a> {
     pub getter: Option<Method<'a>>,
     pub setter: Option<Method<'a>>,
     pub other: Vec<Method<'a>>,
+    pub static_member: bool,
     pub property_type: signature::Parameter, // properties can be ref as well
+    pub parameters: Vec<signature::Parameter>,
     pub special_name: bool,
     pub runtime_special_name: bool,
     pub default: Option<Constant>,
@@ -245,14 +247,16 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 impl<'a> Property<'a> {
-    pub fn new(name: impl Into<Cow<'a, str>>, property_type: signature::Parameter) -> Self {
+    pub fn new(static_member: bool, name: impl Into<Cow<'a, str>>, property_type: signature::Parameter) -> Self {
         Self {
             attributes: vec![],
             name: name.into(),
             getter: None,
             setter: None,
             other: vec![],
+            static_member,
             property_type,
+            parameters: vec![],
             special_name: false,
             runtime_special_name: false,
             default: None,
@@ -423,6 +427,18 @@ impl<'a> Method<'a> {
 
     pub fn is_static(&self) -> bool {
         !self.signature.instance
+    }
+
+    pub fn constructor(
+        access: super::Accessibility,
+        signature: signature::ManagedMethod,
+        body: Option<body::Method>,
+    ) -> Self {
+        Self {
+            special_name: true,
+            runtime_special_name: true,
+            ..Self::new(access, signature, ".ctor", body)
+        }
     }
 }
 

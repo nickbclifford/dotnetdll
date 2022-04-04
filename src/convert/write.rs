@@ -1,4 +1,5 @@
 use super::TypeKind;
+use crate::binary::signature::kinds::PropertySig;
 use crate::dll::DLLError;
 use crate::{
     binary::{
@@ -19,7 +20,7 @@ use crate::{
     dll::Result,
     resolved::{
         il::*,
-        members::{ExternalFieldReference, Field, FieldSource, MethodSource, UserMethod},
+        members::{ExternalFieldReference, Field, FieldSource, MethodSource, Property, UserMethod},
         signature::*,
         types::*,
     },
@@ -197,9 +198,9 @@ fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
     ))
 }
 
-pub fn parameter(p: &Parameter, ctx: &mut Context) -> Result<Blob> {
-    into_blob(parameter_sig(p, ctx)?, ctx)
-}
+// pub fn parameter(p: &Parameter, ctx: &mut Context) -> Result<Blob> {
+//     into_blob(parameter_sig(p, ctx)?, ctx)
+// }
 
 fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
@@ -267,6 +268,22 @@ fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldS
 
 pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {
     into_blob(field_ref_sig(f, ctx)?, ctx)
+}
+
+fn property_sig(p: &Property, ctx: &mut Context) -> Result<PropertySig> {
+    Ok(PropertySig {
+        has_this: !p.static_member,
+        property_type: parameter_sig(&p.property_type, ctx)?,
+        params: p
+            .parameters
+            .iter()
+            .map(|p| parameter_sig(p, ctx))
+            .collect::<Result<_>>()?,
+    })
+}
+
+pub fn property(p: &Property, ctx: &mut Context) -> Result<Blob> {
+    into_blob(property_sig(p, ctx)?, ctx)
 }
 
 pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {

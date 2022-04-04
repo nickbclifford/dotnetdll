@@ -1058,7 +1058,13 @@ impl<'a> DLL<'a> {
                         getter: None,
                         setter: None,
                         other: vec![],
+                        static_member: !sig.has_this,
                         property_type: convert::read::parameter(sig.property_type, &ctx)?,
+                        parameters: sig
+                            .params
+                            .into_iter()
+                            .map(|p| convert::read::parameter(p, &ctx))
+                            .collect::<Result<_>>()?,
                         special_name: check_bitmask!(prop.flags, 0x200),
                         runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                         default: None,
@@ -2411,7 +2417,9 @@ impl<'a> DLL<'a> {
                 write_attrs!(attrs, InterfaceImpl(impl_idx));
             }
 
-            write_attrs!(t.attributes, TypeDef(idx));
+            // ignore <Module> here
+            write_attrs!(t.attributes, TypeDef(idx + 1));
+
             write_security!(&t.security, TypeDef(idx));
 
             overrides.extend(
@@ -2616,7 +2624,7 @@ impl<'a> DLL<'a> {
                         mask
                     },
                     name: heap_idx!(strings, p.name),
-                    property_type: convert::write::parameter(&p.property_type, build_ctx!())?,
+                    property_type: convert::write::property(p, build_ctx!())?,
                 });
 
                 write_attrs!(p.attributes, Property(table_idx));

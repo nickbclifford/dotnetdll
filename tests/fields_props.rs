@@ -24,7 +24,7 @@ pub fn write() {
             let static_type: MethodType = ctx.resolution[static_field].return_type.clone().into();
             let static_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new("StaticProperty", Parameter::value(static_type.clone())),
+                Property::new(false, "StaticProperty", Parameter::value(static_type.clone())),
             );
             let static_getter = ctx.resolution.set_property_getter(
                 static_prop,
@@ -55,7 +55,7 @@ pub fn write() {
             let instance_type: MethodType = ctx.resolution[instance_field].return_type.clone().into();
             let instance_prop = ctx.resolution.push_property(
                 ctx.class,
-                Property::new("InstanceProperty", Parameter::value(instance_type.clone())),
+                Property::new(false, "InstanceProperty", Parameter::value(instance_type.clone())),
             );
             let instance_getter = ctx.resolution.set_property_getter(
                 instance_prop,
