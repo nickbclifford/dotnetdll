@@ -139,9 +139,9 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
             } else {
                 let to_show: Vec<_> = flag_names.iter().map(|f| {
                    if f == "unaligned" {
-                       quote! { #f as &dyn InstructionFlag }
+                       quote! { InstructionFlag::show(*#f) }
                    } else {
-                       quote! { &(stringify!(#f), *#f) as &dyn InstructionFlag }
+                       quote! { InstructionFlag::show((stringify!(#f), *#f)) }
                    }
                 }).collect();
 

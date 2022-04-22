@@ -64,16 +64,17 @@ pub enum StoreType {
     Object,
 }
 
+type Flag = Option<String>;
 trait InstructionFlag {
-    fn show(&self) -> Option<String>;
+    fn show(self) -> Flag;
 }
 impl InstructionFlag for Option<Alignment> {
-    fn show(&self) -> Option<String> {
+    fn show(self) -> Flag {
         self.map(|a| format!("aligned({:?})", a))
     }
 }
 impl InstructionFlag for (&'static str, bool) {
-    fn show(&self) -> Option<String> {
+    fn show(self) -> Flag {
         if self.1 {
             Some(self.0.to_string())
         } else {
@@ -81,8 +82,8 @@ impl InstructionFlag for (&'static str, bool) {
         }
     }
 }
-fn show_flags<'a>(flags: impl IntoIterator<Item = &'a dyn InstructionFlag>) -> String {
-    let set_flags: Vec<_> = flags.into_iter().filter_map(InstructionFlag::show).collect();
+fn show_flags<'a>(flags: impl IntoIterator<Item = Flag>) -> String {
+    let set_flags: Vec<_> = flags.into_iter().flatten().collect();
     if set_flags.is_empty() {
         String::new()
     } else {
