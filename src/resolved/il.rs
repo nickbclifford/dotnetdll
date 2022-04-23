@@ -275,17 +275,26 @@ macro_rules! asm {
     ($ins:ident $($param:expr),+) => {
         Instruction::$ins($($param),+)
     };
-    ($($(@ $label:ident)? $ins:ident $($param:expr),*;)*) => {{
+    ($($(@ $label:ident)? $(+ $label_export:ident)? $ins:ident $($param:expr),*;)*) => {{
         let mut _counter = 0;
         $(
             $(let $label = _counter;)?
+            $(let $label_export = _counter;)?
             _counter += 1;
         )*
 
-        vec![
+        let _ins = vec![
             $(
                 $crate::asm! { $ins $($param),* }
             ),*
-        ]
+        ];
+
+        (_ins
+            $(
+                $(
+                    ,$label_export
+                )?
+            )*
+        )
     }};
 }

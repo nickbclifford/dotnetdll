@@ -66,16 +66,28 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
                 size,
                 local_var_sig_tok,
             } => {
-                let mut init_bits = 0x3u16;
+                let mut flags: u16 = 0x3;
                 if more_sects {
-                    init_bits |= 0x8;
+                    flags |= 0x8;
                 }
                 if init_locals {
-                    init_bits |= 0x10;
+                    flags |= 0x10;
                 }
-                init_bits |= 3 << 12;
 
-                into.gwrite_with(init_bits, offset, scroll::LE)?;
+                let header_size: u16 = 3;
+
+                bitfield::bitfield! {
+                    pub struct FlagsSize(u16);
+                    flags, set_flags: 11, 0;
+                    size, set_size: 15, 12;
+                }
+
+                let mut fields = FlagsSize(0);
+                fields.set_flags(flags);
+                fields.set_size(header_size);
+
+                into.gwrite_with(fields.0, offset, scroll::LE)?;
+
                 into.gwrite_with(max_stack, offset, scroll::LE)?;
                 into.gwrite_with(size as u32, offset, scroll::LE)?;
                 into.gwrite_with(local_var_sig_tok, offset, scroll::LE)?;
@@ -199,34 +211,34 @@ impl TryIntoCtx<(), DynamicBuffer> for DataSection {
 
         use SectionKind::*;
 
-        let mut flags: u8 = if self.more_sections { 0x80 } else { 0x0 };
+        let mut kind: u8 = if self.more_sections { 0x80 } else { 0x0 };
 
         let (is_fat, length) = match &self.section {
             Exceptions(es) => {
-                flags |= 0x1;
+                kind |= 0x1;
 
                 let should_be_fat = !es.iter().all(|e| {
                     e.try_length < 256 && e.handler_length < 256 && e.try_offset < 65536 && e.handler_offset < 65536
                 });
 
-                (should_be_fat, if should_be_fat { 24 } else { 12 } * es.len())
+                (should_be_fat, (if should_be_fat { 24 } else { 12 } * es.len()) + 4)
             }
             Unrecognized { is_fat, length } => (*is_fat, *length),
         };
 
         if is_fat {
-            flags |= 0x40;
+            kind |= 0x40;
         }
 
-        into.gwrite_with(flags, offset, scroll::LE)?;
+        into.gwrite_with(kind, offset, scroll::LE)?;
 
         if is_fat {
-            into.gwrite_with(length as u8, offset, scroll::LE)?;
-        } else {
             let bytes = (length as u32).to_le_bytes();
             for b in &bytes[..3] {
                 into.gwrite_with(b, offset, scroll::LE)?;
             }
+        } else {
+            into.gwrite_with(length as u8, offset, scroll::LE)?;
         }
 
         match self.section {

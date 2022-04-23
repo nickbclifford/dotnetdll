@@ -521,7 +521,7 @@ impl<'a> DLL<'a> {
                 let name = heap_idx!(strings, r.type_name);
                 let namespace = optional_idx!(strings, r.type_namespace);
 
-                Ok(types::ExternalTypeReference {
+                Ok(ExternalTypeReference {
                     attributes: vec![],
                     namespace,
                     scope: match r.resolution_scope {
@@ -1548,6 +1548,7 @@ impl<'a> DLL<'a> {
             module_references: module_refs,
             type_definitions: types,
             type_references: type_refs,
+            object_ctor_cache: None,
         };
 
         debug!("custom attributes");
@@ -2392,7 +2393,7 @@ impl<'a> DLL<'a> {
                 type_namespace: opt_heap!(strings, t.namespace),
                 extends: match &t.extends {
                     Some(t) => convert::write::source_index(None, t, build_ctx!())?,
-                    None => metadata::index::TypeDefOrRef::Null,
+                    None => index::TypeDefOrRef::Null,
                 },
                 // for some reason, things break if I use 0 for null index instead of 1
                 // doesn't make any sense, but ildasm fully crashes otherwise
@@ -2953,14 +2954,14 @@ impl<'a> DLL<'a> {
                                             buf.pwrite(index::Token::from(convert::write::index(t, build_ctx!())?), 0)?;
                                             u32::from_le_bytes(buf)
                                         }
-                                        Filter { offset } => *offset as u32,
+                                        Filter { offset } => offsets[*offset] as u32,
                                         _ => 0,
                                     };
 
                                     let convert_pair = |off: usize, len: usize| {
                                         (
                                             offsets[off] as u32,
-                                            instructions[off..=off + len].iter().map(|i| i.bytesize() as u32).sum(),
+                                            instructions[off..off + len].iter().map(|i| i.bytesize() as u32).sum(),
                                         )
                                     };
 
@@ -3015,7 +3016,7 @@ impl<'a> DLL<'a> {
                         let mut buf = [0_u8; 4];
                         buf.pwrite(
                             index::Token {
-                                target: index::TokenTarget::Table(metadata::table::Kind::StandAloneSig),
+                                target: index::TokenTarget::Table(Kind::StandAloneSig),
                                 index: tables.stand_alone_sig.len(),
                             },
                             0,

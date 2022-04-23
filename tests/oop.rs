@@ -119,6 +119,7 @@ pub fn write() {
             let console: MethodType = BaseType::class(ctx.console).into();
 
             (
+                vec![],
                 vec![LocalVariable::new(array_list.clone()), LocalVariable::new(enumerator.clone())],
                 asm! {
                     new_object ctx.resolution.push_method_reference(method_ref! { void @array_list::.ctor() });

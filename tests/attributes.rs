@@ -71,7 +71,7 @@ pub fn write() {
                 test_attr,
                 Method::constructor(
                     Accessibility::Public,
-                    msig! { void (string) },
+                    vec![Parameter::value(ctype! { string })],
                     Some(body::Method::new(asm! {
                         LoadArgument 0;
                         call attr_ctor;
@@ -134,6 +134,7 @@ pub fn write() {
             let test_attr_t: MethodType = BaseType::class(test_attr).into();
 
             (
+                vec![],
                 vec![
                     LocalVariable::new(ctype! { object[] }),
                     LocalVariable::new(ctype! { int }),

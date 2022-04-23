@@ -133,6 +133,7 @@ pub fn write() {
             let remove = ctx.resolution.event_remove_index(event);
 
             (
+                vec![],
                 vec![
                     LocalVariable::new(BaseType::class(ctx.class).into()),
                     LocalVariable::new(handler_method),

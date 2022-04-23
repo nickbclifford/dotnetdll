@@ -17,6 +17,7 @@ pub struct Resolution<'a> {
     pub module_references: Vec<ExternalModuleReference<'a>>,
     pub type_definitions: Vec<TypeDefinition<'a>>,
     pub type_references: Vec<ExternalTypeReference<'a>>,
+    pub(crate) object_ctor_cache: Option<MethodRefIndex>,
 }
 
 impl<'a> Resolution<'a> {
@@ -34,16 +35,27 @@ impl<'a> Resolution<'a> {
             module_references: vec![],
             type_definitions: vec![TypeDefinition::new(None, "<Module>")],
             type_references: vec![],
+            object_ctor_cache: None,
+        }
+    }
+
+    pub fn object_ctor(&mut self) -> MethodRefIndex {
+        if let Some(i) = self.object_ctor_cache {
+            i
+        } else {
+            let i = self.push_method_reference(method_ref! { void object::.ctor() });
+            self.object_ctor_cache = Some(i);
+            i
         }
     }
 
     pub fn add_default_ctor(&mut self, parent: TypeIndex) -> MethodIndex {
-        let object_ctor = self.push_method_reference(method_ref! { void object::.ctor() });
+        let object_ctor = self.object_ctor();
         self.push_method(
             parent,
             Method::constructor(
                 Accessibility::Public,
-                msig! { void () },
+                vec![],
                 Some(body::Method::new(asm! {
                     LoadArgument 0;
                     call object_ctor;

@@ -86,6 +86,7 @@ pub fn write() {
             );
 
             (
+                vec![],
                 vec![LocalVariable::new(BaseType::class(ctx.class).into())],
                 asm! {
                     // init static

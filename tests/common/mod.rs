@@ -13,7 +13,7 @@ pub struct WriteContext<'a> {
 
 pub fn write_fixture(
     name: &str,
-    test: impl FnOnce(&mut WriteContext) -> (Vec<LocalVariable>, Vec<Instruction>),
+    test: impl FnOnce(&mut WriteContext) -> (Vec<body::Exception>, Vec<LocalVariable>, Vec<Instruction>),
     expect: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dll_name = format!("{}.dll", name);
@@ -40,7 +40,7 @@ pub fn write_fixture(
         object,
     };
 
-    let (vars, ins) = test(&mut ctx);
+    let (exceptions, vars, ins) = test(&mut ctx);
 
     let main = ctx.resolution.push_method(
         class,
@@ -48,10 +48,12 @@ pub fn write_fixture(
             Accessibility::Public,
             msig! { static void (string[]) },
             "Main",
-            Some(body::Method::with_locals(vars, ins)),
+            Some(body::Method {
+                data_sections: vec![body::DataSection::ExceptionHandlers(exceptions)],
+                ..body::Method::with_locals(vars, ins)
+            }),
         ),
     );
-
     ctx.resolution.entry_point = Some(main.into());
 
     let written = DLL::write(&ctx.resolution, false, true)?;
@@ -74,8 +76,7 @@ pub fn write_fixture(
 
     if stderr.contains("Unhandled exception") {
         if let Ok(i) = std::env::var("ILDASM") {
-            let ildasm = Command::new(i).arg(&dll_path).output()?;
-            println!("{}", String::from_utf8(ildasm.stdout)?);
+            Command::new(i).arg(&dll_path).spawn()?.wait()?;
         }
 
         if let Ok(r) = std::env::var("RUNTIME") {
@@ -83,10 +84,14 @@ pub fn write_fixture(
                 .arg("-ex")
                 .arg(format!("set substitute-path /runtime {}", r))
                 .arg("--args")
-                .arg(format!(
-                    "{}/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun",
-                    r
-                ))
+                .arg(if let Ok(i) = std::env::var("ILDASM") {
+                    i
+                } else {
+                    format!(
+                        "{}/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun",
+                        r
+                    )
+                })
                 .arg(&dll_path)
                 .spawn()?
                 .wait()?;
@@ -94,11 +99,15 @@ pub fn write_fixture(
 
         if let Ok(i) = std::env::var("ILVERIFY") {
             let ilverify = Command::new(i)
-                .arg(dll_path)
+                .arg(&dll_path)
                 .arg("-r")
                 .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
                 .output()?;
             println!("{}", String::from_utf8(ilverify.stdout)?);
+        }
+
+        if let Ok(path) = std::env::var("OUTFILE") {
+            std::fs::copy(dll_path, path).unwrap();
         }
 
         panic!("{}", stderr);

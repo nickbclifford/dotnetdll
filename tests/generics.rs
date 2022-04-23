@@ -145,6 +145,7 @@ pub fn write() {
                 .push_method_reference(method_ref! { static void #console_type::WriteLine(string, object) });
 
             (
+                vec![],
                 vec![LocalVariable::new(enum_class)],
                 asm! {
                     LoadConstantInt32 5;

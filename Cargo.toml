@@ -16,6 +16,7 @@ members = [
 ]
 
 [dependencies]
+bitfield = "0.13.2"
 bitvec = "0.22.3"
 dotnetdll-macros = { path = "dotnetdll-macros" }
 log = "0.4.14"

@@ -431,13 +431,18 @@ impl<'a> Method<'a> {
 
     pub fn constructor(
         access: super::Accessibility,
-        signature: signature::ManagedMethod,
+        parameters: Vec<signature::Parameter>,
         body: Option<body::Method>,
     ) -> Self {
         Self {
             special_name: true,
             runtime_special_name: true,
-            ..Self::new(access, signature, ".ctor", body)
+            ..Self::new(
+                access,
+                signature::MethodSignature::new(true, signature::ReturnType::VOID, parameters),
+                ".ctor",
+                body,
+            )
         }
     }
 }

@@ -20,10 +20,10 @@ pub fn write() {
                 )
             };
 
-
             let puts = libc_method("puts", msig! { static void (string) });
 
             (
+                vec![],
                 vec![],
                 asm! {
                     load_string "hello from libc";
