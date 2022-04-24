@@ -2291,6 +2291,7 @@ impl<'a> DLL<'a> {
                 }
                 Implementation::CurrentFile(res) => {
                     let offset = resources.len();
+                    resources.extend((res.len() as u32).to_le_bytes());
                     resources.extend_from_slice(res);
                     (offset, index::Implementation::Null)
                 }
