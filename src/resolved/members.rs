@@ -152,7 +152,7 @@ impl<'a> ExternalFieldReference<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone, From)]
+#[derive(Debug, Copy, Clone, From, Eq, PartialEq)]
 pub enum FieldSource {
     Definition(FieldIndex),
     Reference(FieldRefIndex),
@@ -516,7 +516,7 @@ impl<'a> ExternalMethodReference<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone, From)]
+#[derive(Debug, Copy, Clone, From, Eq, PartialEq)]
 pub enum UserMethod {
     Definition(MethodIndex),
     Reference(MethodRefIndex),
@@ -587,13 +587,13 @@ impl ResolvedDebug for UserMethod {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct GenericMethodInstantiation {
     pub base: UserMethod,
     pub parameters: Vec<MethodType>,
 }
 
-#[derive(Debug, Clone, From)]
+#[derive(Debug, Clone, From, Eq, PartialEq)]
 pub enum MethodSource {
     User(#[nested(MethodIndex, MethodRefIndex)] UserMethod),
     Generic(GenericMethodInstantiation),

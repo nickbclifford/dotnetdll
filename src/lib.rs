@@ -92,7 +92,7 @@ pub mod resolved;
 pub mod prelude {
     pub use crate::{
         access, asm,
-        dll::DLL,
+        dll::{DLLError, ResolveOptions, DLL},
         resolution::*,
         resolved::{
             assembly::*,

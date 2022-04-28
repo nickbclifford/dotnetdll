@@ -196,7 +196,7 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
         );
 
     quote! {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, PartialEq)]
         pub enum Instruction {
             #(#variants),*
         }

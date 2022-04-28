@@ -11,6 +11,31 @@ pub struct WriteContext<'a> {
     pub object: TypeRefIndex,
 }
 
+#[allow(dead_code)]
+pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> Result<(), Box<dyn std::error::Error>> {
+    let ilasm_path: &str = "/home/nick/Desktop/runtime/artifacts/bin/coreclr/Linux.x64.Debug/ilasm";
+
+    let dir = TempDir::new()?;
+
+    let il_path = dir.path().join(format!("{}.il", name));
+
+    std::fs::write(&il_path, source)?;
+
+    Command::new(ilasm_path)
+        .current_dir(dir.path())
+        .arg("-DLL")
+        .arg(name)
+        .spawn()?
+        .wait()?;
+
+    let dll_file = std::fs::read(dir.path().join(format!("{}.dll", name)))?;
+    let dll = DLL::parse(&dll_file)?;
+
+    test(dll.resolve(ResolveOptions::default())?);
+
+    Ok(())
+}
+
 pub fn write_fixture(
     name: &str,
     test: impl FnOnce(&mut WriteContext) -> (Vec<body::Exception>, Vec<LocalVariable>, Vec<Instruction>),

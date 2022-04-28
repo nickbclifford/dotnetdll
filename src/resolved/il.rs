@@ -4,19 +4,19 @@ use crate::resolution::Resolution;
 use dotnetdll_macros::r_instructions;
 use num_derive::FromPrimitive;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum NumberSign {
     Signed,
     Unsigned,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum OverflowDetection {
     Check,
     NoCheck,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ConversionType {
     Int8,
     UInt8,
@@ -30,14 +30,14 @@ pub enum ConversionType {
     UIntPtr,
 }
 
-#[derive(Debug, Copy, Clone, FromPrimitive)]
+#[derive(Debug, Copy, Clone, FromPrimitive, Eq, PartialEq)]
 pub enum Alignment {
     Byte = 1,
     Double = 2,
     Quad = 4,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum LoadType {
     Int8,
     UInt8,
@@ -52,7 +52,7 @@ pub enum LoadType {
     Object,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum StoreType {
     Int8,
     Int16,
