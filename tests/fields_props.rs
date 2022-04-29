@@ -2,6 +2,81 @@ use dotnetdll::prelude::*;
 
 mod common;
 
+macro_rules! assert_inner_eq {
+    ($val:expr, { $($field_name:ident $(: $rhs:expr)? $(=> $pat:pat $(if $guard:expr)?)?),+ }) => {
+        let val = &$val;
+        $(
+            assert_inner_eq!(@inner val.$field_name, $(: $rhs)? $(=> $pat $(if $guard)?)?);
+        )+
+    };
+    (@inner $lhs:expr, : true) => {
+        assert!($lhs);
+    };
+    (@inner $lhs:expr, : $rhs:expr) => {
+        assert_eq!($lhs, $rhs);
+    };
+    (@inner $lhs:expr, => $pat:pat $(if $guard:expr)?) => {
+        assert!(matches!($lhs, $pat $(if $guard)?))
+    }
+}
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "fields_props",
+        r#"
+        .class public Program extends [mscorlib]System.Object {
+            .field private static int32 static_field
+            .field private uint32 instance_field
+
+            .property int32 StaticProperty() {
+                .get int32 Program::get_StaticProperty()
+                .set void Program::set_StaticProperty(int32)
+            }
+            .method public static int32 get_StaticProperty() { }
+            .method public static void set_StaticProperty(int32) { }
+
+            .property instance uint32 InstanceProperty() {
+                .get instance uint32 Program::get_InstanceProperty()
+                .set instance void Program::set_InstanceProperty(uint32)
+            }
+            .method public instance uint32 get_InstanceProperty() { }
+            .method public void set_InstanceProperty(uint32) { }
+        }
+        "#,
+        |res| {
+            let program = &res.type_definitions[1];
+
+            assert_inner_eq!(program.fields[0], {
+                name: "static_field",
+                return_type: ctype! { int },
+                static_member => true
+            });
+            assert_inner_eq!(program.fields[1], {
+                name: "instance_field",
+                return_type: ctype! { uint },
+                static_member => false
+            });
+
+            assert_inner_eq!(program.properties[0], {
+                name: "StaticProperty",
+                property_type: Parameter::value(ctype! { int }),
+                static_member => true,
+                getter => Some(Method { ref name, .. }) if name == "get_StaticProperty",
+                setter => Some(Method { ref name, .. }) if name == "set_StaticProperty"
+            });
+            assert_inner_eq!(program.properties[1], {
+                name: "InstanceProperty",
+                property_type: Parameter::value(ctype! { uint }),
+                static_member => false,
+                getter => Some(Method { ref name, .. }) if name == "get_InstanceProperty",
+                setter => Some(Method { ref name, .. }) if name == "set_InstanceProperty"
+            });
+        },
+    )
+    .unwrap();
+}
+
 #[test]
 pub fn write() {
     common::write_fixture(

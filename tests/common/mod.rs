@@ -19,7 +19,15 @@ pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> 
 
     let il_path = dir.path().join(format!("{}.il", name));
 
-    std::fs::write(&il_path, source)?;
+    std::fs::write(
+        &il_path,
+        format!(
+            r".assembly {} {{ }}
+            .assembly extern mscorlib {{ }}
+            {}",
+            name, source
+        ),
+    )?;
 
     Command::new(ilasm_path)
         .current_dir(dir.path())

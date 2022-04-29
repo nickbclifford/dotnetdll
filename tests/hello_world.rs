@@ -7,9 +7,6 @@ pub fn read() {
     common::read_fixture(
         "hello_world",
         r#"
-        .assembly hello_world { }
-        .assembly extern mscorlib { }
-
         .class public Program extends [mscorlib]System.Object {
             .method public static void Main(string[] args) {
                 .entrypoint
