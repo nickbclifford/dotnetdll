@@ -1,6 +1,36 @@
 use dotnetdll::prelude::*;
 
+#[macro_use]
 mod common;
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "fields_props",
+        r#"
+        .class public Program extends [mscorlib]System.Object {
+            .event class [mscorlib]System.EventHandler MyEvent {
+                .addon void Program::add_MyEvent(class [mscorlib]System.EventHandler)
+                .removeon void Program::remove_MyEvent(class [mscorlib]System.EventHandler)
+            }
+            .method private static specialname void add_MyEvent(class [mscorlib]System.EventHandler) { }
+            .method private static specialname void remove_MyEvent(class [mscorlib]System.EventHandler)  { }
+        }
+        "#,
+        |res| {
+            assert_inner_eq!(res.type_definitions[1].events[0], {
+                name: "MyEvent",
+                // hideous hackery because no box/deref patterns
+                delegate_type => MemberType::Base(ref b) if matches!(&**b,
+                    BaseType::Type { source: TypeSource::User(u), .. } if u.type_name(&res) == "System.EventHandler"
+                ),
+                add_listener => Method { ref name, ref signature, .. } if name == "add_MyEvent" && !signature.instance,
+                remove_listener => Method { ref name, ref signature, .. } if name == "remove_MyEvent" && !signature.instance
+            });
+        },
+    )
+    .unwrap();
+}
 
 #[test]
 pub fn write() {

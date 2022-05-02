@@ -2,6 +2,24 @@ use dotnetdll::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
+macro_rules! assert_inner_eq {
+    ($val:expr, { $($field_name:ident $(: $rhs:expr)? $(=> $pat:pat $(if $guard:expr)?)?),+ }) => {
+        let val = &$val;
+        $(
+            assert_inner_eq!(@inner val.$field_name, $(: $rhs)? $(=> $pat $(if $guard)?)?);
+        )+
+    };
+    (@inner $lhs:expr, : true) => {
+        assert!($lhs);
+    };
+    (@inner $lhs:expr, : $rhs:expr) => {
+        assert_eq!($lhs, $rhs);
+    };
+    (@inner $lhs:expr, => $pat:pat $(if $guard:expr)?) => {
+        assert!(matches!($lhs, $pat $(if $guard)?))
+    }
+}
+
 pub struct WriteContext<'a> {
     pub resolution: Resolution<'a>,
     pub mscorlib: AssemblyRefIndex,

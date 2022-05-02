@@ -1,6 +1,26 @@
 use dotnetdll::prelude::*;
 
+#[macro_use]
 mod common;
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "pinvoke",
+        r#"
+        .class public Program extends [mscorlib]System.Object {
+            .method public static pinvokeimpl("libc.so.6" cdecl) void puts(string s) {}
+        }
+        "#,
+        |res| {
+            assert_inner_eq!(res.type_definitions[1].methods[0], {
+                pinvoke => Some(ref p) if res[p.import_scope].name == "libc.so.6",
+                name: "puts"
+            });
+        },
+    )
+    .unwrap();
+}
 
 #[test]
 pub fn write() {
