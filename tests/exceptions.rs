@@ -1,6 +1,82 @@
 use dotnetdll::prelude::*;
 
+#[macro_use]
 mod common;
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "exceptions",
+        r#"
+        .class public Program extends [mscorlib]System.Object {
+            .method public static void Main() {
+                .try {
+                    nop
+                    leave afterCatchFinally
+                } catch [mscorlib]System.Exception {
+                    pop
+                    leave afterCatchFinally
+                } finally {
+                    endfinally
+                }
+                afterCatchFinally:
+                .try {
+                    nop
+                    leave afterFilterFault
+                } filter {
+                    pop
+                    ldc.i4.1
+                    endfilter
+                } {
+                    pop
+                    leave afterFilterFault
+                } fault {
+                    endfault
+                }
+                afterFilterFault:
+                ret
+            }
+        }
+        "#,
+        |res| {
+            let main = res.type_definitions[1].methods[0].body.as_ref().unwrap();
+            let exceptions = match &main.data_sections[0] {
+                body::DataSection::ExceptionHandlers(e) => e,
+                rest => panic!("bad data section {:?}, expected exception handlers", rest),
+            };
+
+            assert_inner_eq!(exceptions[0], {
+                kind => body::ExceptionKind::TypedException(MethodType::Base(ref b)) if matches!(&**b,
+                    BaseType::Type { source: TypeSource::User(u), .. } if u.type_name(&res) == "System.Exception"
+                ),
+                try_offset: 0,
+                try_length: 2,
+                handler_offset: 2,
+                handler_length: 2
+            });
+            assert_inner_eq!(exceptions[1], {
+                kind => body::ExceptionKind::Finally,
+                try_offset: 0,
+                try_length: 2,
+                handler_offset => h if main.instructions[h] == Instruction::EndFinally,
+                handler_length: 1
+            });
+
+            assert_inner_eq!(exceptions[2], {
+                kind => body::ExceptionKind::Filter { offset } if main.instructions[offset + 2] == Instruction::EndFilter,
+                try_offset: 5,
+                try_length: 2
+            });
+            assert_inner_eq!(exceptions[3], {
+                kind => body::ExceptionKind::Fault,
+                try_offset: 5,
+                try_length: 2,
+                handler_offset => h if main.instructions[h] == Instruction::EndFinally
+            });
+        },
+    )
+    .unwrap();
+}
 
 #[test]
 pub fn write() {

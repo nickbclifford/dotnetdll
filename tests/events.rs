@@ -6,7 +6,7 @@ mod common;
 #[test]
 pub fn read() {
     common::read_fixture(
-        "fields_props",
+        "events",
         r#"
         .class public Program extends [mscorlib]System.Object {
             .event class [mscorlib]System.EventHandler MyEvent {
