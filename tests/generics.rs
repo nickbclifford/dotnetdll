@@ -1,6 +1,46 @@
 use dotnetdll::prelude::*;
 
+#[macro_use]
 mod common;
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "generics",
+        r#"
+        .class Container<T> {
+            .field public !T Value
+            .method public class Container<!!M> Restricted<+ class M>(!!M) {  }
+        }
+        "#,
+        |res| {
+            let container = &res.type_definitions[1];
+            assert_eq!(container.generic_parameters[0].name, "T");
+            assert_eq!(container.fields[0].return_type, ctype! { T0 });
+
+            let method = &container.methods[0];
+            assert_inner_eq!(method.generic_parameters[0], {
+                variance => generic::Variance::Covariant,
+                name: "M",
+                special_constraint => generic::SpecialConstraint { reference_type: true, .. }
+            });
+
+            let (inst_base, inst_params) = match &method.signature.return_type.1 {
+                Some(ParameterType::Value(MethodType::Base(b))) => match &**b {
+                    BaseType::Type {
+                        source: TypeSource::Generic { base, parameters },
+                        ..
+                    } => (base, parameters),
+                    rest => panic!("expected generic instantiation , got {:?}", rest),
+                },
+                rest => panic!("expected MethodType::Base return type, got {:?}", rest),
+            };
+            assert!(matches!(inst_base, UserType::Definition(i) if std::ptr::eq(&res[*i], container)));
+            assert_eq!(inst_params[0], ctype! { M0 });
+        },
+    )
+    .unwrap();
+}
 
 #[test]
 pub fn write() {
