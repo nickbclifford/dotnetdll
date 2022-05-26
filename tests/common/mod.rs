@@ -2,6 +2,7 @@ use dotnetdll::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
+#[allow(unused_macros)]
 macro_rules! assert_inner_eq {
     ($val:expr, { $($field_name:ident $(: $rhs:expr)? $(=> $pat:pat $(if $guard:expr)?)?),+ }) => {
         let val = &$val;

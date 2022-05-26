@@ -2,6 +2,34 @@ use dotnetdll::prelude::*;
 
 mod common;
 
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "attributes",
+        r#"
+        .class TestAttribute {
+            .method public instance void .ctor(string) { }
+        }
+        .class HasAttribute {
+            .custom instance void TestAttribute::.ctor(string) = (
+                01 00                 // attribute sentinel
+                06 53 74 72 69 6E 67  // string: len 6, "String"
+                00 00                 // 0 named arguments
+            )
+        }
+        "#,
+        |res| {
+            let attribute = &res.type_definitions[2].attributes[0];
+            assert!(matches!(attribute.constructor, UserMethod::Definition(m) if res[m.parent_type()].name == "TestAttribute"));
+
+            let data = attribute.instantiation_data(&AlwaysFailsResolver, &res).unwrap();
+            assert!(data.named_args.is_empty());
+            assert!(matches!(data.constructor_args[0], FixedArg::String(Some("String"))));
+        },
+    )
+    .unwrap();
+}
+
 #[allow(clippy::approx_constant)]
 #[test]
 pub fn write() {

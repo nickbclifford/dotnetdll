@@ -155,6 +155,11 @@ macro_rules! internal_index {
             pub(crate) parent_type: TypeIndex,
             pub(crate) $sing: usize,
         }
+        impl $name {
+            pub fn parent_type(self) -> TypeIndex {
+                self.parent_type
+            }
+        }
 
         impl<'a> Index<$name> for Resolution<'a> {
             type Output = $t;
@@ -222,6 +227,11 @@ pub enum MethodMemberIndex {
 pub struct MethodIndex {
     pub(crate) parent_type: TypeIndex,
     pub(crate) member: MethodMemberIndex,
+}
+impl MethodIndex {
+    pub fn parent_type(self) -> TypeIndex {
+        self.parent_type
+    }
 }
 
 impl<'a> Index<MethodIndex> for Resolution<'a> {

@@ -685,3 +685,21 @@ pub trait Resolver<'a> {
     type Error: std::error::Error;
     fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error>;
 }
+
+#[derive(Debug)]
+pub struct AlwaysFails(String);
+impl Display for AlwaysFails {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AlwaysFailsResolver always fails (asked to find {:?})", self.0)
+    }
+}
+impl std::error::Error for AlwaysFails {}
+
+#[derive(Debug)]
+pub struct AlwaysFailsResolver;
+impl<'a> Resolver<'a> for AlwaysFailsResolver {
+    type Error = AlwaysFails;
+    fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error> {
+        Err(AlwaysFails(name.to_string()))
+    }
+}
