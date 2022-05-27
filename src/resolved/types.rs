@@ -83,7 +83,7 @@ impl Default for TypeFlags {
             imported: false,
             serializable: false,
             string_formatting: StringFormatting::ANSI,
-            before_field_init: true,
+            before_field_init: false,
             runtime_special_name: false,
         }
     }
