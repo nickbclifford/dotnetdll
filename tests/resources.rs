@@ -1,6 +1,27 @@
 use dotnetdll::prelude::*;
+use std::borrow::Cow;
+use std::process::Command;
 
 mod common;
+
+#[test]
+pub fn read() {
+    Command::new("dotnet")
+        .arg("build")
+        .current_dir("./tests/resources-read")
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+
+    let file = std::fs::read("./tests/resources-read/bin/Debug/net6.0/resources-read.dll").unwrap();
+    let dll = DLL::parse(&file).unwrap();
+    let res = dll.resolve(Default::default()).unwrap();
+    assert!(matches!(
+        &res.manifest_resources[0].implementation,
+        resource::Implementation::CurrentFile(Cow::Borrowed(include_bytes!("./strings.resources")))
+    ));
+}
 
 #[test]
 pub fn write() {

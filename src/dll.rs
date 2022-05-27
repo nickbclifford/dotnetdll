@@ -381,7 +381,7 @@ impl<'a> DLL<'a> {
 
                 let name = heap_idx!(strings, r.name);
 
-                let offset = r.offset as usize;
+                let mut offset = r.offset as usize;
 
                 Ok(ManifestResource {
                     attributes: vec![],
@@ -424,7 +424,11 @@ impl<'a> DLL<'a> {
                             "exported type indices are invalid in manifest resource implementations (found in resource {})",
                             name
                         ),
-                        BinImpl::Null => Implementation::CurrentFile(self.at_rva(&self.cli.resources)?[offset..].into())
+                        BinImpl::Null => {
+                            let resources = self.at_rva(&self.cli.resources)?;
+                            let len: u32 = resources.gread_with(&mut offset, scroll::LE)?;
+                            Implementation::CurrentFile(resources[offset..offset + (len as usize)].into())
+                        }
                     },
                     name,
                 })
