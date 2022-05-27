@@ -1,6 +1,39 @@
 use dotnetdll::prelude::*;
 
+#[macro_use]
 mod common;
+
+#[test]
+pub fn read() {
+    common::read_fixture(
+        "oop",
+        r#"
+        .class abstract interface IVehicle {
+            .method public abstract virtual instance int32 MaxDistance() { }
+        }
+        .class Bike extends [mscorlib]System.Object implements IVehicle {
+            .method public virtual instance int32 MaxDistance() { }
+        }
+        "#,
+        |res| {
+            let ivehicle = &res.type_definitions[1];
+            assert_inner_eq!(ivehicle.flags, {
+                abstract_type => true,
+                kind => Kind::Interface
+            });
+            assert_inner_eq!(ivehicle.methods[0], {
+                abstract_member => true,
+                virtual_member => true
+            });
+
+            let bike = &res.type_definitions[2];
+            assert!(matches!(bike.extends, Some(TypeSource::User(u)) if u.type_name(&res) == "System.Object"));
+            assert!(matches!(bike.implements[0].1, TypeSource::User(UserType::Definition(t)) if std::ptr::eq(ivehicle, &res[t])));
+            assert!(bike.methods[0].virtual_member);
+        },
+    )
+    .unwrap();
+}
 
 #[test]
 pub fn write() {
