@@ -10,7 +10,7 @@ pub fn read() {
         r#"
         .class Container<T> {
             .field public !T Value
-            .method public class Container<!!M> Restricted<+ class M>(!!M) {  }
+            .method public class Container<!!M> Restricted<+ class M, ([mscorlib]System.IDisposable) D>(!!M) {  }
         }
         "#,
         |res| {
@@ -24,6 +24,11 @@ pub fn read() {
                 name: "M",
                 special_constraint => generic::SpecialConstraint { reference_type: true, .. }
             });
+            assert!(
+                matches!(&method.generic_parameters[1].type_constraints[0].constraint_type,
+                MethodType::Base(b) if matches!(&**b,
+                    BaseType::Type { source: TypeSource::User(u), .. } if u.type_name(&res) == "System.IDisposable"))
+            );
 
             let (inst_base, inst_params) = match &method.signature.return_type.1 {
                 Some(ParameterType::Value(MethodType::Base(b))) => match &**b {
