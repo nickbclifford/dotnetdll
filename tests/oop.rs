@@ -12,7 +12,8 @@ pub fn read() {
             .method public abstract virtual instance int32 MaxDistance() { }
         }
         .class Bike extends [mscorlib]System.Object implements IVehicle {
-            .method public virtual instance int32 MaxDistance() { }
+            .method public virtual instance int32 Ride() { }
+            .override IVehicle::MaxDistance with instance int32 Bike::Ride()
         }
         "#,
         |res| {
@@ -28,8 +29,12 @@ pub fn read() {
 
             let bike = &res.type_definitions[2];
             assert!(matches!(bike.extends, Some(TypeSource::User(u)) if u.type_name(&res) == "System.Object"));
-            assert!(matches!(bike.implements[0].1, TypeSource::User(UserType::Definition(t)) if std::ptr::eq(ivehicle, &res[t])));
+            assert!(matches!(bike.implements[0].1, TypeSource::User(UserType::Definition(t)) if std::ptr::eq(&res[t], ivehicle)));
             assert!(bike.methods[0].virtual_member);
+            assert_inner_eq!(bike.overrides[0], {
+                implementation => UserMethod::Definition(d) if std::ptr::eq(&res[d], &bike.methods[0]),
+                declaration => UserMethod::Definition(d) if std::ptr::eq(&res[d], &ivehicle.methods[0])
+            });
         },
     )
     .unwrap();
