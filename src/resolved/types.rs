@@ -9,6 +9,7 @@ use crate::resolution::*;
 use dotnetdll_macros::From;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
+use thiserror::Error;
 
 pub use dotnetdll_macros::{ctype, type_name, type_ref};
 
@@ -686,14 +687,9 @@ pub trait Resolver<'a> {
     fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("AlwaysFailsResolver always fails (asked to find {0:?})")]
 pub struct AlwaysFails(String);
-impl Display for AlwaysFails {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AlwaysFailsResolver always fails (asked to find {:?})", self.0)
-    }
-}
-impl std::error::Error for AlwaysFails {}
 
 #[derive(Debug)]
 pub struct AlwaysFailsResolver;

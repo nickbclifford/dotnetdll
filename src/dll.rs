@@ -8,7 +8,6 @@ use super::{
     resolution::*,
     resolved,
 };
-use dotnetdll_macros::From;
 use log::{debug, warn};
 use object::{
     endian::{LittleEndian, U32Bytes},
@@ -23,6 +22,7 @@ use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use thiserror::Error;
 use DLLError::*;
 
 #[derive(Debug)]
@@ -32,24 +32,17 @@ pub struct DLL<'a> {
     sections: SectionTable<'a>,
 }
 
-#[derive(Debug, From)]
+#[derive(Debug, Error)]
 pub enum DLLError {
-    PERead(ObjectReadError),
-    PEWrite(ObjectWriteError),
-    CLI(ScrollError),
+    #[error("PE parsing: {0}")]
+    PERead(#[from] ObjectReadError),
+    #[error("PE writing: {0}")]
+    PEWrite(#[from] ObjectWriteError),
+    #[error("CLI parsing: {0}")]
+    CLI(#[from] ScrollError),
+    #[error("Other parsing: {0}")]
     Other(&'static str),
 }
-impl std::fmt::Display for DLLError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PERead(o) => write!(f, "PE parsing: {}", o),
-            PEWrite(o) => write!(f, "PE writing: {}", o),
-            CLI(s) => write!(f, "CLI parsing: {}", s),
-            Other(s) => write!(f, "Other parsing: {}", s),
-        }
-    }
-}
-impl std::error::Error for DLLError {}
 
 pub type Result<T> = std::result::Result<T, DLLError>;
 

@@ -26,6 +26,7 @@ object = { version = "0.28.2", features = ['write'] }
 paste = "1.0.5"
 scroll = { version = "0.11.0", features = ['derive'] }
 scroll-buffer = "0.3.0"
+thiserror = "1.0.31"
 
 [dev-dependencies]
 env_logger = "0.9.0"
