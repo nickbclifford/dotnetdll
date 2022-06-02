@@ -38,7 +38,7 @@ pub enum DLLError {
     PERead(#[from] ObjectReadError),
     #[error("PE writing: {0}")]
     PEWrite(#[from] ObjectWriteError),
-    #[error("CLI parsing: {0}")]
+    #[error("CLI metadata: {0}")]
     CLI(#[from] ScrollError),
     #[error("Other parsing: {0}")]
     Other(&'static str),
