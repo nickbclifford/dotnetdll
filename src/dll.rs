@@ -1,7 +1,7 @@
 use super::{
     binary::{
         cli::{Header, Metadata, RVASize},
-        heap::*,
+        heap::{Writer as HeapWriter, *},
         metadata, method, stream,
     },
     convert,
