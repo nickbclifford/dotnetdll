@@ -77,10 +77,93 @@ build_rule_parsers! {
         }
     }
     type_ref(input) -> ast::TypeReference {
+        let mut inner = input.into_inner();
+        ast::TypeReference {
+            parent: inner.maybe(Rule::dotted, dotted),
+            target: dotted(inner.next().unwrap())
+        }
+    }
+    clitype(input) -> ast::Type {
+        use ast::Type::*;
+        match input.as_str() {
+            "string" => String,
+            "object" => Object,
+            "float" => Float,
+            "double" => Double,
+            _ => {
+                let valuetype = input.as_str().starts_with("valuetype");
+                let pair = input.into_inner().next().unwrap();
+                match pair.as_rule() {
+                    Rule::int_type => Integer(int_type(pair)),
+                    Rule::vector => Vector(Box::new(clitype(pair.into_inner().next().unwrap()))),
+                    Rule::type_ref => if valuetype {
+                        ValueType(type_ref(pair))
+                    } else {
+                        RefType(type_ref(pair))
+                    },
+                    Rule::pointer => Pointer({
+                        let inner = pair.into_inner().next().unwrap();
+                        if inner.as_rule() == Rule::void_ptr {
+                            None
+                        } else {
+                            Some(Box::new(clitype(inner)))
+                        }
+                    }),
+                    _ => unreachable!()
+                }
+            }
+        }
+    }
+    access(input) -> ast::Access {
+        use ast::Access::*;
+        match input.as_str() {
+            "public" => Public,
+            "internal" => Internal,
+            s if s.starts_with("private") => if s.ends_with("protected") {
+                PrivateProtected
+            } else {
+                Private
+            },
+            s if s.starts_with("protected") => if s.ends_with("internal") {
+                ProtectedInternal
+            } else {
+                Protected
+            },
+            _ => unreachable!()
+        }
+    }
+    field(input) -> ast::Field {
+        let mut inner = input.into_inner();
+        ast::Field(clitype(inner.next().unwrap()), ident(inner.next().unwrap()))
+    }
+    property(input) -> ast::Property {
+        todo!()
+    }
+    method(input) -> ast::Method {
+        todo!()
+    }
+    event(input) -> ast::Event {
         todo!()
     }
     type_item(input) -> ast::TypeItem {
-        todo!()
+        let mut inner = input.into_inner();
+
+        let access = access(inner.next().unwrap());
+        let r#static = inner.maybe(Rule::static_member, |_| ()).is_some();
+        let item = inner.next().unwrap();
+
+        use ast::TypeItemKind::*;
+        ast::TypeItem {
+            access,
+            r#static,
+            kind: match item.as_rule() {
+                Rule::field => Field(field(item)),
+                Rule::property => Property(property(item)),
+                Rule::method => Method(method(item)),
+                Rule::event => Event(event(item)),
+                _ => unreachable!()
+            }
+        }
     }
     type_decl(input) -> ast::TypeDeclaration {
         let mut inner = input.into_inner();
@@ -96,11 +179,12 @@ build_rule_parsers! {
         let public = input.as_str().starts_with("public");
         let inner = input.into_inner().next().unwrap();
 
+        use ast::TopLevelKind::*;
         ast::TopLevel {
             public,
             kind: match inner.as_rule() {
-                Rule::enum_decl => ast::TopLevelKind::Enum(enum_decl(inner)),
-                Rule::type_decl => ast::TopLevelKind::Type(type_decl(inner)),
+                Rule::enum_decl => Enum(enum_decl(inner)),
+                Rule::type_decl => Type(type_decl(inner)),
                 _ => unreachable!(),
             },
         }
