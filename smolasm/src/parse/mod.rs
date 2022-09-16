@@ -1,8 +1,10 @@
+use combinators::Combinators;
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 
 mod ast;
+mod combinators;
 
 #[derive(Parser)]
 #[grammar = "parse/assembly.pest"]
@@ -40,11 +42,55 @@ build_rule_parsers! {
             }),
         }
     }
+    int_type(input) -> ast::IntType {
+        use ast::IntType::*;
+        match input.as_str() {
+            "bool" => Bool,
+            "char" => Char,
+            "sbyte" => SByte,
+            "byte" => Byte,
+            "short" => Short,
+            "ushort" => UShort,
+            "int" => Int,
+            "uint" => UInt,
+            "long" => Long,
+            "ulong" => ULong,
+            "nint" => NInt,
+            "nuint" => NUInt
+            _ => unreachable!()
+        }
+    }
     enum_decl(input) -> ast::Enum {
+        let mut inner = input.into_inner();
+        ast::Enum {
+            base: maybe(&mut inner, Rule::int_type, int_type),
+            name: dotted(inner.next().unwrap()),
+            members: inner.map(ident).collect()
+        }
+    }
+    type_kind(input) -> ast::TypeKind {
+        use ast::TypeKind::*;
+        match input.as_str() {
+            "struct" => Struct,
+            "interface" => Interface,
+            other => Class { r#abstract: other.starts_with("abstract") }
+        }
+    }
+    type_ref(input) -> ast::TypeReference {
+        todo!()
+    }
+    type_item(input) -> ast::TypeItem {
         todo!()
     }
     type_decl(input) -> ast::TypeDeclaration {
-        todo!()
+        let mut inner = input.into_inner();
+        ast::TypeDeclaration {
+            kind: type_kind(inner.next().unwrap()),
+            name: dotted(inner.next().unwrap()),
+            extends: inner.maybe(Rule::extends, type_ref),
+            implements: inner.maybe(Rule::implements, |p| p.into_inner().map(type_ref).collect()),
+            items: inner.map(type_item).collect()
+        }
     }
     top_level_decl(input) -> ast::TopLevel {
         let public = input.as_str().starts_with("public");
@@ -65,21 +111,10 @@ pub fn assembly(input: &str) -> Result<ast::Assembly, pest::error::Error<Rule>> 
     let mut parse = AssemblyParser::parse(Rule::assembly, input)?;
 
     let assembly_decl = asm_spec(parse.next().unwrap());
-    let mut extern_decls = vec![];
-    let mut top_level_decls = vec![];
-
-    for pair in parse {
-        match pair.as_rule() {
-            Rule::extern_decl => {
-                let mut inner = pair.into_inner();
-                extern_decls.push(asm_spec(inner.next().unwrap()));
-            }
-            Rule::top_level_decl => {
-                top_level_decls.push(top_level_decl(pair));
-            }
-            _ => unreachable!(),
-        }
-    }
+    let mut extern_decls = parse.many0(Rule::extern_decl, |p| {
+        asm_spec(p.into_inner().next().unwrap())
+    });
+    let mut top_level_decls = parse.map(top_level_decl).collect();
 
     Ok(ast::Assembly {
         assembly_decl,
