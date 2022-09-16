@@ -30,10 +30,7 @@ pub struct WriteContext<'a> {
     pub object: TypeRefIndex,
 }
 
-#[allow(dead_code)]
 pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> Result<(), Box<dyn std::error::Error>> {
-    let ilasm_path: &str = "/home/nick/Desktop/runtime/artifacts/bin/coreclr/Linux.x64.Debug/ilasm";
-
     let dir = TempDir::new()?;
 
     let il_path = dir.path().join(format!("{}.il", name));
@@ -48,7 +45,9 @@ pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> 
         ),
     )?;
 
-    Command::new(ilasm_path)
+    // TODO: parametrize
+    const ILASM_PATH: &str = "/home/nick/Desktop/runtime/artifacts/bin/coreclr/Linux.x64.Debug/ilasm";
+    Command::new(ILASM_PATH)
         .current_dir(dir.path())
         .arg("-DLL")
         .arg(name)
@@ -139,6 +138,7 @@ pub fn write_fixture(
                 .arg(if let Ok(i) = std::env::var("ILDASM") {
                     i
                 } else {
+                    // TODO: automatically find built artifact
                     format!(
                         "{}/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun",
                         r
@@ -153,6 +153,7 @@ pub fn write_fixture(
             let ilverify = Command::new(i)
                 .arg(&dll_path)
                 .arg("-r")
+                // TODO: parametrize
                 .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
                 .output()?;
             println!("{}", String::from_utf8(ilverify.stdout)?);
