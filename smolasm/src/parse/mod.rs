@@ -63,7 +63,7 @@ build_rule_parsers! {
     enum_decl(input) -> ast::Enum {
         let mut inner = input.into_inner();
         ast::Enum {
-            base: maybe(&mut inner, Rule::int_type, int_type),
+            base: inner.maybe(Rule::int_type, int_type),
             name: dotted(inner.next().unwrap()),
             members: inner.map(ident).collect()
         }
