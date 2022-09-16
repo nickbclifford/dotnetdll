@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-debug-cell = "0.1.1"
-pest = "2.1"
-pest_derive = "2.1"
 dotnetdll = { path = ".." }
+pest = "2.2.1"
+pest_derive = "2.2.1"
