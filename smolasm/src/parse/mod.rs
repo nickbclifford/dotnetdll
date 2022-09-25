@@ -34,10 +34,7 @@ build_rule_parsers! {
             assembly: dotted(inner.next().unwrap()),
             version: inner.next().map(|v| {
                 ast::Version(
-                    v.as_str()[1..]
-                        .split('.')
-                        .map(|n| n.parse().unwrap())
-                        .collect(),
+                    v.into_inner().map(|p| p.as_str().parse().unwrap()).collect()
                 )
             }),
         }
@@ -136,14 +133,65 @@ build_rule_parsers! {
         let mut inner = input.into_inner();
         ast::Field(clitype(inner.next().unwrap()), ident(inner.next().unwrap()))
     }
-    property(input) -> ast::Property {
+    param_type(input) -> ast::ParamType {
+        ast::ParamType {
+            r#ref: input.as_str().starts_with("ref"),
+            r#type: clitype(input.into_inner().next().unwrap())
+        }
+    }
+    locals(input) -> ast::Locals {
         todo!()
+    }
+    method_body(input) -> ast::MethodBody {
+        let mut inner = input.into_inner();
+        ast::MethodBody {
+            max_stack: inner.maybe(Rule::nat, |p| p.as_str().parse().unwrap()),
+            locals: inner.maybe(Rule::locals, locals),
+            instructions: todo!()
+        }
     }
     method(input) -> ast::Method {
-        todo!()
+        let mut inner = input.into_inner();
+        let name = ident(inner.next().unwrap());
+        let parameters = inner.many0(Rule::param, |p| {
+            let mut inner = p.into_inner();
+            (param_type(inner.next().unwrap()), ident(inner.next().unwrap()))
+        });
+        let return_type = inner.next().unwrap();
+
+        // TODO
+        let attributes = inner.many0(Rule::method_attribute, |p| ());
+
+        ast::Method {
+            name,
+            parameters,
+            return_type: if return_type.as_str() == "void" {
+                None
+            } else {
+                Some(param_type(return_type.into_inner().next().unwrap()))
+            },
+            body: inner.maybe(Rule::method_body, method_body)
+        }
+    }
+    semantic_method(input) -> ast::SemanticMethod {
+        let mut inner = input.into_inner();
+        ast::SemanticMethod(ident(inner.next().unwrap()), method_body(inner.next().unwrap()))
+    }
+    property(input) -> ast::Property {
+        let mut inner = input.into_inner();
+        ast::Property {
+            r#type: clitype(inner.next().unwrap()),
+            name: ident(inner.next().unwrap()),
+            methods: inner.many0(Rule::semantic_method, semantic_method)
+        }
     }
     event(input) -> ast::Event {
-        todo!()
+        let mut inner = input.into_inner();
+        ast::Event {
+            r#type: clitype(inner.next().unwrap()),
+            name: ident(inner.next().unwrap()),
+            methods: inner.many0(Rule::event, semantic_method)
+        }
     }
     type_item(input) -> ast::TypeItem {
         let mut inner = input.into_inner();

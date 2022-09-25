@@ -40,11 +40,8 @@ method_body = { ("maxstack" ~ nat)? ~ ("locals" ~ locals)? ~ (label | instructio
 param_type = { "ref"? ~ clitype }
 param = { param_type ~ ident }
 return_type = { "void" | param_type }
-virtual_member = { "@virtual" }
-entry_point = { "@entrypoint" }
-special_name = { "@specialname" }
-rt_special_name = { "@rtspecialname" }
-method = { "method" ~ method_ident ~ "(" ~ ((param ~ ",")* ~ param)? ~ ")" ~ "->" ~ return_type ~ virtual_member? ~ entry_point? ~ special_name? ~ rt_special_name? ~ ("{" ~ method_body ~ "}")? }
+method_attribute = @{ "@" ~ ident }
+method = { "method" ~ method_ident ~ "(" ~ ((param ~ ",")* ~ param)? ~ ")" ~ "->" ~ return_type ~ method_attribute* ~ ("{" ~ method_body ~ "}")? }
 
 field = { "field" ~ clitype ~ ident }
 

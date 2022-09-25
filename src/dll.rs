@@ -16,7 +16,6 @@ use object::{
         pe::{PeFile32, PeFile64, SectionTable},
         Error as ObjectReadError, FileKind,
     },
-    write::Error as ObjectWriteError,
 };
 use scroll::{Error as ScrollError, Pread, Pwrite};
 use scroll_buffer::DynamicBuffer;
@@ -25,29 +24,41 @@ use std::collections::HashMap;
 use thiserror::Error;
 use DLLError::*;
 
+/// Represents a binary DLL file. Used for binary introspection, metadata resolution, and resolution compilation.
 #[derive(Debug)]
 pub struct DLL<'a> {
     buffer: &'a [u8],
+    /// The CLI header of the DLL, read from the 15th PE data directory. See ECMA-335, II.25.3.3 for more information.
     pub cli: Header,
     sections: SectionTable<'a>,
 }
 
+/// The general error type for all dotnetdll operations.
 #[derive(Debug, Error)]
 pub enum DLLError {
+    /// Errors from parsing the PE binary format.
+    /// This might happen if you try to load an invalid DLL with [`DLL::parse`].
     #[error("PE parsing: {0}")]
     PERead(#[from] ObjectReadError),
-    #[error("PE writing: {0}")]
-    PEWrite(#[from] ObjectWriteError),
+    /// Errors from CLI metadata reading or writing.
+    /// Messages are communicated through the [`ScrollError::Custom`] enum variant.
     #[error("CLI metadata: {0}")]
     CLI(#[from] ScrollError),
+    /// Errors from DLL parsing that are not PE format errors, such as .NET metadata and method bodies.
+    /// This might happen if you try to load an invalid DLL with [`DLL::parse`].
     #[error("Other parsing: {0}")]
     Other(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, DLLError>;
 
+/// A dictionary of options for [`DLL::resolve`].
 #[derive(Debug, Default, Copy, Clone)]
 pub struct ResolveOptions {
+    /// If this flag is set, [`DLL::resolve`] will not resolve the bodies of class methods,
+    /// meaning [`Method::body`](resolved::members::Method::body) will always be `None`.
+    /// 
+    /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,
 }
 
@@ -3288,7 +3299,8 @@ impl<'a> DLL<'a> {
 
         // begin writing
 
-        writer.write_dos_header_and_stub()?;
+        // because this is just writing to a Vec, the buffer always succeeds to allocate and there's no need to handle the error
+        writer.write_dos_header_and_stub().unwrap();
         writer.write_nt_headers(NtHeaders {
             machine: if is_32_bit {
                 pe::IMAGE_FILE_MACHINE_I386
