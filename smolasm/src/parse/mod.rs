@@ -140,14 +140,46 @@ build_rule_parsers! {
         }
     }
     locals(input) -> ast::Locals {
+        ast::Locals {
+            init: input.as_str().starts_with("init"),
+            variables: input.into_inner().map(|p| {
+                let mut inner = p.into_inner();
+                (clitype(inner.next().unwrap()), ident(inner.next().unwrap()))
+            }).collect()
+        }
+    }
+    label(input) -> ast::Label {
+        ident(input.into_inner().next().unwrap())
+    }
+    instruction(input) -> ast::Instruction {
         todo!()
     }
     method_body(input) -> ast::MethodBody {
         let mut inner = input.into_inner();
+
+        let max_stack = inner.maybe(Rule::nat, |p| p.as_str().parse().unwrap());
+        let locals = inner.maybe(Rule::locals, locals);
+
+        let mut instructions = vec![];
+        let mut next_labels = vec![];
+
+        for pair in inner {
+            match pair.as_rule() {
+                Rule::label => {
+                    next_labels.push(label(pair));
+                }
+                Rule::instruction => {
+                    instructions.push((next_labels, instruction(pair)));
+                    next_labels = vec![];
+                }
+                _ => unreachable!()
+            }
+        }
+
         ast::MethodBody {
-            max_stack: inner.maybe(Rule::nat, |p| p.as_str().parse().unwrap()),
-            locals: inner.maybe(Rule::locals, locals),
-            instructions: todo!()
+            max_stack,
+            locals,
+            instructions
         }
     }
     method(input) -> ast::Method {
