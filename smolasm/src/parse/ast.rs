@@ -75,13 +75,30 @@ pub struct MethodRef {
     pub parameters: Vec<ParamType>,
 }
 #[derive(Debug, Clone)]
-pub enum Instruction {
-    New(Type, Vec<ParamType>),
-    Call(MethodRef),
-    Return,
-    LoadString(String)
+pub struct FieldRef {
+    pub return_type: Type,
+    pub parent: Type,
+    pub field: Ident,
 }
 pub type Label = Ident;
+#[derive(Debug, Clone)]
+pub enum Instruction {
+    Add,
+    Box(Type),
+    Branch(Label),
+    Call(MethodRef),
+    LoadArgument(Ident),
+    LoadDouble(f64),
+    LoadField(FieldRef),
+    LoadFloat(f32),
+    LoadInt(i32),
+    LoadLocal(Ident),
+    LoadLong(i64),
+    LoadString(String),
+    New(Type, Vec<ParamType>),
+    Return,
+    StoreLocal(Ident)
+}
 #[derive(Debug, Clone)]
 pub struct MethodBody {
     pub max_stack: Option<u32>,

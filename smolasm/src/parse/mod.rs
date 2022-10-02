@@ -90,9 +90,19 @@ build_rule_parsers! {
     }
     type_ref(input) -> ast::TypeReference {
         let mut inner = input.into_inner();
-        ast::TypeReference {
-            parent: inner.maybe(Rule::dotted, dotted),
-            target: dotted(inner.next().unwrap())
+        let first = dotted(inner.next().unwrap());
+
+        // if there is another pair to consume, then the first pair is the parent assembly
+        if let Some(pair) = inner.next() {
+            ast::TypeReference {
+                parent: Some(first),
+                target: dotted(pair)
+            }
+        } else {
+            ast::TypeReference {
+                parent: None,
+                target: first
+            }
         }
     }
     clitype(input) -> ast::Type {
@@ -190,9 +200,91 @@ build_rule_parsers! {
             parameters
         }
     }
+    field_ref(input) -> ast::FieldRef {
+        let mut inner = input.into_inner();
+        let return_type = clitype(inner.next().unwrap());
+        let mut field_name = inner.next().unwrap().into_inner();
+        ast::FieldRef {
+            return_type,
+            parent: clitype(field_name.next().unwrap()),
+            field: ident(field_name.next().unwrap())
+        }
+    }
     instruction(input) -> ast::Instruction {
-        // TODO
-        ast::Instruction::Return
+        use ast::Instruction::*;
+
+        fn pop_token(s: &str) -> (&str, &str) {
+            match s.find(char::is_whitespace) {
+                Some(i) => (&s[..i], s[i + 1..].trim_start()),
+                None => (s, ""),
+            }
+        }
+        fn parse_single(rule: Rule, s: &str) -> Pair<Rule> {
+            match AssemblyParser::parse(rule, s) {
+                Ok(mut ps) => ps.next().unwrap(),
+                Err(e) => panic!("failed to parse {:?} in instruction: {}", rule, e),
+            }
+        }
+        macro_rules! single {
+            ($rule:ident, $params:expr) => {
+                $rule(parse_single(Rule::$rule, $params))
+            }
+        }
+
+        let (mnemonic, params) = pop_token(input.as_str());
+        match mnemonic {
+            "add" => Add,
+            "box" => Box(single!(clitype, params)),
+            "branch" => Branch(single!(ident, params)),
+            "call" => Call(single!(method_ref, params)),
+            "load" => {
+                let (load_type, params) = pop_token(params);
+                match load_type {
+                    "argument" => LoadArgument(single!(ident, params)),
+                    "double" => LoadDouble(params.parse().unwrap()),
+                    "field" => LoadField(single!(field_ref, params)),
+                    "float" => LoadFloat(params.parse().unwrap()),
+                    "int" => LoadInt(params.parse().unwrap()),
+                    "local" => LoadLocal(single!(ident, params)),
+                    "long" => LoadLong(params.parse().unwrap()),
+                    "string" => {
+                        let mut buf = String::new();
+                        let mut arg_iter = params.chars();
+
+                        if arg_iter.next() != Some('"') {
+                            panic!("expected string literal");
+                        }
+
+                        loop {
+                            let c = arg_iter.next().expect("unterminated string literal");
+                            match c {
+                                '"' => break,
+                                '\\' => buf.push(match arg_iter.next().expect("bad escape sequence") {
+                                    '\\' => '\\',
+                                    '"' => '"',
+                                    'n' => '\n',
+                                    't' => '\t',
+                                    other => panic!("unknown escape sequence \\{}", other),
+                                }),
+                                other => buf.push(other),
+                            }
+                        }
+
+                        LoadString(buf)
+                    }
+                    other => panic!("unrecognized load type `{}`", other)
+                }
+            },
+            "return" => Return,
+            "store" => {
+                let (store_type, params) = pop_token(params);
+                match store_type {
+                    "local" => StoreLocal(single!(ident, params)),
+                    other => panic!("unrecognized store type `{}`", other)
+                }
+            },
+            other => panic!("unrecognized instruction mnemonic `{}`", other)
+        }
     }
     method_body(input) -> ast::MethodBody {
         let mut inner = input.into_inner();
