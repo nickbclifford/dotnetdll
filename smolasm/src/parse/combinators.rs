@@ -17,7 +17,7 @@ impl Combinators for Pairs<'_, Rule> {
         })
     }
 
-    fn many0<T>(&mut self, target: Rule, body: impl FnMut(Pair<Rule>) -> T) -> Vec<T> {
+    fn many0<T>(&mut self, target: Rule, mut body: impl FnMut(Pair<Rule>) -> T) -> Vec<T> {
         let mut result = vec![];
         while let Some(next) = self.peek() {
             if next.as_rule() == target {

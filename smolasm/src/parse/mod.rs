@@ -14,7 +14,16 @@ macro_rules! build_rule_parsers {
     ($( $rule:ident($input:ident) -> $t:ty { $($body:tt)* } )*) => {
         $(
             fn $rule($input: Pair<Rule>) -> $t {
-                assert_eq!($input.as_rule(), Rule::$rule);
+                if $input.as_rule() != Rule::$rule {
+                    let (line, col) = $input.as_span().start_pos().line_col();
+                    panic!(
+                        "expected {:?} but received {:?} at line {}:{}",
+                        Rule::$rule,
+                        $input.as_rule(),
+                        line,
+                        col
+                    );
+                }
                 $($body)*
             }
         )*
@@ -25,8 +34,14 @@ build_rule_parsers! {
     ident(input) -> ast::Ident {
         input.as_str().to_string()
     }
+    method_ident(input) -> ast::Ident {
+        input.as_str().to_string()
+    }
     dotted(input) -> ast::Dotted {
-        ast::Dotted(input.into_inner().map(ident).collect())
+        ast::Dotted(input.as_str().split('.').map(String::from).collect())
+    }
+    asm_decl(input) -> ast::AssemblySpec {
+        asm_spec(input.into_inner().next().unwrap())
     }
     asm_spec(input) -> ast::AssemblySpec {
         let mut inner = input.into_inner();
@@ -53,7 +68,7 @@ build_rule_parsers! {
             "long" => Long,
             "ulong" => ULong,
             "nint" => NInt,
-            "nuint" => NUInt
+            "nuint" => NUInt,
             _ => unreachable!()
         }
     }
@@ -149,10 +164,35 @@ build_rule_parsers! {
         }
     }
     label(input) -> ast::Label {
-        ident(input.into_inner().next().unwrap())
+        let mut buf = input.as_str().to_string();
+        // remove trailing colon character
+        buf.pop();
+        buf
+    }
+    return_type(input) -> Option<ast::ParamType> {
+        if input.as_str() == "void" {
+            None
+        } else {
+            Some(param_type(input.into_inner().next().unwrap()))
+        }
+    }
+    method_ref(input) -> ast::MethodRef {
+        let r#static = input.as_str().starts_with("static");
+        let mut inner = input.into_inner();
+        let mut method_name = inner.next().unwrap().into_inner();
+        let parameters = inner.many0(Rule::param_type, param_type);
+        let return_type = return_type(inner.next().unwrap());
+        ast::MethodRef {
+            r#static,
+            return_type,
+            parent: clitype(method_name.next().unwrap()),
+            method: method_ident(method_name.next().unwrap()),
+            parameters
+        }
     }
     instruction(input) -> ast::Instruction {
-        todo!()
+        // TODO
+        ast::Instruction::Return
     }
     method_body(input) -> ast::MethodBody {
         let mut inner = input.into_inner();
@@ -184,12 +224,12 @@ build_rule_parsers! {
     }
     method(input) -> ast::Method {
         let mut inner = input.into_inner();
-        let name = ident(inner.next().unwrap());
+        let name = method_ident(inner.next().unwrap());
         let parameters = inner.many0(Rule::param, |p| {
             let mut inner = p.into_inner();
             (param_type(inner.next().unwrap()), ident(inner.next().unwrap()))
         });
-        let return_type = inner.next().unwrap();
+        let return_type = return_type(inner.next().unwrap());
 
         // TODO
         let attributes = inner.many0(Rule::method_attribute, |p| ());
@@ -197,11 +237,7 @@ build_rule_parsers! {
         ast::Method {
             name,
             parameters,
-            return_type: if return_type.as_str() == "void" {
-                None
-            } else {
-                Some(param_type(return_type.into_inner().next().unwrap()))
-            },
+            return_type,
             body: inner.maybe(Rule::method_body, method_body)
         }
     }
@@ -274,11 +310,11 @@ build_rule_parsers! {
 pub fn assembly(input: &str) -> Result<ast::Assembly, pest::error::Error<Rule>> {
     let mut parse = AssemblyParser::parse(Rule::assembly, input)?;
 
-    let assembly_decl = asm_spec(parse.next().unwrap());
-    let mut extern_decls = parse.many0(Rule::extern_decl, |p| {
+    let assembly_decl = asm_decl(parse.next().unwrap());
+    let extern_decls = parse.many0(Rule::extern_decl, |p| {
         asm_spec(p.into_inner().next().unwrap())
     });
-    let mut top_level_decls = parse.map(top_level_decl).collect();
+    let top_level_decls = parse.many0(Rule::top_level_decl, top_level_decl);
 
     Ok(ast::Assembly {
         assembly_decl,

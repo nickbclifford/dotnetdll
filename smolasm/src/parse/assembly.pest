@@ -8,7 +8,7 @@ dotted = @{ (ident ~ ".")* ~ ident }
 method_ident = @{ ".ctor" | ".cctor" | ident }
 
 version = ${ "v" ~ nat ~ ("." ~ nat){0,3} }
-asm_spec = _{ dotted ~ version? }
+asm_spec = { dotted ~ version? }
 
 asm_decl = { "assembly" ~ asm_spec }
 extern_decl = { "extern" ~ asm_spec }
