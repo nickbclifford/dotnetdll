@@ -88,18 +88,18 @@ build_rule_parsers! {
             other => Class { r#abstract: other.starts_with("abstract") }
         }
     }
-    type_ref(input) -> ast::TypeReference {
+    type_ref(input) -> ast::TypeRef {
         let mut inner = input.into_inner();
         let first = dotted(inner.next().unwrap());
 
         // if there is another pair to consume, then the first pair is the parent assembly
         if let Some(pair) = inner.next() {
-            ast::TypeReference {
+            ast::TypeRef {
                 parent: Some(first),
                 target: dotted(pair)
             }
         } else {
-            ast::TypeReference {
+            ast::TypeRef {
                 parent: None,
                 target: first
             }
@@ -210,6 +210,10 @@ build_rule_parsers! {
             field: ident(field_name.next().unwrap())
         }
     }
+    ctor_ref(input) -> (ast::Type, Vec<ast::ParamType>) {
+        let mut inner = input.into_inner();
+        (clitype(inner.next().unwrap()), inner.many0(Rule::param_type, param_type))
+    }
     instruction(input) -> ast::Instruction {
         use ast::Instruction::*;
 
@@ -236,12 +240,23 @@ build_rule_parsers! {
             "add" => Add,
             "box" => Box(single!(clitype, params)),
             "branch" => Branch(single!(ident, params)),
-            "call" => Call(single!(method_ref, params)),
+            "call" => if let ("virtual", virt_params) = pop_token(params) {
+                Call {
+                    r#virtual: true,
+                    method: single!(method_ref, virt_params)
+                }
+            } else {
+                Call {
+                    r#virtual: false,
+                    method: single!(method_ref, params)
+                }
+            },
             "load" => {
                 let (load_type, params) = pop_token(params);
                 match load_type {
                     "argument" => LoadArgument(single!(ident, params)),
                     "double" => LoadDouble(params.parse().unwrap()),
+                    "element" => LoadElement(single!(clitype, params)),
                     "field" => LoadField(single!(field_ref, params)),
                     "float" => LoadFloat(params.parse().unwrap()),
                     "int" => LoadInt(params.parse().unwrap()),
@@ -274,10 +289,15 @@ build_rule_parsers! {
                     other => panic!("unrecognized load type `{}`", other)
                 }
             },
+            "new" => {
+                let (parent, param_types) = single!(ctor_ref, params);
+                New(parent, param_types)
+            },
             "return" => Return,
             "store" => {
                 let (store_type, params) = pop_token(params);
                 match store_type {
+                    "field" => StoreField(single!(field_ref, params)),
                     "local" => StoreLocal(single!(ident, params)),
                     other => panic!("unrecognized store type `{}`", other)
                 }
@@ -315,21 +335,15 @@ build_rule_parsers! {
     }
     method(input) -> ast::Method {
         let mut inner = input.into_inner();
-        let name = method_ident(inner.next().unwrap());
-        let parameters = inner.many0(Rule::param, |p| {
-            let mut inner = p.into_inner();
-            (param_type(inner.next().unwrap()), ident(inner.next().unwrap()))
-        });
-        let return_type = return_type(inner.next().unwrap());
-
-        let attributes = inner.many0(Rule::method_attribute, |p| p.as_str()[1..].to_string());
-
         ast::Method {
-            name,
-            parameters,
-            return_type,
+            name: method_ident(inner.next().unwrap()),
+            parameters: inner.many0(Rule::param, |p| {
+                let mut inner = p.into_inner();
+                (param_type(inner.next().unwrap()), ident(inner.next().unwrap()))
+            }),
+            return_type: return_type(inner.next().unwrap()),
+            attributes: inner.many0(Rule::method_attribute, |p| p.as_str()[1..].to_string()),
             body: inner.maybe(Rule::method_body, method_body),
-            attributes
         }
     }
     semantic_method(input) -> ast::SemanticMethod {
@@ -372,13 +386,19 @@ build_rule_parsers! {
             }
         }
     }
+    extends(input) -> ast::TypeRef {
+        type_ref(input.into_inner().next().unwrap())
+    }
+    implements(input) -> Vec<ast::TypeRef> {
+        input.into_inner().map(type_ref).collect()
+    }
     type_decl(input) -> ast::TypeDeclaration {
         let mut inner = input.into_inner();
         ast::TypeDeclaration {
             kind: type_kind(inner.next().unwrap()),
             name: dotted(inner.next().unwrap()),
-            extends: inner.maybe(Rule::extends, type_ref),
-            implements: inner.maybe(Rule::implements, |p| p.into_inner().map(type_ref).collect()),
+            extends: inner.maybe(Rule::extends, extends),
+            implements: inner.maybe(Rule::implements, implements),
             items: inner.map(type_item).collect()
         }
     }

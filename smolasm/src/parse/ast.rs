@@ -27,7 +27,7 @@ pub enum IntType {
     NUInt,
 }
 #[derive(Debug, Clone)]
-pub struct TypeReference {
+pub struct TypeRef {
     pub parent: Option<Dotted>,
     pub target: Dotted,
 }
@@ -38,8 +38,8 @@ pub enum Type {
     Object,
     Float,
     Double,
-    RefType(TypeReference),
-    ValueType(TypeReference),
+    RefType(TypeRef),
+    ValueType(TypeRef),
     Vector(Box<Type>),
     Pointer(Option<Box<Type>>),
 }
@@ -86,9 +86,13 @@ pub enum Instruction {
     Add,
     Box(Type),
     Branch(Label),
-    Call(MethodRef),
+    Call {
+        r#virtual: bool,
+        method: MethodRef
+    },
     LoadArgument(Ident),
     LoadDouble(f64),
+    LoadElement(Type),
     LoadField(FieldRef),
     LoadFloat(f32),
     LoadInt(i32),
@@ -97,6 +101,7 @@ pub enum Instruction {
     LoadString(String),
     New(Type, Vec<ParamType>),
     Return,
+    StoreField(FieldRef),
     StoreLocal(Ident),
 }
 #[derive(Debug, Clone)]
@@ -116,8 +121,8 @@ pub struct Method {
     pub name: Ident,
     pub parameters: Vec<(ParamType, Ident)>,
     pub return_type: Option<ParamType>,
-    pub body: Option<MethodBody>,
     pub attributes: Vec<Ident>,
+    pub body: Option<MethodBody>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,8 +166,8 @@ pub enum TypeKind {
 pub struct TypeDeclaration {
     pub kind: TypeKind,
     pub name: Dotted,
-    pub extends: Option<TypeReference>,
-    pub implements: Option<Vec<TypeReference>>,
+    pub extends: Option<TypeRef>,
+    pub implements: Option<Vec<TypeRef>>,
     pub items: Vec<TypeItem>,
 }
 
