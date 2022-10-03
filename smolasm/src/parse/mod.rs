@@ -256,8 +256,7 @@ build_rule_parsers! {
                         }
 
                         loop {
-                            let c = arg_iter.next().expect("unterminated string literal");
-                            match c {
+                            match arg_iter.next().expect("unterminated string literal") {
                                 '"' => break,
                                 '\\' => buf.push(match arg_iter.next().expect("bad escape sequence") {
                                     '\\' => '\\',
@@ -323,14 +322,14 @@ build_rule_parsers! {
         });
         let return_type = return_type(inner.next().unwrap());
 
-        // TODO
-        let attributes = inner.many0(Rule::method_attribute, |p| ());
+        let attributes = inner.many0(Rule::method_attribute, |p| p.as_str()[1..].to_string());
 
         ast::Method {
             name,
             parameters,
             return_type,
-            body: inner.maybe(Rule::method_body, method_body)
+            body: inner.maybe(Rule::method_body, method_body),
+            attributes
         }
     }
     semantic_method(input) -> ast::SemanticMethod {

@@ -97,7 +97,7 @@ pub enum Instruction {
     LoadString(String),
     New(Type, Vec<ParamType>),
     Return,
-    StoreLocal(Ident)
+    StoreLocal(Ident),
 }
 #[derive(Debug, Clone)]
 pub struct MethodBody {
@@ -117,6 +117,7 @@ pub struct Method {
     pub parameters: Vec<(ParamType, Ident)>,
     pub return_type: Option<ParamType>,
     pub body: Option<MethodBody>,
+    pub attributes: Vec<Ident>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +143,7 @@ pub enum TypeItemKind {
     Field(Field),
     Method(Method),
     Property(Property),
-    Event(Event)
+    Event(Event),
 }
 #[derive(Debug, Clone)]
 pub struct TypeItem {
