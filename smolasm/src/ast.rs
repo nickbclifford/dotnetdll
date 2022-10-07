@@ -1,7 +1,14 @@
+use std::fmt::{Display, Formatter};
+
 pub type Ident = String;
 
 #[derive(Debug, Clone)]
 pub struct Dotted(pub Vec<Ident>);
+impl Display for Dotted {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join("."))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Version(pub Vec<u32>);
@@ -86,10 +93,7 @@ pub enum Instruction {
     Add,
     Box(Type),
     Branch(Label),
-    Call {
-        r#virtual: bool,
-        method: MethodRef
-    },
+    Call { r#virtual: bool, method: MethodRef },
     LoadArgument(Ident),
     LoadDouble(f64),
     LoadElement(Type),

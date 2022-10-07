@@ -3,7 +3,8 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 
-mod ast;
+use super::ast;
+
 mod combinators;
 
 #[derive(Parser)]

@@ -1,5 +1,7 @@
 assembly oop
 
+extern mscorlib
+
 public class Greeter {
     protected field string greeting
 
