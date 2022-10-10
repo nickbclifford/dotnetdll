@@ -4,40 +4,59 @@ use std::collections::HashMap;
 mod ast;
 mod parse;
 
-fn type_reference(
-    decl: ast::TypeRef,
-    types: &HashMap<String, TypeIndex>,
-    externs: &HashMap<String, AssemblyRefIndex>,
-    resolution: &mut Resolution,
-) -> UserType {
+struct Context<'r, 'data: 'r> {
+    types: &'r HashMap<String, TypeIndex>,
+    externs: &'r HashMap<String, AssemblyRefIndex>,
+    resolution: &'r mut Resolution<'data>,
+}
+
+fn type_reference(decl: ast::TypeRef, ctx: Context) -> UserType {
     match decl.parent {
         Some(parent) => {
             let asm_name = parent.to_string();
             let scope =
-                ResolutionScope::Assembly(*externs.get(&asm_name).unwrap_or_else(|| {
+                ResolutionScope::Assembly(*ctx.externs.get(&asm_name).unwrap_or_else(|| {
                     panic!("external assembly {} has not been declared", asm_name)
                 }));
             let (namespace, name) = decl.target.into_names();
             // shadow with Cow version
             let namespace = namespace.map(Into::into);
 
-            let existing_ref = resolution
+            let existing_ref = ctx
+                .resolution
                 .enumerate_type_references()
                 .find(|(_, r)| r.scope == scope && r.namespace == namespace && r.name == name);
             UserType::Reference(match existing_ref {
                 Some((idx, _)) => idx,
-                None => resolution
+                None => ctx
+                    .resolution
                     .push_type_reference(ExternalTypeReference::new(namespace, name, scope)),
             })
         }
         None => {
             let name = decl.target.to_string();
             UserType::Definition(
-                *types
+                *ctx.types
                     .get(&name)
                     .unwrap_or_else(|| panic!("{} is not defined in the current assembly", name)),
             )
         }
+    }
+}
+
+fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: Context) -> T {
+    use ast::Type::*;
+    match decl {
+        Integer(i) => BaseType::from(i).into(),
+        String => ctype!(string),
+        Object => ctype!(object),
+        Float => ctype!(float),
+        Double => ctype!(double),
+        RefType(r) => BaseType::class(type_reference(r, ctx)).into(),
+        ValueType(r) => BaseType::valuetype(type_reference(r, ctx)).into(),
+        Vector(t) => BaseType::vector(r#type(*t, ctx)).into(),
+        Pointer(None) => BaseType::VOID_PTR.into(),
+        Pointer(Some(t)) => BaseType::pointer(r#type(*t, ctx)).into(),
     }
 }
 
@@ -84,9 +103,13 @@ fn main() {
         })
         .collect();
 
-    macro_rules! type_reference {
-        ($r:expr) => {
-            type_reference($r, &types, &externs, &mut resolution)
+    macro_rules! ctx {
+        () => {
+            Context {
+                types: &types,
+                externs: &externs,
+                resolution: &mut resolution,
+            }
         };
     }
 
@@ -155,7 +178,7 @@ fn main() {
                 match t.kind {
                     Class { r#abstract } => {
                         resolution[idx].extends = Some(match t.extends {
-                            Some(r) => type_reference!(r).into(),
+                            Some(r) => type_reference(r, ctx!()).into(),
                             None => object.into(),
                         });
                         resolution[idx].flags.abstract_type = r#abstract;
@@ -169,7 +192,7 @@ fn main() {
                             .implements
                             .into_iter()
                             .flatten()
-                            .map(|r| (vec![], type_reference!(r).into()))
+                            .map(|r| (vec![], type_reference(r, ctx!()).into()))
                             .collect();
                     }
                 }
@@ -178,7 +201,13 @@ fn main() {
                     use ast::TypeItemKind;
                     match item.kind {
                         TypeItemKind::Field(f) => {
-                            resolution[idx].fields.push(Field::new(item.r#static, item.access.into(), f.1, todo!()))
+                            let return_type = r#type(f.0, ctx!());
+                            resolution[idx].fields.push(Field::new(
+                                item.r#static,
+                                item.access.into(),
+                                f.1,
+                                return_type,
+                            ));
                         }
                         TypeItemKind::Method(_) => {}
                         TypeItemKind::Property(_) => {}
