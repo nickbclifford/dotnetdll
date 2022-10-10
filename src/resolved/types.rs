@@ -279,7 +279,7 @@ impl<'a> TypeDefinition<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone, From)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, From)]
 pub enum ResolutionScope {
     Nested(TypeRefIndex),
     ExternalModule(ModuleRefIndex),

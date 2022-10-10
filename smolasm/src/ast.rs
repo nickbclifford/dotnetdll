@@ -1,3 +1,5 @@
+use dotnetdll::access;
+use dotnetdll::prelude::{Accessibility, BaseType};
 use std::fmt::{Display, Formatter};
 
 pub type Ident = String;
@@ -9,6 +11,18 @@ impl Display for Dotted {
         write!(f, "{}", self.0.join("."))
     }
 }
+impl Dotted {
+    pub fn into_names(self) -> (Option<String>, String) {
+        let Dotted(mut segments) = self;
+        let name = segments.pop().unwrap();
+        let namespace = if segments.is_empty() {
+            None
+        } else {
+            Some(segments.join("."))
+        };
+        (namespace, name)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Version(pub Vec<u32>);
@@ -18,7 +32,7 @@ pub struct AssemblySpec {
     pub version: Option<Version>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum IntType {
     Bool,
     Char,
@@ -33,6 +47,26 @@ pub enum IntType {
     NInt,
     NUInt,
 }
+impl<T> From<IntType> for BaseType<T> {
+    fn from(i: IntType) -> Self {
+        use IntType::*;
+        match i {
+            Bool => BaseType::Boolean,
+            Char => BaseType::Char,
+            SByte => BaseType::Int8,
+            Byte => BaseType::UInt8,
+            Short => BaseType::Int16,
+            UShort => BaseType::UInt16,
+            Int => BaseType::Int32,
+            UInt => BaseType::UInt32,
+            Long => BaseType::Int64,
+            ULong => BaseType::UInt64,
+            NInt => BaseType::IntPtr,
+            NUInt => BaseType::UIntPtr,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeRef {
     pub parent: Option<Dotted>,
@@ -66,6 +100,19 @@ pub enum Access {
     Protected,
     ProtectedInternal,
     Internal,
+}
+impl From<Access> for Accessibility {
+    fn from(a: Access) -> Self {
+        use Access::*;
+        match a {
+            Public => access!(public),
+            Private => access!(private),
+            PrivateProtected => access!(private protected),
+            Protected => access!(protected),
+            ProtectedInternal => access!(protected internal),
+            Internal => access!(internal),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +231,14 @@ pub enum TopLevelKind {
 pub struct TopLevel {
     pub public: bool,
     pub kind: TopLevelKind,
+}
+impl TopLevel {
+    pub fn name(&self) -> &Dotted {
+        match &self.kind {
+            TopLevelKind::Enum(e) => &e.name,
+            TopLevelKind::Type(t) => &t.name,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -99,11 +99,11 @@ pub mod prelude {
             attribute::*,
             body, generic,
             il::*,
-            members::{Accessibility as MAccess, *},
+            members::{Accessibility as MemberAccessibility, *},
             module::*,
             resource,
             signature::*,
-            types::{Accessibility as TAccess, *},
+            types::{Accessibility as TypeAccessibility, *},
             Accessibility, ResolvedDebug,
         },
     };
