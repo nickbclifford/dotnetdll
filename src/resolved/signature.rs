@@ -50,7 +50,7 @@ impl Parameter {
     }
 
     pub const fn reference(t: MethodType) -> Self {
-        Self::new(ParameterType::Value(t))
+        Self::new(ParameterType::Ref(t))
     }
 }
 
@@ -83,7 +83,7 @@ impl ReturnType {
     }
 
     pub const fn reference(t: MethodType) -> Self {
-        Self::new(ParameterType::Value(t))
+        Self::new(ParameterType::Ref(t))
     }
 }
 

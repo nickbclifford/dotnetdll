@@ -60,6 +60,15 @@ fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: Context) -> T {
     }
 }
 
+fn param_type(decl: ast::ParamType, ctx: Context) -> ParameterType {
+    let t = r#type(decl.r#type, ctx);
+    if decl.r#ref {
+        ParameterType::Ref(t)
+    } else {
+        ParameterType::Value(t)
+    }
+}
+
 fn main() {
     let input_filename = std::env::args()
         .nth(1)
@@ -89,8 +98,9 @@ fn main() {
     });
     let valuetype = resolution.push_type_reference(type_ref! { System.ValueType in #mscorlib });
     let object = resolution.push_type_reference(type_ref! { System.Object in #mscorlib });
+    let enum_ref = resolution.push_type_reference(type_ref! { System.Enum in #mscorlib });
 
-    let types: HashMap<_, _> = ast
+    let types: HashMap<_, TypeIndex> = ast
         .top_level_decls
         .iter()
         .map(|decl| {
@@ -113,6 +123,8 @@ fn main() {
         };
     }
 
+    let mut methods = vec![];
+
     for decl in ast.top_level_decls {
         let idx = types[&decl.name().to_string()];
 
@@ -125,6 +137,7 @@ fn main() {
         use ast::TopLevelKind::*;
         match decl.kind {
             Enum(e) => {
+                resolution[idx].extends = Some(enum_ref.into());
                 resolution[idx].fields.push(Field::instance(
                     Accessibility::Public,
                     "value__",
@@ -209,9 +222,73 @@ fn main() {
                                 return_type,
                             ));
                         }
-                        TypeItemKind::Method(_) => {}
-                        TypeItemKind::Property(_) => {}
-                        TypeItemKind::Event(_) => {}
+                        TypeItemKind::Method(m) => {
+                            let (types, names): (Vec<_>, Vec<_>) = m.parameters.into_iter().unzip();
+
+                            let signature = ManagedMethod::new(
+                                !item.r#static,
+                                match m.return_type {
+                                    Some(t) => ReturnType::new(param_type(t, ctx!())),
+                                    None => ReturnType::VOID,
+                                },
+                                types
+                                    .into_iter()
+                                    .map(|t| Parameter::new(param_type(t, ctx!())))
+                                    .collect(),
+                            );
+                            let method = resolution.push_method(
+                                idx,
+                                Method::new(item.access.into(), signature, m.name, None),
+                            );
+                            resolution[method].parameter_metadata = names
+                                .into_iter()
+                                .map(|n| Some(ParameterMetadata::name(n)))
+                                .collect();
+
+                            if let Some(body) = m.body {
+                                methods.push((method, body));
+                            }
+                        }
+                        TypeItemKind::Property(p) => {
+                            let return_type: MethodType = r#type(p.r#type, ctx!());
+
+                            let property = resolution.push_property(
+                                idx,
+                                Property::new(
+                                    item.r#static,
+                                    p.name.clone(),
+                                    Parameter::value(return_type.clone()),
+                                ),
+                            );
+
+                            for ast::SemanticMethod(name, body) in p.methods {
+                                let method = match name.as_str() {
+                                    "get" => Method::new(
+                                        item.access.into(),
+                                        msig! { @return_type () },
+                                        format!("get_{}", &p.name),
+                                        None,
+                                    ),
+                                    "set" => Method::new(
+                                        item.access.into(),
+                                        msig! { void (@return_type) },
+                                        format!("set_{}", &p.name),
+                                        None,
+                                    ),
+                                    _ => panic!("properties can only have getters and setters"),
+                                };
+                                let idx = match name.as_str() {
+                                    "get" => resolution.set_property_getter(property, method),
+                                    "set" => resolution.set_property_setter(property, method),
+                                    _ => unreachable!(),
+                                };
+
+                                methods.push((idx, body));
+                            }
+                        }
+                        TypeItemKind::Event(e) => {
+
+                        }
                     }
                 }
             }

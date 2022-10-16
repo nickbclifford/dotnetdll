@@ -92,7 +92,7 @@ pub struct Enum {
     pub members: Vec<Ident>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Access {
     Public,
     Private,
