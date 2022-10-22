@@ -287,7 +287,48 @@ fn main() {
                             }
                         }
                         TypeItemKind::Event(e) => {
+                            let return_type: MemberType = r#type(e.r#type, ctx!());
 
+                            let mut add = None;
+                            let mut remove = None;
+
+                            for ast::SemanticMethod(name, body) in e.methods {
+                                let method = Method::new(
+                                    item.access.into(),
+                                    MethodSignature::new(
+                                        !item.r#static,
+                                        ReturnType::VOID,
+                                        vec![Parameter::value(return_type.clone().into())],
+                                    ),
+                                    format!("{}_{}", &name, &e.name),
+                                    None,
+                                );
+
+                                match name.as_str() {
+                                    "add" => {
+                                        add = Some((method, body));
+                                    }
+                                    "remove" => {
+                                        remove = Some((method, body));
+                                    }
+                                    _ => panic!(
+                                        "events can only have add and remove handlers (for now)"
+                                    ),
+                                }
+                            }
+
+                            let (add, add_body) =
+                                add.unwrap_or_else(|| panic!("event missing add handler"));
+                            let (remove, remove_body) =
+                                remove.unwrap_or_else(|| panic!("event missing remove handler"));
+
+                            let event = resolution
+                                .push_event(idx, Event::new(e.name, return_type, add, remove));
+
+                            methods.extend([
+                                (resolution.event_add_index(event), add_body),
+                                (resolution.event_remove_index(event), remove_body),
+                            ]);
                         }
                     }
                 }
