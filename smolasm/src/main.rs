@@ -336,7 +336,73 @@ fn main() {
         }
     }
 
-    // TODO: the important bits
+    for (method_index, body) in methods {
+        let mut method = body::Method::new(vec![]);
+
+        if let Some(size) = body.max_stack {
+            method.header.maximum_stack_size = size as usize;
+        }
+
+        let mut locals = HashMap::new();
+        if let Some(loc) = body.locals {
+            for (idx, (var_type, name)) in loc.variables.into_iter().enumerate() {
+                locals.insert(name, idx);
+                method
+                    .header
+                    .local_variables
+                    .push(LocalVariable::new(r#type(var_type, ctx!())));
+            }
+        }
+
+        let mut arguments = HashMap::new();
+        let mut base = 0;
+        if resolution[method_index].signature.instance {
+            base = 1;
+            arguments.insert("this".to_string(), 0);
+        }
+        for (idx, m) in resolution[method_index]
+            .parameter_metadata
+            .iter()
+            .enumerate()
+        {
+            arguments.insert(
+                m.as_ref().unwrap().name.as_ref().unwrap().to_string(),
+                idx + base,
+            );
+        }
+
+        let (label_vecs, instructions): (Vec<_>, Vec<_>) = body.instructions.into_iter().unzip();
+        let labels: HashMap<_, _> = label_vecs
+            .into_iter()
+            .enumerate()
+            .flat_map(|(idx, ls)| ls.into_iter().map(move |l| (l, idx)))
+            .collect();
+
+        for instruction in instructions {
+            use ast::Instruction::*;
+            method.instructions.push(match instruction {
+                Add => Instruction::Add,
+                Box(t) => Instruction::BoxValue(r#type(t, ctx!())),
+                Branch(l) => Instruction::Branch(labels[&l]),
+                Call { .. } => todo!(),
+                LoadArgument(a) => Instruction::LoadArgument(arguments[&a] as u16),
+                LoadDouble(d) => Instruction::LoadConstantFloat64(d),
+                LoadElement(_) => todo!(),
+                LoadField(_) => todo!(),
+                LoadFloat(f) => Instruction::LoadConstantFloat32(f),
+                LoadInt(i) => Instruction::LoadConstantInt32(i),
+                LoadLocal(l) => Instruction::LoadLocal(locals[&l] as u16),
+                LoadLong(l) => Instruction::LoadConstantInt64(l),
+                LoadString(s) => Instruction::load_string(s),
+                New(_, _) => todo!(),
+                Return => Instruction::Return,
+                StoreField(_) => todo!(),
+                StoreLocal(l) => Instruction::StoreLocal(locals[&l] as u16),
+            });
+        }
+
+        resolution[method_index].body = Some(method);
+    }
 
     std::fs::write(
         &dll,
