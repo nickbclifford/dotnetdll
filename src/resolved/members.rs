@@ -127,7 +127,7 @@ impl<'a> Field<'a> {
     }
 }
 
-#[derive(Debug, Clone, From)]
+#[derive(Debug, Clone, From, Eq, PartialEq)]
 pub enum FieldReferenceParent {
     Type(MethodType),
     Module(ModuleRefIndex),

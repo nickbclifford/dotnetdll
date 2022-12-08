@@ -121,6 +121,22 @@ fn method_reference(decl: ast::MethodRef, ctx: &mut Context) -> UserMethod {
     idx
 }
 
+fn field_reference(decl: ast::FieldRef, ctx: &mut Context) -> FieldRefIndex {
+    let field_ref = ExternalFieldReference::new(
+        FieldReferenceParent::Type(r#type(decl.parent, ctx)),
+        r#type(decl.return_type, ctx),
+        decl.field.into(),
+    );
+
+    if let Some((idx, _)) = ctx.resolution.enumerate_field_references().find(|(_, r)| {
+        r.parent == field_ref.parent && r.name == field_ref.name && r.field_type == field_ref.field_type
+    }) {
+        return idx;
+    }
+
+    ctx.resolution.push_field_reference(field_ref)
+}
+
 fn main() {
     let input_filename = std::env::args()
         .nth(1)
@@ -450,7 +466,7 @@ fn main() {
                 LoadArgument(a) => Instruction::LoadArgument(arguments[&a] as u16),
                 LoadDouble(d) => Instruction::LoadConstantFloat64(d),
                 LoadElement(e) => Instruction::load_element(r#type::<MethodType>(e, ctx!())),
-                LoadField(_) => todo!(),
+                LoadField(f) => Instruction::load_field(field_reference(f, ctx!())),
                 LoadFloat(f) => Instruction::LoadConstantFloat32(f),
                 LoadInt(i) => Instruction::LoadConstantInt32(i),
                 LoadLocal(l) => Instruction::LoadLocal(locals[&l] as u16),
@@ -467,7 +483,7 @@ fn main() {
                     ctx!(),
                 )),
                 Return => Instruction::Return,
-                StoreField(_) => todo!(),
+                StoreField(f) => Instruction::store_field(field_reference(f, ctx!())),
                 StoreLocal(l) => Instruction::StoreLocal(locals[&l] as u16),
             });
         }
