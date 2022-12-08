@@ -57,6 +57,7 @@ pub struct Field<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub name: Cow<'a, str>,
     pub type_modifiers: Vec<CustomTypeModifier>,
+    pub by_ref: bool,
     pub return_type: MemberType,
     pub accessibility: Accessibility,
     pub static_member: bool,
@@ -100,6 +101,7 @@ impl<'a> Field<'a> {
             attributes: vec![],
             name: name.into(),
             type_modifiers: vec![],
+            by_ref: false,
             return_type,
             accessibility: Accessibility::Access(access),
             static_member,
@@ -571,17 +573,10 @@ impl ResolvedDebug for UserMethod {
                     .chain(v.iter().map(|p| p.show(res)))
                     .collect::<Vec<_>>()
                     .join(", ")
-            ),
-            None => write!(
-                buf,
-                "{} {}.{}({})",
-                ret_type,
-                parent_name,
-                method_name,
-                signature.show_parameters(res)
-            ),
-        }
-        .unwrap();
+            )
+            .unwrap(),
+            None => buf.push_str(&signature.show_with_name(res, format!("{}.{}", parent_name, method_name))),
+        };
 
         buf
     }

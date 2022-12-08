@@ -310,7 +310,17 @@ try_into_ctx!(StandAloneMethodSig, |self, into| {
 });
 
 #[derive(Debug)]
-pub struct FieldSig(pub Vec<CustomMod>, pub Type);
+pub struct FieldSig {
+    pub custom_modifiers: Vec<CustomMod>,
+    // the standard is conflicting on whether or not byref types are allowed in fields
+    //   ECMA-335, I.8.2.1.1 (page 20) says they cannot be used for field signatures
+    //   ECMA-335, II.14.4.2 (page 171) says they are used in field types
+    // however, since C# 11/.NET 7, ref fields are allowed in ref structs
+    //   the System.Private.CoreLib implementation for System.TypedReference
+    //   uses this feature for its value pointer field
+    pub by_ref: bool,
+    pub field_type: Type,
+}
 
 impl TryFromCtx<'_> for FieldSig {
     type Error = scroll::Error;
@@ -325,7 +335,19 @@ impl TryFromCtx<'_> for FieldSig {
 
         let mods = all_custom_mods(from, offset);
 
-        Ok((FieldSig(mods, from.gread(offset)?), *offset))
+        let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
+        if by_ref {
+            *offset += 1;
+        }
+
+        Ok((
+            FieldSig {
+                custom_modifiers: mods,
+                by_ref,
+                field_type: from.gread(offset)?,
+            },
+            *offset,
+        ))
     }
 }
 try_into_ctx!(FieldSig, |self, into| {
@@ -333,11 +355,15 @@ try_into_ctx!(FieldSig, |self, into| {
 
     into.gwrite_with(0x6_u8, offset, scroll::LE)?;
 
-    for m in self.0 {
+    for m in self.custom_modifiers {
         into.gwrite(m, offset)?;
     }
 
-    into.gwrite(self.1, offset)?;
+    if self.by_ref {
+        into.gwrite_with(ELEMENT_TYPE_BYREF, offset, scroll::LE)?;
+    }
+
+    into.gwrite(self.field_type, offset)?;
 
     Ok(*offset)
 });

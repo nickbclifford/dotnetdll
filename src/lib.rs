@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn parse() -> Result<(), Box<dyn std::error::Error>> {
-        let file = std::fs::read("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/System.Private.CoreLib.dll")?;
+        let file = std::fs::read("/usr/share/dotnet/shared/Microsoft.NETCore.App/7.0.0/System.Private.CoreLib.dll")?;
         let dll = DLL::parse(&file)?;
 
         let r = dll.resolve(ResolveOptions::default())?;
@@ -243,7 +243,7 @@ mod tests {
 
         let start = std::time::Instant::now();
 
-        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2")? {
+        for p in std::fs::read_dir("/usr/share/dotnet/shared/Microsoft.NETCore.App/7.0.0")? {
             let path = p?.path();
             if matches!(path.extension(), Some(o) if o == "dll") {
                 let file = std::fs::read(path)?;

@@ -249,10 +249,11 @@ pub fn method_ref(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
 }
 
 fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
-    Ok(FieldSig(
-        custom_modifiers(&f.type_modifiers),
-        f.return_type.as_sig(ctx)?,
-    ))
+    Ok(FieldSig {
+        custom_modifiers: custom_modifiers(&f.type_modifiers),
+        by_ref: f.by_ref,
+        field_type: f.return_type.as_sig(ctx)?
+    })
 }
 
 pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
@@ -260,10 +261,11 @@ pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
 }
 
 fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
-    Ok(FieldSig(
-        custom_modifiers(&f.custom_modifiers),
-        f.field_type.as_sig(ctx)?,
-    ))
+    Ok(FieldSig {
+        custom_modifiers: custom_modifiers(&f.custom_modifiers),
+        by_ref: false,
+        field_type: f.field_type.as_sig(ctx)?
+    })
 }
 
 pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {

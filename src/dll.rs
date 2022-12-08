@@ -623,7 +623,11 @@ impl<'a> DLL<'a> {
                 parent_fields.reserve(type_fields.len());
 
                 for (f_idx, f) in type_fields {
-                    let FieldSig(cmod, t) = heap_idx!(blobs, f.signature).pread(0)?;
+                    let FieldSig {
+                        custom_modifiers: cmod,
+                        field_type: t,
+                        by_ref
+                    } = heap_idx!(blobs, f.signature).pread(0)?;
 
                     parent_fields.push(Field {
                         attributes: vec![],
@@ -632,6 +636,7 @@ impl<'a> DLL<'a> {
                             .into_iter()
                             .map(|c| convert::read::custom_modifier(c, &ctx))
                             .collect::<Result<_>>()?,
+                        by_ref,
                         return_type: MemberType::from_sig(t, &ctx)?,
                         accessibility: member_accessibility(f.flags)?,
                         static_member: check_bitmask!(f.flags, 0x10),
@@ -1396,11 +1401,11 @@ impl<'a> DLL<'a> {
                         parent,
                         name,
                         custom_modifiers: filter_map_try!(field_sig
-                            .0
+                            .custom_modifiers
                             .into_iter()
                             .map(|c| convert::read::custom_modifier(c, &ctx))
                             .collect::<Result<_>>()),
-                        field_type: filter_map_try!(MemberType::from_sig(field_sig.1, &ctx)),
+                        field_type: filter_map_try!(MemberType::from_sig(field_sig.field_type, &ctx)),
                     },
                 )))
             })
