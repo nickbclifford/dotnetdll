@@ -7,7 +7,7 @@ use crate::{
     },
 };
 pub use dotnetdll_macros::msig;
-use std::fmt::Write;
+use std::fmt::{Debug, Display, Write};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType {
@@ -97,15 +97,20 @@ pub struct MethodSignature<CallConv> {
     pub return_type: ReturnType,
     pub varargs: Option<Vec<Parameter>>,
 }
-impl<T: std::fmt::Debug> ResolvedDebug for MethodSignature<T> {
+impl<T: Debug> ResolvedDebug for MethodSignature<T> {
     fn show(&self, res: &Resolution) -> String {
+        self.show_with_name(res, "")
+    }
+}
+impl<T: Debug> MethodSignature<T> {
+    pub fn show_with_name(&self, res: &Resolution, name: impl Display) -> String {
         let mut buf = format!("[{:?}] ", self.calling_convention);
 
         if !self.instance {
             buf.push_str("static ");
         }
 
-        write!(buf, "{} ({})", self.return_type.show(res), self.show_parameters(res)).unwrap();
+        write!(buf, "{} {}({})", self.return_type.show(res), name, self.show_parameters(res)).unwrap();
 
         buf
     }

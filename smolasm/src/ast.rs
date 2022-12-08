@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 
 pub type Ident = String;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Dotted(pub Vec<Ident>);
 impl Display for Dotted {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -32,7 +32,7 @@ pub struct AssemblySpec {
     pub version: Option<Version>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum IntType {
     Bool,
     Char,
@@ -67,12 +67,12 @@ impl<T> From<IntType> for BaseType<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct TypeRef {
     pub parent: Option<Dotted>,
     pub target: Dotted,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Type {
     Integer(IntType),
     String,
@@ -120,7 +120,7 @@ pub struct Locals {
     pub init: bool,
     pub variables: Vec<(Type, Ident)>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MethodRef {
     pub r#static: bool,
     pub return_type: Option<ParamType>,
@@ -162,7 +162,7 @@ pub struct MethodBody {
     pub instructions: Vec<(Vec<Label>, Instruction)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ParamType {
     pub r#ref: bool,
     pub r#type: Type,

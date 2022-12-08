@@ -7,10 +7,11 @@ mod parse;
 struct Context<'r, 'data: 'r> {
     types: &'r HashMap<String, TypeIndex>,
     externs: &'r HashMap<String, AssemblyRefIndex>,
+    methods: &'r mut HashMap<ast::MethodRef, UserMethod>,
     resolution: &'r mut Resolution<'data>,
 }
 
-fn type_reference(decl: ast::TypeRef, ctx: Context) -> UserType {
+fn type_reference(decl: ast::TypeRef, ctx: &mut Context) -> UserType {
     match decl.parent {
         Some(parent) => {
             let asm_name = parent.to_string();
@@ -44,7 +45,7 @@ fn type_reference(decl: ast::TypeRef, ctx: Context) -> UserType {
     }
 }
 
-fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: Context) -> T {
+fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: &mut Context) -> T {
     use ast::Type::*;
     match decl {
         Integer(i) => BaseType::from(i).into(),
@@ -60,13 +61,64 @@ fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: Context) -> T {
     }
 }
 
-fn param_type(decl: ast::ParamType, ctx: Context) -> ParameterType {
+fn param_type(decl: ast::ParamType, ctx: &mut Context) -> ParameterType {
     let t = r#type(decl.r#type, ctx);
     if decl.r#ref {
         ParameterType::Ref(t)
     } else {
         ParameterType::Value(t)
     }
+}
+
+fn method_reference(decl: ast::MethodRef, ctx: &mut Context) -> UserMethod {
+    if let Some(&m) = ctx.methods.get(&decl) {
+        return m;
+    }
+
+    let d = decl.clone();
+    let method = ExternalMethodReference::new(
+        MethodReferenceParent::Type(r#type(d.parent, ctx)),
+        d.method,
+        ManagedMethod::new(
+            !d.r#static,
+            match d.return_type {
+                None => ReturnType::VOID,
+                Some(p) => ReturnType::new(param_type(p, ctx)),
+            },
+            d.parameters
+                .into_iter()
+                .map(|p| Parameter::new(param_type(p, ctx)))
+                .collect(),
+        ),
+    );
+
+    let mut user_method = None;
+
+    if let ast::Type::RefType(r) | ast::Type::ValueType(r) = &decl.parent {
+        if let Some(parent) = &r.parent {
+            if let Some(&idx) = ctx.types.get(&parent.to_string()) {
+                let (method_idx, _) = ctx
+                    .resolution
+                    .enumerate_methods(idx)
+                    .find(|(_, m)| m.signature == method.signature)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "could not find matching method {} on type {}",
+                            method
+                                .signature
+                                .show_with_name(ctx.resolution, &decl.method),
+                            parent
+                        )
+                    });
+                user_method = Some(UserMethod::Definition(method_idx));
+            }
+        }
+    }
+
+    let idx = user_method
+        .unwrap_or_else(|| UserMethod::Reference(ctx.resolution.push_method_reference(method)));
+    ctx.methods.insert(decl, idx);
+    idx
 }
 
 fn main() {
@@ -113,11 +165,14 @@ fn main() {
         })
         .collect();
 
+    let mut methods = HashMap::new();
+
     macro_rules! ctx {
         () => {
-            Context {
+            &mut Context {
                 types: &types,
                 externs: &externs,
+                methods: &mut methods,
                 resolution: &mut resolution,
             }
         };
@@ -384,17 +439,33 @@ fn main() {
                 Add => Instruction::Add,
                 Box(t) => Instruction::BoxValue(r#type(t, ctx!())),
                 Branch(l) => Instruction::Branch(labels[&l]),
-                Call { .. } => todo!(),
+                Call { r#virtual, method } => {
+                    let source = method_reference(method, ctx!());
+                    if r#virtual {
+                        Instruction::call_virtual(source)
+                    } else {
+                        Instruction::call(source)
+                    }
+                }
                 LoadArgument(a) => Instruction::LoadArgument(arguments[&a] as u16),
                 LoadDouble(d) => Instruction::LoadConstantFloat64(d),
-                LoadElement(_) => todo!(),
+                LoadElement(e) => Instruction::load_element(r#type::<MethodType>(e, ctx!())),
                 LoadField(_) => todo!(),
                 LoadFloat(f) => Instruction::LoadConstantFloat32(f),
                 LoadInt(i) => Instruction::LoadConstantInt32(i),
                 LoadLocal(l) => Instruction::LoadLocal(locals[&l] as u16),
                 LoadLong(l) => Instruction::LoadConstantInt64(l),
                 LoadString(s) => Instruction::load_string(s),
-                New(_, _) => todo!(),
+                New(t, ps) => Instruction::NewObject(method_reference(
+                    ast::MethodRef {
+                        r#static: false,
+                        return_type: None,
+                        parent: t,
+                        method: ".ctor".to_string(),
+                        parameters: ps,
+                    },
+                    ctx!(),
+                )),
                 Return => Instruction::Return,
                 StoreField(_) => todo!(),
                 StoreLocal(l) => Instruction::StoreLocal(locals[&l] as u16),
