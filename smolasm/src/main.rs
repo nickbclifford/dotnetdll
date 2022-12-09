@@ -129,7 +129,9 @@ fn field_reference(decl: ast::FieldRef, ctx: &mut Context) -> FieldRefIndex {
     );
 
     if let Some((idx, _)) = ctx.resolution.enumerate_field_references().find(|(_, r)| {
-        r.parent == field_ref.parent && r.name == field_ref.name && r.field_type == field_ref.field_type
+        r.parent == field_ref.parent
+            && r.name == field_ref.name
+            && r.field_type == field_ref.field_type
     }) {
         return idx;
     }
@@ -149,6 +151,7 @@ fn main() {
     let dll = format!("{}.dll", &name);
 
     let mut resolution = Resolution::new(Module::new(&dll));
+    resolution.assembly = Some(Assembly::new(&name));
 
     let mut externs: HashMap<_, _> = ast
         .extern_decls
@@ -315,6 +318,24 @@ fn main() {
                                 .into_iter()
                                 .map(|n| Some(ParameterMetadata::name(n)))
                                 .collect();
+
+                            for attr in m.attributes {
+                                match attr.as_str() {
+                                    "entrypoint" => {
+                                        resolution.entry_point = Some(method.into());
+                                    }
+                                    "virtual" => {
+                                        resolution[method].virtual_member = true;
+                                    }
+                                    "specialname" => {
+                                        resolution[method].special_name = true;
+                                    }
+                                    "rtspecialname" => {
+                                        resolution[method].runtime_special_name = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
 
                             if let Some(body) = m.body {
                                 methods.push((method, body));
