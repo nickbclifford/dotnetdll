@@ -105,7 +105,7 @@ pub fn write_fixture(
             }),
         ),
     );
-    ctx.resolution.entry_point = Some(main.into());
+    ctx.resolution.set_entry_point(main);
 
     let written = DLL::write(&ctx.resolution, false, true)?;
 

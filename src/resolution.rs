@@ -64,6 +64,10 @@ impl<'a> Resolution<'a> {
             ),
         )
     }
+
+    pub fn set_entry_point(&mut self, entry_point: impl Into<EntryPoint>) {
+        self.entry_point = Some(entry_point.into());
+    }
 }
 
 #[derive(Debug, Copy, Clone, From)]

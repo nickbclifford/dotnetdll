@@ -322,7 +322,7 @@ fn main() {
                             for attr in m.attributes {
                                 match attr.as_str() {
                                     "entrypoint" => {
-                                        resolution.entry_point = Some(method.into());
+                                        resolution.set_entry_point(method);
                                     }
                                     "virtual" => {
                                         resolution[method].virtual_member = true;
