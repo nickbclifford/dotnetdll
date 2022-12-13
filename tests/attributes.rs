@@ -48,7 +48,7 @@ pub fn write() {
             let test_attr = ctx
                 .resolution
                 .push_type_definition(TypeDefinition::new(None, "TestAttribute"));
-            ctx.resolution[test_attr].extends = Some(attribute.into());
+            ctx.resolution[test_attr].set_extends(attribute);
 
             let required = ctx.resolution.push_field(
                 test_attr,

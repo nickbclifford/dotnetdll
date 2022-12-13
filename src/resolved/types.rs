@@ -277,6 +277,10 @@ impl<'a> TypeDefinition<'a> {
     pub fn add_implementation(&mut self, interface_type: impl Into<TypeSource<MemberType>>) {
         self.implements.push((vec![], interface_type.into()));
     }
+
+    pub fn set_extends(&mut self, parent_type: impl Into<TypeSource<MemberType>>) {
+        self.extends = Some(parent_type.into());
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From)]

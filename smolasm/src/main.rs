@@ -211,7 +211,7 @@ fn main() {
         use ast::TopLevelKind::*;
         match decl.kind {
             Enum(e) => {
-                resolution[idx].extends = Some(enum_ref.into());
+                resolution[idx].set_extends(enum_ref);
                 resolution[idx].fields.push(Field::instance(
                     Accessibility::Public,
                     "value__",
@@ -264,14 +264,15 @@ fn main() {
                 use ast::TypeKind::*;
                 match t.kind {
                     Class { r#abstract } => {
-                        resolution[idx].extends = Some(match t.extends {
+                        let supertype: TypeSource<_> = match t.extends {
                             Some(r) => type_reference(r, ctx!()).into(),
                             None => object.into(),
-                        });
+                        };
+                        resolution[idx].set_extends(supertype);
                         resolution[idx].flags.abstract_type = r#abstract;
                     }
                     Struct => {
-                        resolution[idx].extends = Some(valuetype.into());
+                        resolution[idx].set_extends(valuetype);
                     }
                     Interface => {
                         resolution[idx].flags.kind = Kind::Interface;

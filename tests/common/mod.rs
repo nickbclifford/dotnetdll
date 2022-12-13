@@ -79,7 +79,7 @@ pub fn write_fixture(
     let object = res.push_type_reference(type_ref! { System.Object in #mscorlib });
 
     let class = res.push_type_definition(TypeDefinition::new(None, "Program"));
-    res[class].extends = Some(object.into());
+    res[class].set_extends(object);
     let default_ctor = res.add_default_ctor(class);
 
     let mut ctx = WriteContext {

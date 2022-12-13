@@ -61,7 +61,7 @@ pub fn write() {
 
             let bike = ctx.resolution.push_type_definition(TypeDefinition::new(None, "Bike"));
             let bike_ctor = ctx.resolution.add_default_ctor(bike);
-            ctx.resolution[bike].extends = Some(ctx.object.into());
+            ctx.resolution[bike].set_extends(ctx.object);
             ctx.resolution[bike].add_implementation(ivehicle);
             ctx.resolution.push_method(
                 bike,
@@ -84,7 +84,7 @@ pub fn write() {
                 .push_type_definition(TypeDefinition::new(None, "MotorVehicle"));
             ctx.resolution[motor_vehicle].flags.abstract_type = true;
             ctx.resolution[motor_vehicle].add_implementation(ivehicle);
-            ctx.resolution[motor_vehicle].extends = Some(ctx.object.into());
+            ctx.resolution[motor_vehicle].set_extends(ctx.object);
             let tank_size = ctx.resolution.push_method(
                 motor_vehicle,
                 Method {
@@ -116,7 +116,7 @@ pub fn write() {
             });
 
             let car = ctx.resolution.push_type_definition(TypeDefinition::new(None, "Car"));
-            ctx.resolution[car].extends = Some(motor_vehicle.into());
+            ctx.resolution[car].set_extends(motor_vehicle);
             ctx.resolution.push_method(
                 car,
                 Method {

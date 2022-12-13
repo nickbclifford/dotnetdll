@@ -94,7 +94,7 @@ pub fn write() {
                 .resolution
                 .push_type_definition(TypeDefinition::new(None, "MyException"));
             let my_exception_t: MethodType = BaseType::class(my_exception).into();
-            ctx.resolution[my_exception].extends = Some(exception.into());
+            ctx.resolution[my_exception].set_extends(exception);
             let code = ctx.resolution.push_field(
                 my_exception,
                 Field::new(false, Accessibility::Public, "code", ctype! { int }),
