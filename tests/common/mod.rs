@@ -2,6 +2,8 @@ use dotnetdll::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
+pub mod env;
+
 #[allow(unused_macros)]
 macro_rules! assert_inner_eq {
     ($val:expr, { $($field_name:ident $(: $rhs:expr)? $(=> $pat:pat $(if $guard:expr)?)?),+ }) => {
@@ -45,9 +47,7 @@ pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> 
         ),
     )?;
 
-    // TODO: parametrize
-    const ILASM_PATH: &str = "/home/nick/Desktop/runtime/artifacts/bin/coreclr/Linux.x64.Debug/ilasm";
-    Command::new(ILASM_PATH)
+    Command::new(env::ILASM.clone())
         .current_dir(dir.path())
         .arg("-DLL")
         .arg(name)
@@ -126,8 +126,8 @@ pub fn write_fixture(
     let stderr = String::from_utf8(output.stderr)?;
 
     if stderr.contains("Unhandled exception") {
-        if let Ok(i) = std::env::var("ILDASM") {
-            Command::new(i).arg(&dll_path).spawn()?.wait()?;
+        if env::optional("ILDASM").is_some() {
+            Command::new(env::ILDASM.clone()).arg(&dll_path).spawn()?.wait()?;
         }
 
         if let Ok(r) = std::env::var("RUNTIME") {
@@ -135,31 +135,26 @@ pub fn write_fixture(
                 .arg("-ex")
                 .arg(format!("set substitute-path /runtime {}", r))
                 .arg("--args")
-                .arg(if let Ok(i) = std::env::var("ILDASM") {
-                    i
+                .arg(if env::optional("ILDASM").is_some() {
+                    env::ILDASM.clone()
                 } else {
-                    // TODO: automatically find built artifact
-                    format!(
-                        "{}/artifacts/bin/testhost/net7.0-Linux-Debug-x64/shared/Microsoft.NETCore.App/7.0.0/corerun",
-                        r
-                    )
+                    env::LIBRARIES.join("corerun")
                 })
                 .arg(&dll_path)
                 .spawn()?
                 .wait()?;
         }
 
-        if let Ok(i) = std::env::var("ILVERIFY") {
+        if let Some(i) = env::optional("ILVERIFY") {
             let ilverify = Command::new(i)
                 .arg(&dll_path)
                 .arg("-r")
-                // TODO: parametrize
-                .arg("/usr/share/dotnet/shared/Microsoft.NETCore.App/6.0.2/*.dll")
+                .arg(env::LIBRARIES.join("*.dll"))
                 .output()?;
             println!("{}", String::from_utf8(ilverify.stdout)?);
         }
 
-        if let Ok(path) = std::env::var("OUTFILE") {
+        if let Some(path) = env::optional("OUTFILE") {
             std::fs::copy(dll_path, path).unwrap();
         }
 

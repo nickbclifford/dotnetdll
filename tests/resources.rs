@@ -6,7 +6,7 @@ mod common;
 
 #[test]
 pub fn read() {
-    Command::new("dotnet")
+    Command::new(common::env::DOTNET.clone())
         .arg("build")
         .current_dir("./tests/resources-read")
         .spawn()
