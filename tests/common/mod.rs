@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use dotnetdll::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
@@ -119,7 +121,7 @@ pub fn write_fixture(
         dir.path().join(format!("{}.runtimeconfig.json", name)),
     )?;
 
-    let output = Command::new("dotnet").arg(&dll_path).output()?;
+    let output = Command::new(env::DOTNET_SDK.clone()).arg(&dll_path).output()?;
 
     eprintln!("{}", std::str::from_utf8(&output.stdout)?);
 

@@ -325,3 +325,67 @@ try_into_ctx!(CustomAttributeData<'_>, |self, into| {
 
     Ok(*offset)
 });
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attr_args_write() -> Result<(), Box<dyn std::error::Error>> {
+        use scroll::Pwrite;
+        use FixedArg::*;
+        use IntegralParam::*;
+        use NamedArg::*;
+
+        const SIZE: usize = 119;
+        // retrieved from ildasm
+        const DATA: [u8; SIZE] = [
+            0x01, 0x00, 0x01, 0x61, 0x00, 0x04, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+            0x00, 0x04, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x08, 0x09, 0x00, 0x00, 0x00, 0x1D, 0x51, 0x04, 0x00,
+            0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x00, 0x08, 0x05, 0x00, 0x00, 0x00, 0x1D, 0x51, 0x01, 0x00, 0x00, 0x00,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x0E, 0xFF, 0x03, 0x00, 0x00, 0x00, 0x08, 0x03, 0x00, 0x00, 0x00, 0x55, 0x09,
+            0x74, 0x65, 0x73, 0x74, 0x2E, 0x41, 0x73, 0x64, 0x66, 0x04, 0x00, 0x0E, 0x04, 0x6F, 0x6F, 0x70, 0x73, 0x02,
+            0x00, 0x53, 0x08, 0x03, 0x59, 0x65, 0x73, 0x03, 0x00, 0x00, 0x00, 0x53, 0x51, 0x02, 0x4E, 0x6F, 0x55, 0x09,
+            0x74, 0x65, 0x73, 0x74, 0x2E, 0x41, 0x73, 0x64, 0x66, 0x04, 0x00,
+        ];
+
+        let mut buf = [0_u8; SIZE];
+        buf.pwrite(
+            // Into<Box<_>> is a little less noisy here
+            CustomAttributeData {
+                constructor_args: vec![
+                    Boolean(true),
+                    Char('a'),
+                    Integral(UInt16(4)),
+                    Array(None),
+                    Array(Some(vec![Integral(Int32(2)), Integral(Int32(4)), Integral(Int32(5))])),
+                    Object(Integral(Int32(9)).into()),
+                    Object(
+                        Array(Some(vec![
+                            Object(Integral(Int32(2)).into()),
+                            Object(Integral(Int32(5)).into()),
+                            Object(Array(Some(vec![Object(Integral(Int32(2)).into())])).into()),
+                            Object(String(None).into()),
+                        ]))
+                            .into(),
+                    ),
+                    Array(Some(vec![
+                        Object(Integral(Int32(3)).into()),
+                        Object(Enum("test.Asdf", UInt16(4)).into()),
+                        Object(String(Some("oops")).into()),
+                    ])),
+                ],
+                named_args: vec![
+                    Field("Yes", Integral(Int32(3))),
+                    Field("No", Object(Enum("test.Asdf", UInt16(4)).into())),
+                ],
+            },
+            0,
+        )?;
+
+        assert_eq!(buf, DATA);
+
+        Ok(())
+    }
+}

@@ -145,3 +145,36 @@ try_into_ctx!(Signed, |self, into| {
     }
     Ok(*offset)
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compression() {
+        use scroll::{Pwrite, Pread};
+
+        macro_rules! case {
+            ($ty:ident($val:expr) => [$($byte:literal),+]) => {
+                let $ty(val) = [$($byte),+].pread(0).unwrap();
+                assert_eq!(val, $val);
+
+                // we need to include the variable for repetition, so discard its value
+                let mut buf = [$({ let _x = $byte; 0 }),+];
+                buf.pwrite($ty($val), 0).unwrap();
+                assert_eq!(buf, [$($byte),+]);
+            }
+        }
+
+        case!(Unsigned(0x03) => [0x03]);
+        case!(Unsigned(0x3FFF) => [0xBF, 0xFF]);
+        case!(Unsigned(0x4000) => [0xC0, 0x00, 0x40, 0x00]);
+
+        case!(Signed(3) => [0x06]);
+        case!(Signed(-3) => [0x7B]);
+        case!(Signed(64) => [0x80, 0x80]);
+        case!(Signed(-8192) => [0x80, 0x01]);
+        case!(Signed(268_435_455) => [0xDF, 0xFF, 0xFF, 0xFE]);
+        case!(Signed(-268_435_456) => [0xC0, 0x00, 0x00, 0x01]);
+    }
+}

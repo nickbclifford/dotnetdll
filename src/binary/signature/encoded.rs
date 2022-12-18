@@ -698,3 +698,21 @@ try_into_ctx!(NativeIntrinsic, |self, into| {
 
     Ok(*offset)
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn def_ref_spec() {
+        use crate::binary::metadata::{index::TokenTarget, table::Kind};
+
+        let TypeDefOrRefOrSpec(t) = [0x49].pread(0).unwrap();
+        assert_eq!(t.target, TokenTarget::Table(Kind::TypeRef));
+        assert_eq!(t.index, 0x12);
+
+        let mut buf = [0_u8; 1];
+        buf.pwrite(TypeDefOrRefOrSpec(t), 0).unwrap();
+        assert_eq!(buf, [0x49]);
+    }
+}
