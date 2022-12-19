@@ -12,8 +12,10 @@ macro_rules! lazy_paths {
 
 fn first_child_dir(path: impl AsRef<Path>) -> PathBuf {
     let mut read_dir = path.as_ref().read_dir().unwrap();
-    let entry = read_dir.next().unwrap()  // Option
-        .unwrap(); // io::Result
+    let entry = read_dir
+        .next()
+        .unwrap() // Option::unwrap
+        .unwrap(); // io::Result::unwrap
     entry.path()
 }
 
