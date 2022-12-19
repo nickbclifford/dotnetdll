@@ -1,14 +1,12 @@
 name: dotnetdll test suite
-
 on:
   push:
-    branches: main
+    branches: [main]
   pull_request:
-
 jobs:
   test:
     runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v3
-    - run: docker compose build
-    - run: docker compose run tests
+    steps:
+      - uses: actions/checkout@v3
+      - run: docker compose build
+      - run: docker compose run tests
