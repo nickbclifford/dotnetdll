@@ -1,11 +1,12 @@
 use super::table::{HasKind, Kind};
-use bitvec::{order::Lsb0, slice::BitSlice};
+use bitvec::slice::BitSlice;
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
 use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
+use bitvec::access::BitSafeU8;
 
 use dotnetdll_macros::coded_index;
 
@@ -61,7 +62,7 @@ try_into_ctx!(Token, |self, into| {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes<'a> {
-    pub heap: &'a BitSlice<Lsb0, u8>,
+    pub heap: &'a BitSlice<BitSafeU8>,
     pub tables: &'a HashMap<Kind, u32>,
 }
 

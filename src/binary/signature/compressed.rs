@@ -60,7 +60,7 @@ fn from_twos_complement(bits: usize, source: u32) -> i32 {
     (-(1 << (bits - 1)) * slice[bits - 1] as i32)
         + slice[..=bits - 2]
             .iter()
-            .by_val()
+            .by_vals()
             .enumerate()
             .map(|(i, b)| (1 << i) * b as i32)
             .sum::<i32>()

@@ -2,7 +2,7 @@ use super::{
     index::Sizes,
     table::{Kind, Tables},
 };
-use bitvec::{order::Lsb0, view::BitView};
+use bitvec::{order::Lsb0, view::BitView, store::BitStore};
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
@@ -10,6 +10,7 @@ use scroll::{
 };
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
+use bitvec::access::BitSafeU8;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {
@@ -48,8 +49,9 @@ impl TryFromCtx<'_> for Header {
         let iter = kinds.into_iter().zip(rows.into_iter());
         let sizes_map: HashMap<_, _> = iter.clone().collect();
 
+        let heap_bits = BitSafeU8::new(heap);
         let ctx = Sizes {
-            heap: heap.view_bits::<Lsb0>(),
+            heap: heap_bits.view_bits::<Lsb0>(),
             tables: &sizes_map,
         };
 
@@ -97,8 +99,9 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
             sizes_map.insert(k, t.len() as u32);
         });
 
+        let heap_bits = BitSafeU8::new(self.heap_sizes);
         let ctx = Sizes {
-            heap: self.heap_sizes.view_bits::<Lsb0>(),
+            heap: heap_bits.view_bits::<Lsb0>(),
             tables: &sizes_map,
         };
 
