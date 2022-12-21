@@ -4,7 +4,7 @@ services:
     build:
       context: .
       cache_from:
-        - ghcr.io/nickbclifford/dotnetdll:latest
-    image: ghcr.io/nickbclifford/dotnetdll:latest
+        - ghcr.io/nickbclifford/dotnetdll:main
+    image: ghcr.io/nickbclifford/dotnetdll:main
     volumes:
       - .:/dotnetdll
