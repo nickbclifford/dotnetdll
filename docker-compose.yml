@@ -1,6 +1,10 @@
 version: "3.9"
 services:
   tests:
-    build: .
+    build:
+      context: .
+      cache_from:
+        - nickbclifford/dotnetdll:latest
+    image: nickbclifford/dotnetdll:latest
     volumes:
       - .:/dotnetdll
