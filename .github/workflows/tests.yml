@@ -26,6 +26,7 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+      - uses: actions/checkout@v3
       - run: docker compose run tests
         env:
           DOCKER_BUILDKIT: 1
