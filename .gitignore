@@ -2,3 +2,5 @@
 Cargo.lock
 *.dll
 *.runtimeconfig.json
+
+.idea
