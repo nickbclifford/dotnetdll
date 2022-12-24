@@ -26,7 +26,7 @@ pub fn derive_from(input: DeriveInput) -> TokenStream {
                     for variant in l.nested {
                         if let NestedMeta::Meta(m) = variant {
                             nested.push(quote! {
-                                impl#generics From<#m> for #type_name#generics {
+                                impl #generics From<#m> for #type_name #generics {
                                     fn from(m: #m) -> Self {
                                         Self::#name(m.into())
                                     }
@@ -40,7 +40,7 @@ pub fn derive_from(input: DeriveInput) -> TokenStream {
         }
         Some(quote! {
             #(#nested)*
-            impl#generics From<#field> for #type_name#generics {
+            impl #generics From<#field> for #type_name #generics {
                 fn from(f: #field) -> Self {
                     Self::#name(f)
                 }
