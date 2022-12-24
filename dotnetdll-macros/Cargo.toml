@@ -4,6 +4,8 @@ version = "0.0.1"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
 edition = "2021"
 repository = "https://github.com/nickbclifford/dotnetdll"
+license = "GPL-3.0+"
+description = "Support crate for dotnetdll."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

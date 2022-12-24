@@ -6,6 +6,7 @@ edition = "2021"
 license = "GPL-3.0+"
 repository = "https://github.com/nickbclifford/dotnetdll"
 keywords = ["c-sharp", "dotnet", "dll", "compiler", "parser"]
+description = "A framework for reading and writing .NET metadata files, such as C# library DLLs."
 
 [features]
 unchecked_indexing = []
