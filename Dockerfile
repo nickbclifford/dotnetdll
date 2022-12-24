@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# TODO: optimize for size, this Docker image is absolutely enormous (5.3GB)
+# most of our CI time is being spent on just downloading this
+
 # Includes dependencies for building the local runtime from scratch
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:centos-7
 
