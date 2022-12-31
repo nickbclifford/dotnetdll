@@ -16,7 +16,7 @@ unchecked_indexing = []
 [workspace]
 members = [
     "dotnetdll-macros",
-    "smolasm"
+    "examples/smolasm"
 ]
 
 [dependencies]
