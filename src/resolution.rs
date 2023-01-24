@@ -76,33 +76,6 @@ pub enum EntryPoint {
     File(FileIndex),
 }
 
-// for all these indices, the value inside is private, so users cannot manually construct one
-// we also check during resolution that the index we assign is always valid
-// these both imply that indexing with these newtypes will always succeed
-// we can take advantage of this semantic guarantee to do unchecked zero-cost indexing (opt-in)
-
-fn slice_index<T>(s: &[T], index: usize) -> &T {
-    if cfg!(feature = "unchecked_indexing") {
-        unsafe { s.get_unchecked(index) }
-    } else {
-        &s[index]
-    }
-}
-fn slice_index_mut<T>(s: &mut [T], index: usize) -> &mut T {
-    if cfg!(feature = "unchecked_indexing") {
-        unsafe { s.get_unchecked_mut(index) }
-    } else {
-        &mut s[index]
-    }
-}
-fn unwrap<T>(o: Option<T>) -> T {
-    if cfg!(feature = "unchecked_indexing") {
-        unsafe { o.unwrap_unchecked() }
-    } else {
-        o.unwrap()
-    }
-}
-
 macro_rules! basic_index {
     ($name:ident indexes $field:ident as $t:ty) => {
         paste! {
@@ -113,12 +86,12 @@ macro_rules! basic_index {
                 type Output = $t;
 
                 fn index(&self, index: $name) -> &Self::Output {
-                    slice_index(&self.[<$field s>], index.0)
+                    &self.[<$field s>][index.0]
                 }
             }
             impl<'a> IndexMut<$name> for Resolution<'a> {
                 fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                    slice_index_mut(&mut self.[<$field s>], index.0)
+                    &mut self.[<$field s>][index.0]
                 }
             }
             impl<'a> Resolution<'a> {
@@ -169,13 +142,13 @@ macro_rules! internal_index {
             type Output = $t;
 
             fn index(&self, index: $name) -> &Self::Output {
-                slice_index(&self[index.parent_type].$plural, index.$sing)
+                &self[index.parent_type].$plural[index.$sing]
             }
         }
 
         impl<'a> IndexMut<$name> for Resolution<'a> {
             fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                slice_index_mut(&mut self[index.parent_type].$plural, index.$sing)
+                &mut self[index.parent_type].$plural[index.$sing]
             }
         }
 
@@ -246,14 +219,23 @@ impl<'a> Index<MethodIndex> for Resolution<'a> {
 
         use MethodMemberIndex::*;
         match index.member {
-            Method(i) => slice_index(&parent.methods, i),
-            PropertyGetter(i) => unwrap(slice_index(&parent.properties, i).getter.as_ref()),
-            PropertySetter(i) => unwrap(slice_index(&parent.properties, i).setter.as_ref()),
-            PropertyOther { property, other } => slice_index(&slice_index(&parent.properties, property).other, other),
-            EventAdd(i) => &slice_index(&parent.events, i).add_listener,
-            EventRemove(i) => &slice_index(&parent.events, i).remove_listener,
-            EventRaise(i) => unwrap(slice_index(&parent.events, i).raise_event.as_ref()),
-            EventOther { event, other } => slice_index(&slice_index(&parent.events, event).other, other),
+            Method(i) => &parent.methods[i],
+            PropertyGetter(i) => {
+                let o = parent.properties[i].getter.as_ref();
+                o.unwrap()
+            }
+            PropertySetter(i) => {
+                let o = parent.properties[i].setter.as_ref();
+                o.unwrap()
+            }
+            PropertyOther { property, other } => &parent.properties[property].other[other],
+            EventAdd(i) => &parent.events[i].add_listener,
+            EventRemove(i) => &parent.events[i].remove_listener,
+            EventRaise(i) => {
+                let o = parent.events[i].raise_event.as_ref();
+                o.unwrap()
+            }
+            EventOther { event, other } => &parent.events[event].other[other],
         }
     }
 }
@@ -263,18 +245,23 @@ impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
 
         use MethodMemberIndex::*;
         match index.member {
-            Method(i) => slice_index_mut(&mut parent.methods, i),
-            PropertyGetter(i) => unwrap(slice_index_mut(&mut parent.properties, i).getter.as_mut()),
-            PropertySetter(i) => unwrap(slice_index_mut(&mut parent.properties, i).setter.as_mut()),
-            PropertyOther { property, other } => {
-                slice_index_mut(&mut slice_index_mut(&mut parent.properties, property).other, other)
+            Method(i) => &mut parent.methods[i],
+            PropertyGetter(i) => {
+                let o = parent.properties[i].getter.as_mut();
+                o.unwrap()
             }
-            EventAdd(i) => &mut slice_index_mut(&mut parent.events, i).add_listener,
-            EventRemove(i) => &mut slice_index_mut(&mut parent.events, i).remove_listener,
-            EventRaise(i) => unwrap(slice_index_mut(&mut parent.events, i).raise_event.as_mut()),
-            EventOther { event, other } => {
-                slice_index_mut(&mut slice_index_mut(&mut parent.events, event).other, other)
+            PropertySetter(i) => {
+                let o = parent.properties[i].setter.as_mut();
+                o.unwrap()
             }
+            PropertyOther { property, other } => &mut parent.properties[property].other[other],
+            EventAdd(i) => &mut parent.events[i].add_listener,
+            EventRemove(i) => &mut parent.events[i].remove_listener,
+            EventRaise(i) => {
+                let o = parent.events[i].raise_event.as_mut();
+                o.unwrap()
+            }
+            EventOther { event, other } => &mut parent.events[event].other[other],
         }
     }
 }
