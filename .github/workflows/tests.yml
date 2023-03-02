@@ -7,10 +7,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - env:
-          EVENT: ${{ toJson(github.event) }}
-        run: echo "$EVENT"
-#      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+      - uses: tj-actions/changed-files@v35
+        id: changed-files
+      - run: |
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "$file was changed"
+          done
 #      - name: Authenticate with GitHub Container Registry
 #        uses: docker/login-action@v2
 #        with:
