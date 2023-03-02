@@ -15,8 +15,7 @@ RUN wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v7.0.1.tar.gz &
 WORKDIR /runtime-7.0.1
 RUN ./build.sh clr+libs -rc debug
 
-# TODO: `dive` shows a lot of built packages being saved to the root NuGet repo (/root/{.local/share/NuGet,.nuget})
-# can we get rid of these after building to save space? they're taking up like 6 GB and I think they're not necessary after the build
+# Now that the build is complete, remove extra NuGet packages to reduce image size
 RUN rm -rf /root/.local/share/NuGet /root/.nuget
 
 # Install production runtime + SDK
