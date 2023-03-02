@@ -1,3 +1,5 @@
+pub mod write;
+
 use crate::prelude::*;
 use dotnetdll_macros::From;
 use paste::paste;
@@ -37,6 +39,10 @@ impl<'a> Resolution<'a> {
             type_references: vec![],
             object_ctor_cache: None,
         }
+    }
+
+    pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
+        write::write_impl(&self, opts)
     }
 
     pub fn object_ctor(&mut self) -> MethodRefIndex {

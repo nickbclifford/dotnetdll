@@ -109,7 +109,10 @@ pub fn write_fixture(
     );
     ctx.resolution.set_entry_point(main);
 
-    let written = DLL::write(&ctx.resolution, false, true)?;
+    let written = ctx.resolution.write(WriteOptions {
+        is_32_bit: false,
+        is_executable: true,
+    })?;
 
     let dir = TempDir::new()?;
 

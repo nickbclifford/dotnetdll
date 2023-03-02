@@ -515,7 +515,12 @@ fn main() {
 
     std::fs::write(
         &dll,
-        DLL::write(&resolution, false, true).expect("could not assemble .NET module"),
+        resolution
+            .write(WriteOptions {
+                is_32_bit: false,
+                is_executable: true,
+            })
+            .expect("could not assemble .NET module"),
     )
     .expect("could not write output file")
 }
