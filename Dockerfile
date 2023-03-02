@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# TODO: optimize for size, this Docker image is absolutely enormous (5.3GB)
+# TODO: optimize for size, this Docker image is absolutely enormous (5.3GB compressed, ~19GB total)
 # most of our CI time is being spent on just downloading this
 
 # Includes dependencies for building the local runtime from scratch
@@ -14,6 +14,10 @@ RUN wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v7.0.1.tar.gz &
 # Build runtime
 WORKDIR /runtime-7.0.1
 RUN ./build.sh clr+libs -rc debug
+
+# TODO: `dive` shows a lot of built packages being saved to the root NuGet repo (/root/{.local/share/NuGet,.nuget})
+# can we get rid of these after building to save space? they're taking up like 6 GB and I think they're not necessary after the build
+RUN rm -rf /root/.local/share/NuGet /root/.nuget
 
 # Install production runtime + SDK
 RUN rpm -Uvh https://packages.microsoft.com/config/centos/7/packages-microsoft-prod.rpm && \
