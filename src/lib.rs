@@ -93,7 +93,7 @@ pub mod prelude {
     pub use crate::{
         access, asm,
         dll::{DLLError, ResolveOptions, DLL},
-        resolution::{*, write::WriteOptions},
+        resolution::{*, write::Options as WriteOptions},
         resolved::{
             assembly::*,
             attribute::*,

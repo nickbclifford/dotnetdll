@@ -29,13 +29,14 @@ use scroll::Pwrite;
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 
-#[derive(Debug, Default)]
-pub struct WriteOptions {
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Options {
     pub is_32_bit: bool,
     pub is_executable: bool,
 }
 
-pub(crate) fn write_impl(res: &Resolution, opts: WriteOptions) -> Result<Vec<u8>> {
+#[allow(clippy::too_many_lines)]
+pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     // writer setup
     let mut buffer = vec![];
     let mut writer = PEWriter::new(!opts.is_32_bit, 0x200, 0x200, &mut buffer);
