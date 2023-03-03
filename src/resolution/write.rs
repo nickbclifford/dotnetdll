@@ -317,47 +317,47 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     let mut field_index_map = HashMap::new();
 
     macro_rules! build_generic {
-            ($gs:expr, $parent:ident($idx:expr)) => {
-                tables.generic_param.reserve($gs.len());
-                for (idx, g) in $gs.iter().enumerate() {
-                    let table_idx = tables.generic_param.len() + 1;
-                    tables.generic_param.push(GenericParam {
-                        number: idx as u16,
-                        flags: match g.variance {
-                            Variance::Invariant => 0x0,
-                            Variance::Covariant => 0x1,
-                            Variance::Contravariant => 0x2,
-                        } | build_bitmask!(
-                            g.special_constraint,
-                            reference_type => 0x04,
-                            value_type => 0x08,
-                            has_default_constructor => 0x10
-                        ),
-                        owner: index::TypeOrMethodDef::$parent($idx),
-                        name: heap_idx!(strings, g.name),
-                    });
-                    write_attrs!(g.attributes, GenericParam(table_idx));
+        ($gs:expr, $parent:ident($idx:expr)) => {
+            tables.generic_param.reserve($gs.len());
+            for (idx, g) in $gs.iter().enumerate() {
+                let table_idx = tables.generic_param.len() + 1;
+                tables.generic_param.push(GenericParam {
+                    number: idx as u16,
+                    flags: match g.variance {
+                        Variance::Invariant => 0x0,
+                        Variance::Covariant => 0x1,
+                        Variance::Contravariant => 0x2,
+                    } | build_bitmask!(
+                        g.special_constraint,
+                        reference_type => 0x04,
+                        value_type => 0x08,
+                        has_default_constructor => 0x10
+                    ),
+                    owner: index::TypeOrMethodDef::$parent($idx),
+                    name: heap_idx!(strings, g.name),
+                });
+                write_attrs!(g.attributes, GenericParam(table_idx));
 
+                tables
+                    .generic_param_constraint
+                    .reserve(g.type_constraints.len());
+                for c in &g.type_constraints {
+                    let constraint_idx = tables.generic_param_constraint.len() + 1;
                     tables
                         .generic_param_constraint
-                        .reserve(g.type_constraints.len());
-                    for c in &g.type_constraints {
-                        let constraint_idx = tables.generic_param_constraint.len() + 1;
-                        tables
-                            .generic_param_constraint
-                            .push(GenericParamConstraint {
-                                owner: table_idx.into(),
-                                constraint: convert::write::idx_with_modifiers(
-                                    &c.constraint_type,
-                                    &c.custom_modifiers,
-                                    build_ctx!(),
-                                )?,
-                            });
-                        write_attrs!(c.attributes, GenericParamConstraint(constraint_idx));
-                    }
+                        .push(GenericParamConstraint {
+                            owner: table_idx.into(),
+                            constraint: convert::write::idx_with_modifiers(
+                                &c.constraint_type,
+                                &c.custom_modifiers,
+                                build_ctx!(),
+                            )?,
+                        });
+                    write_attrs!(c.attributes, GenericParamConstraint(constraint_idx));
                 }
-            };
-        }
+            }
+        };
+    }
 
     let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
     let mut bodies = Vec::new();
@@ -441,30 +441,30 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         }
 
         macro_rules! write_pinvoke {
-                ($p:expr, $parent:ident($idx:expr)) => {{
-                    if let Some(p) = $p {
-                        tables.impl_map.push(ImplMap {
-                            mapping_flags: build_bitmask!(p,
-                                no_mangle => 0x1, supports_last_error => 0x40
-                            ) | match p.character_set {
-                                CharacterSet::NotSpecified => 0x0,
-                                CharacterSet::Ansi => 0x2,
-                                CharacterSet::Unicode => 0x4,
-                                CharacterSet::Auto => 0x6,
-                            } | match p.calling_convention {
-                                UnmanagedCallingConvention::Platformapi => 0x100,
-                                UnmanagedCallingConvention::Cdecl => 0x200,
-                                UnmanagedCallingConvention::Stdcall => 0x300,
-                                UnmanagedCallingConvention::Thiscall => 0x400,
-                                UnmanagedCallingConvention::Fastcall => 0x500,
-                            },
-                            member_forwarded: index::MemberForwarded::$parent($idx),
-                            import_name: heap_idx!(strings, p.import_name),
-                            import_scope: (p.import_scope.0 + 1).into(),
-                        });
-                    }
-                }}
-            }
+            ($p:expr, $parent:ident($idx:expr)) => {{
+                if let Some(p) = $p {
+                    tables.impl_map.push(ImplMap {
+                        mapping_flags: build_bitmask!(p,
+                            no_mangle => 0x1, supports_last_error => 0x40
+                        ) | match p.character_set {
+                            CharacterSet::NotSpecified => 0x0,
+                            CharacterSet::Ansi => 0x2,
+                            CharacterSet::Unicode => 0x4,
+                            CharacterSet::Auto => 0x6,
+                        } | match p.calling_convention {
+                            UnmanagedCallingConvention::Platformapi => 0x100,
+                            UnmanagedCallingConvention::Cdecl => 0x200,
+                            UnmanagedCallingConvention::Stdcall => 0x300,
+                            UnmanagedCallingConvention::Thiscall => 0x400,
+                            UnmanagedCallingConvention::Fastcall => 0x500,
+                        },
+                        member_forwarded: index::MemberForwarded::$parent($idx),
+                        import_name: heap_idx!(strings, p.import_name),
+                        import_scope: (p.import_scope.0 + 1).into(),
+                    });
+                }
+            }}
+        }
 
         macro_rules! write_marshal {
             ($spec:expr, $parent:ident($idx:expr)) => {{
@@ -536,12 +536,12 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             tables.field.push(Field {
                 flags: {
                     let mut mask = build_bitmask!(f,
-                            static_member => 0x0010,
-                            init_only => 0x0020,
-                            literal => 0x0040,
-                            not_serialized => 0x0080,
-                            special_name => 0x0200,
-                            runtime_special_name => 0x0400);
+                        static_member => 0x0010,
+                        init_only => 0x0020,
+                        literal => 0x0040,
+                        not_serialized => 0x0080,
+                        special_name => 0x0200,
+                        runtime_special_name => 0x0400);
                     mask |= f.accessibility.to_mask();
                     if f.pinvoke.is_some() {
                         mask |= 0x2000;
@@ -657,8 +657,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
             tables.event.push(Event {
                 event_flags: build_bitmask!(e,
-                        special_name => 0x0200,
-                        runtime_special_name => 0x0400),
+                    special_name => 0x0200,
+                    runtime_special_name => 0x0400),
                 name: heap_idx!(strings, e.name),
                 event_type: convert::write::index(&e.delegate_type, build_ctx!())?,
             });
@@ -726,11 +726,11 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                 rva: 0,
                 impl_flags: {
                     let mut mask = build_bitmask!(m,
-                            forward_ref => 0x0010,
-                            preserve_sig => 0x0080,
-                            synchronized => 0x0020,
-                            no_inlining => 0x0008,
-                            no_optimization => 0x0040);
+                        forward_ref => 0x0010,
+                        preserve_sig => 0x0080,
+                        synchronized => 0x0020,
+                        no_inlining => 0x0008,
+                        no_optimization => 0x0040);
                     mask |= match m.body_format {
                         BodyFormat::IL => 0x0,
                         BodyFormat::Native => 0x1,
@@ -744,14 +744,14 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                 },
                 flags: {
                     let mut mask = build_bitmask!(m,
-                            sealed => 0x0020,
-                            virtual_member => 0x0040,
-                            hide_by_sig => 0x0080,
-                            strict => 0x0200,
-                            abstract_member => 0x0400,
-                            special_name => 0x0800,
-                            runtime_special_name => 0x1000,
-                            require_sec_object => 0x8000);
+                        sealed => 0x0020,
+                        virtual_member => 0x0040,
+                        hide_by_sig => 0x0080,
+                        strict => 0x0200,
+                        abstract_member => 0x0400,
+                        special_name => 0x0800,
+                        runtime_special_name => 0x1000,
+                        require_sec_object => 0x8000);
                     if m.is_static() {
                         mask |= 0x0010;
                     }
@@ -799,9 +799,9 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                     tables.param.push(Param {
                         flags: {
                             let mut mask = build_bitmask!(p,
-                                    is_in => 0x0001,
-                                    is_out => 0x0002,
-                                    optional => 0x0010);
+                                is_in => 0x0001,
+                                is_out => 0x0002,
+                                optional => 0x0010);
                             if p.default.is_some() {
                                 mask |= 0x1000;
                             }
@@ -898,21 +898,21 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
             use paste::paste;
             macro_rules! build_match {
-                    ($($ins:ident),+) => {
-                        match i {
-                            $(
-                                Instruction::$ins(o) => {
-                                    convert_offset(o, true);
-                                    if let Ok(int) = i8::try_from(*o) {
-                                        *i = paste! { Instruction::[<$ins S>](int) };
-                                    }
+                ($($ins:ident),+) => {
+                    match i {
+                        $(
+                            Instruction::$ins(o) => {
+                                convert_offset(o, true);
+                                if let Ok(int) = i8::try_from(*o) {
+                                    *i = paste! { Instruction::[<$ins S>](int) };
                                 }
-                            )+
-                            Instruction::Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
-                            _ => {}
-                        }
+                            }
+                        )+
+                        Instruction::Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
+                        _ => {}
                     }
                 }
+            }
 
             build_match!(Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave);
         }

@@ -56,7 +56,7 @@ pub type Result<T> = std::result::Result<T, DLLError>;
 pub struct ResolveOptions {
     /// If this flag is set, [`DLL::resolve`] will not resolve the bodies of class methods,
     /// meaning [`Method::body`](resolved::members::Method::body) will always be `None`.
-    /// 
+    ///
     /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,
 }
@@ -157,12 +157,9 @@ impl<'a> DLL<'a> {
         let userstrings: UserStringReader = self.get_heap()?;
         let mut tables = self.get_logical_metadata()?.tables;
 
-        let types_len = tables.type_def.len();
-        let type_ref_len = tables.type_ref.len();
-
         let ctx = convert::read::Context {
-            def_len: types_len,
-            ref_len: type_ref_len,
+            def_len: tables.type_def.len(),
+            ref_len: tables.type_ref.len(),
             specs: &tables.type_spec,
             sigs: &tables.stand_alone_sig,
             blobs: &blobs,
@@ -192,11 +189,11 @@ impl<'a> DLL<'a> {
         }
 
         macro_rules! range_index {
-            (enumerated $enum:expr => range $field:ident in $table:ident, indexes $index_table:ident with len $len:ident) => {{
+            (enumerated $enum:expr => range $field:ident in $table:ident indexes $index_table:ident) => {{
                 let (idx, var) = $enum;
                 let range = (var.$field.0 - 1)..(match tables.$table.get(idx + 1) {
                     Some(r) => r.$field.0,
-                    None => $len + 1,
+                    None => tables.$index_table.len() + 1,
                 } - 1);
                 match tables.$index_table.get(range.clone()) {
                     Some(rows) => range.zip(rows),
@@ -329,7 +326,7 @@ impl<'a> DLL<'a> {
             match types.get_mut(nest_idx) {
                 Some(t) => {
                     let enclose_idx = n.enclosing_class.0 - 1;
-                    if enclose_idx < types_len {
+                    if enclose_idx < tables.type_def.len() {
                         t.encloser = Some(TypeIndex(enclose_idx));
                     } else {
                         throw!(
@@ -343,23 +340,18 @@ impl<'a> DLL<'a> {
             }
         }
 
-        let fields_len = tables.field.len();
-        let method_len = tables.method_def.len();
-
         let owned_fields = tables
             .type_def
             .iter()
             .enumerate()
-            .map(|e| Ok(range_index!(enumerated e => range field_list in type_def, indexes field with len fields_len)))
+            .map(|e| Ok(range_index!(enumerated e => range field_list in type_def indexes field)))
             .collect::<Result<Vec<_>>>()?;
 
         let owned_methods = tables
             .type_def
             .iter()
             .enumerate()
-            .map(|e| {
-                Ok(range_index!(enumerated e => range method_list in type_def, indexes method_def with len method_len))
-            })
+            .map(|e| Ok(range_index!(enumerated e => range method_list in type_def indexes method_def)))
             .collect::<Result<Vec<_>>>()?;
 
         let files: Vec<_> = tables
@@ -438,7 +430,6 @@ impl<'a> DLL<'a> {
             })
             .collect::<Result<_>>()?;
 
-        let export_len = tables.exported_type.len();
         let exports: Vec<_> = tables
             .exported_type
             .iter()
@@ -458,7 +449,7 @@ impl<'a> DLL<'a> {
 
                             if idx < files.len() {
                                 TypeImplementation::ModuleFile {
-                                    type_def: if t_idx < types_len {
+                                    type_def: if t_idx < tables.type_def.len() {
                                         TypeIndex(t_idx)
                                     } else {
                                         throw!("invalid type definition index {} in exported type {}", t_idx, name)
@@ -480,7 +471,7 @@ impl<'a> DLL<'a> {
                         }
                         Implementation::ExportedType(t) => {
                             let idx = t - 1;
-                            if idx < export_len {
+                            if idx < tables.exported_type.len() {
                                 TypeImplementation::Nested(ExportedTypeIndex(idx))
                             } else {
                                 throw!("invalid nested type index {} in exported type {}", idx, name);
@@ -552,7 +543,7 @@ impl<'a> DLL<'a> {
                         }
                         BinRS::TypeRef(t) => {
                             let idx = t - 1;
-                            if idx < type_ref_len {
+                            if idx < tables.type_ref.len() {
                                 ResolutionScope::Nested(TypeRefIndex(idx))
                             } else {
                                 throw!("invalid nested type index {} for type reference {}", idx, name);
@@ -604,14 +595,14 @@ impl<'a> DLL<'a> {
         // we consider it safe because we guarantee that the body will fully initialize everything
         // it's much simpler and more efficient than trying to use a HashMap or something
         macro_rules! build_vec {
-            ($name:ident = $t:ty[$len:ident], $body:expr) => {
+            ($name:ident = $t:ty[$len:expr], $body:expr) => {
                 let mut $name = vec![std::mem::MaybeUninit::uninit(); $len];
                 $body;
                 let mut $name: Vec<$t> = unsafe { std::mem::transmute($name) };
             };
         }
 
-        build_vec!(fields = FieldIndex[fields_len], {
+        build_vec!(fields = FieldIndex[tables.field.len()], {
             debug!("fields");
 
             for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
@@ -625,7 +616,7 @@ impl<'a> DLL<'a> {
                     let FieldSig {
                         custom_modifiers: cmod,
                         field_type: t,
-                        by_ref
+                        by_ref,
                     } = heap_idx!(blobs, f.signature).pread(0)?;
 
                     parent_fields.push(Field {
@@ -688,11 +679,9 @@ impl<'a> DLL<'a> {
             }
         }
 
-        let params_len = tables.param.len();
+        let mut owned_params = Vec::with_capacity(tables.param.len());
 
-        let mut owned_params = Vec::with_capacity(params_len);
-
-        build_vec!(methods = MethodIndex[method_len], {
+        build_vec!(methods = MethodIndex[tables.method_def.len()], {
             debug!("methods");
 
             for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
@@ -761,8 +750,8 @@ impl<'a> DLL<'a> {
                     owned_params.push((
                         m_idx,
                         range_index!(
-                            enumerated (m_idx, m) => range param_list in method_def,
-                            indexes param with len params_len
+                            enumerated (m_idx, m) =>
+                            range param_list in method_def indexes param
                         ),
                     ));
                 }
@@ -969,7 +958,7 @@ impl<'a> DLL<'a> {
             }
         }
 
-        build_vec!(params = (usize, usize)[params_len], {
+        build_vec!(params = (usize, usize)[tables.param.len()], {
             debug!("params");
 
             for (m_idx, iter) in owned_params {
@@ -1042,9 +1031,7 @@ impl<'a> DLL<'a> {
             }
         }
 
-        let prop_len = tables.property.len();
-
-        build_vec!(properties = (usize, usize)[prop_len], {
+        build_vec!(properties = (usize, usize)[tables.property.len()], {
             debug!("properties");
 
             for (map_idx, map) in tables.property_map.iter().enumerate() {
@@ -1056,8 +1043,8 @@ impl<'a> DLL<'a> {
                 };
 
                 for (p_idx, prop) in range_index!(
-                    enumerated (map_idx, map) => range property_list in property_map,
-                    indexes property with len prop_len
+                    enumerated (map_idx, map) =>
+                    range property_list in property_map indexes property
                 ) {
                     use super::binary::signature::kinds::PropertySig;
                     use members::*;
@@ -1209,7 +1196,7 @@ impl<'a> DLL<'a> {
 
                     // since we only sorted on parent_type, we could land anywhere in the group with the same parent
                     // so we need to iterate in both directions to make sure we don't miss anything
-                    find_max!(start_idx, +=, method_len - 1);
+                    find_max!(start_idx, +=, tables.method_def.len() - 1);
                     if start_idx != 0 {
                         find_max!(start_idx - 1, -=, 0);
                     }
@@ -1225,9 +1212,7 @@ impl<'a> DLL<'a> {
             }};
         }
 
-        let event_len = tables.event.len();
-
-        build_vec!(events = (usize, usize)[event_len], {
+        build_vec!(events = (usize, usize)[tables.event.len()], {
             debug!("events");
 
             for (map_idx, map) in tables.event_map.iter().enumerate() {
@@ -1242,8 +1227,8 @@ impl<'a> DLL<'a> {
                 let parent_events = &mut parent.events;
 
                 for (e_idx, event) in range_index!(
-                    enumerated (map_idx, map) => range event_list in event_map,
-                    indexes event with len event_len
+                    enumerated (map_idx, map) =>
+                    range event_list in event_map indexes event
                 ) {
                     use members::*;
 
@@ -1259,7 +1244,7 @@ impl<'a> DLL<'a> {
                                     && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
                             }).ok_or_else(|| scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
                             let m_idx = sem.method.0 - 1;
-                            if m_idx < method_len {
+                            if m_idx < tables.method_def.len() {
                                 let method = extract_method!(parent, methods[m_idx]);
                                 methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
                                 method
@@ -1878,8 +1863,6 @@ impl<'a> DLL<'a> {
             }
         }
 
-        let sig_len = tables.stand_alone_sig.len();
-
         if !opts.skip_method_bodies {
             debug!("method bodies");
 
@@ -1912,7 +1895,9 @@ impl<'a> DLL<'a> {
                             vec![]
                         } else {
                             let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
-                            if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig)) && tok.index <= sig_len {
+                            if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
+                                && tok.index <= tables.stand_alone_sig.len()
+                            {
                                 let vars: LocalVarSig =
                                     heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature).pread(0)?;
 
