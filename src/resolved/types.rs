@@ -628,6 +628,7 @@ impl From<MemberType> for MethodType {
         // SAFETY: since both types are tagged repr(u8), they have a defined layout
         // since MethodType is a superset of MemberType, these layouts intersect
         // thus, every MemberType is a valid MethodType, and this transmutation is valid
+        // TODO: does this need a ManuallyDrop?
         unsafe { std::mem::transmute(m) }
     }
 }

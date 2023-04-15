@@ -8,7 +8,7 @@ fn parse() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;
     let dll = DLL::parse(&file)?;
 
-    let r = dll.resolve(ResolveOptions::default())?;
+    let r = dll.resolve(ReadOptions::default())?;
 
     if let Some(e) = &r.entry_point {
         print!("assembly entry point: ");

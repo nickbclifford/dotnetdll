@@ -59,7 +59,7 @@ pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> 
     let dll_file = std::fs::read(dir.path().join(format!("{}.dll", name)))?;
     let dll = DLL::parse(&dll_file)?;
 
-    test(dll.resolve(ResolveOptions::default())?);
+    test(dll.resolve(ReadOptions::default())?);
 
     Ok(())
 }

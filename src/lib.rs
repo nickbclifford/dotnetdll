@@ -12,6 +12,7 @@
     clippy::missing_panics_doc,
     clippy::must_use_candidate,
     clippy::struct_excessive_bools,
+    clippy::uninlined_format_args,
     clippy::wildcard_imports
 )]
 
@@ -92,8 +93,8 @@ pub mod resolved;
 pub mod prelude {
     pub use crate::{
         access, asm,
-        dll::{DLLError, ResolveOptions, DLL},
-        resolution::{*, write::Options as WriteOptions},
+        dll::{DLLError, DLL},
+        resolution::{*, read::Options as ReadOptions, write::Options as WriteOptions},
         resolved::{
             assembly::*,
             attribute::*,

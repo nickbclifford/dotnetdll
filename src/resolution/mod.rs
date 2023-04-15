@@ -1,3 +1,4 @@
+pub mod read;
 pub mod write;
 
 use crate::prelude::*;
@@ -41,8 +42,10 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    // TODO: read directly from bytes, hide DLL creation (most users don't need to introspect the binary data)
+
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
-        write::write_impl(&self, opts)
+        write::write_impl(self, opts)
     }
 
     pub fn object_ctor(&mut self) -> MethodRefIndex {
