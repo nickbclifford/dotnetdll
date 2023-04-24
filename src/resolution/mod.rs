@@ -42,7 +42,10 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    // TODO: read directly from bytes, hide DLL creation (most users don't need to introspect the binary data)
+    pub fn parse(bytes: &'a [u8], opts: ReadOptions) -> crate::dll::Result<Self> {
+        let dll = DLL::parse(bytes)?;
+        dll.resolve(opts)
+    }
 
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
         write::write_impl(self, opts)

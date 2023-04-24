@@ -27,6 +27,8 @@ pub struct DLL<'a> {
     sections: SectionTable<'a>,
 }
 
+// TODO: now that Resolution is the typical entry point, move this into maybe its own module
+// TODO: also, eventually we need to expand CLI and the ScrollError into our own meaningful variants
 /// The general error type for all dotnetdll operations.
 #[derive(Debug, Error)]
 pub enum DLLError {

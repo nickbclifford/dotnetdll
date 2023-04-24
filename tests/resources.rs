@@ -15,8 +15,7 @@ pub fn read() {
         .unwrap();
 
     let file = std::fs::read("./tests/resources-read/bin/Debug/netstandard2.1/resources-read.dll").unwrap();
-    let dll = DLL::parse(&file).unwrap();
-    let res = dll.resolve(Default::default()).unwrap();
+    let res = Resolution::parse(&file, ReadOptions::default()).unwrap();
     assert!(matches!(
         &res.manifest_resources[0].implementation,
         resource::Implementation::CurrentFile(Cow::Borrowed(include_bytes!("./strings.resources")))
