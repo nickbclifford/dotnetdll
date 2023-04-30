@@ -471,9 +471,18 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         ($name:ident = $t:ty[$len:expr], $body:expr) => {
             let mut $name = vec![std::mem::MaybeUninit::uninit(); $len];
             $body;
-            // TODO: directly transmuting between Vecs is a minor crime according to transmute docs, change to from_raw_parts
+            // see transmute docs: this makes sure the original vector is not dropped
+            let mut $name = std::mem::ManuallyDrop::new($name);
+            // SAFETY: MaybeUninit<T> has the same layout as T, so the following pointer cast is legal
+            // this is just to avoid copying the Vec<MaybeUninit<T>> version into a new Vec
             #[allow(unused_mut)]
-            let mut $name: Vec<$t> = unsafe { std::mem::transmute($name) };
+            let mut $name = unsafe {
+                Vec::from_raw_parts(
+                    $name.as_mut_ptr().cast::<$t>(),
+                    $name.len(),
+                    $name.capacity()
+                )
+            };
         };
     }
 
