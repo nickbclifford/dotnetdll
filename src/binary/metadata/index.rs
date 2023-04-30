@@ -1,4 +1,5 @@
 use super::table::{HasKind, Kind};
+use bitvec::access::BitSafeU8;
 use bitvec::slice::BitSlice;
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
@@ -6,7 +7,6 @@ use scroll::{
     Pread, Pwrite,
 };
 use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
-use bitvec::access::BitSafeU8;
 
 use dotnetdll_macros::coded_index;
 

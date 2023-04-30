@@ -2,7 +2,8 @@ use super::{
     index::Sizes,
     table::{Kind, Tables},
 };
-use bitvec::{order::Lsb0, view::BitView, store::BitStore};
+use bitvec::access::BitSafeU8;
+use bitvec::{order::Lsb0, store::BitStore, view::BitView};
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
@@ -10,7 +11,6 @@ use scroll::{
 };
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
-use bitvec::access::BitSafeU8;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {

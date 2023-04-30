@@ -1,6 +1,6 @@
 use super::{
     AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex, MethodMemberIndex,
-    ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex, MethodRefIndex
+    MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex,
 };
 use crate::binary::{heap::*, metadata, method};
 use crate::convert::{self, TypeKind};
@@ -1040,52 +1040,49 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
     // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
     macro_rules! extract_method {
-            ($parent:ident, $idx:expr) => {{
-                let idx = $idx;
-                let internal_idx = match idx.member {
-                    MethodMemberIndex::Method(i) => i,
-                    _ => unreachable!(),
-                };
+        ($parent:ident, $idx:expr) => {{
+            let idx = $idx;
+            let MethodMemberIndex::Method(internal_idx) = idx.member else { unreachable!() };
 
-                if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
-                    // first element is the index into methods, second element is the internal index
-                    let mut max_internal: Option<(usize, usize)> = None;
+            if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
+                // first element is the index into methods, second element is the internal index
+                let mut max_internal: Option<(usize, usize)> = None;
 
-                    // look for the maximum internal index for all methods in the same type
-                    macro_rules! find_max {
-                        ($start:expr, $inc:tt, $stop:expr) => {
-                            let mut current_index = $start;
-                            while methods[current_index].parent_type == idx.parent_type {
-                                match methods[current_index].member {
-                                    MethodMemberIndex::Method(i) => match &max_internal {
-                                        Some((_, max_i)) if i <= *max_i => {}
-                                        _ => { max_internal = Some((current_index, i)); }
-                                    },
-                                    _ => {}
-                                }
-                                if current_index == $stop { break; }
-                                current_index $inc 1;
+                // look for the maximum internal index for all methods in the same type
+                macro_rules! find_max {
+                    ($start:expr, $inc:tt, $stop:expr) => {
+                        let mut current_index = $start;
+                        while methods[current_index].parent_type == idx.parent_type {
+                            match methods[current_index].member {
+                                MethodMemberIndex::Method(i) => match &max_internal {
+                                    Some((_, max_i)) if i <= *max_i => {}
+                                    _ => { max_internal = Some((current_index, i)); }
+                                },
+                                _ => {}
                             }
-                        };
-                    }
-
-                    // since we only sorted on parent_type, we could land anywhere in the group with the same parent
-                    // so we need to iterate in both directions to make sure we don't miss anything
-                    find_max!(start_idx, +=, tables.method_def.len() - 1);
-                    if start_idx != 0 {
-                        find_max!(start_idx - 1, -=, 0);
-                    }
-
-                    // once we have the maximum internal index, this corresponds to the last method in the type
-                    // since we're about to swap_remove, change this method's internal index to where it's going to be put
-                    if let Some((max_index, _)) = max_internal {
-                        methods[max_index].member = MethodMemberIndex::Method(internal_idx);
-                    }
+                            if current_index == $stop { break; }
+                            current_index $inc 1;
+                        }
+                    };
                 }
 
-                $parent.methods.swap_remove(internal_idx)
-            }};
-        }
+                // since we only sorted on parent_type, we could land anywhere in the group with the same parent
+                // so we need to iterate in both directions to make sure we don't miss anything
+                find_max!(start_idx, +=, tables.method_def.len() - 1);
+                if start_idx != 0 {
+                    find_max!(start_idx - 1, -=, 0);
+                }
+
+                // once we have the maximum internal index, this corresponds to the last method in the type
+                // since we're about to swap_remove, change this method's internal index to where it's going to be put
+                if let Some((max_index, _)) = max_internal {
+                    methods[max_index].member = MethodMemberIndex::Method(internal_idx);
+                }
+            }
+
+            $parent.methods.swap_remove(internal_idx)
+        }};
+    }
 
     build_vec!(events = (usize, usize)[tables.event.len()], {
         debug!("events");
@@ -1113,11 +1110,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 macro_rules! get_listener {
                     ($l_name:literal, $flag:literal, $variant:ident) => {{
-                        let sem = tables.method_semantics.remove(tables.method_semantics.iter().position(|s| {
+                        let Some(position) = tables.method_semantics.iter().position(|s| {
                             use metadata::index::HasSemantics;
                             check_bitmask!(s.semantics, $flag)
                                 && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
-                        }).ok_or_else(|| scroll::Error::Custom(format!("could not find {} listener for event {}", $l_name, name)))?);
+                        }) else { throw!("could not find {} listener for event {}", $l_name, name) };
+                        let sem = tables.method_semantics.remove(position);
                         let m_idx = sem.method.0 - 1;
                         if m_idx < tables.method_def.len() {
                             let method = extract_method!(parent, methods[m_idx]);
@@ -1154,10 +1152,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         use metadata::index::HasSemantics;
 
         let raw_idx = s.method.0 - 1;
-        let method_idx = match methods.get(raw_idx) {
-            Some(&m) => m,
-            None => throw!("invalid method index {} for method semantics", raw_idx),
-        };
+        let Some(&method_idx) = methods.get(raw_idx) else { throw!("invalid method index {} for method semantics", raw_idx) };
 
         let parent = &mut types[method_idx.parent_type.0];
 

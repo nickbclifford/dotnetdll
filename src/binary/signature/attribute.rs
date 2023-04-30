@@ -326,7 +326,6 @@ try_into_ctx!(CustomAttributeData<'_>, |self, into| {
     Ok(*offset)
 });
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,7 +367,7 @@ mod tests {
                             Object(Array(Some(vec![Object(Integral(Int32(2)).into())])).into()),
                             Object(String(None).into()),
                         ]))
-                            .into(),
+                        .into(),
                     ),
                     Array(Some(vec![
                         Object(Integral(Int32(3)).into()),

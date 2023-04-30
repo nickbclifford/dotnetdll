@@ -104,7 +104,7 @@ macro_rules! tables {
                     $(
                         $(
                             // need to expand the $sort_field to only match on sorted tables
-                            let _ = stringify!($($sort_field),+);
+                            _ = stringify!($($sort_field),+);
                             slice.set($val, true);
                         )?
                     )*

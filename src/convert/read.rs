@@ -288,7 +288,7 @@ fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     }
 }
 
-fn method_source<'r, 'data>(tok: Token, ctx: &Context<'r, 'data>, m_ctx: &MethodContext<'r>) -> Result<MethodSource> {
+fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r>) -> Result<MethodSource> {
     use TokenTarget::*;
     Ok(match tok.target {
         Table(Kind::MethodSpec) => {
@@ -329,11 +329,11 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn instruction<'r, 'data>(
+pub fn instruction<'r>(
     instruction: il::Instruction,
     index: usize,
     all_offsets: &'r [usize],
-    ctx: &Context<'r, 'data>,
+    ctx: &Context<'r, '_>,
     m_ctx: &MethodContext<'r>,
 ) -> Result<resolved::il::Instruction> {
     use il::Instruction::*;

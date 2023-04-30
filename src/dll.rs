@@ -94,10 +94,7 @@ impl<'a> DLL<'a> {
 
     fn get_stream(&self, name: &'static str) -> Result<Option<&'a [u8]>> {
         let meta = self.get_cli_metadata()?;
-        let header = match meta.stream_headers.iter().find(|h| h.name == name) {
-            Some(h) => h,
-            None => return Ok(None),
-        };
+        let Some(header) = meta.stream_headers.iter().find(|h| h.name == name) else { return Ok(None) };
         let data = self.raw_rva(self.cli.metadata.rva + header.offset)?;
         Ok(Some(&data[..header.size as usize]))
     }

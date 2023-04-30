@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn compression() {
-        use scroll::{Pwrite, Pread};
+        use scroll::{Pread, Pwrite};
 
         macro_rules! case {
             ($ty:ident($val:expr) => [$($byte:literal),+]) => {

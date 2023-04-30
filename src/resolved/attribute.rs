@@ -26,7 +26,6 @@ fn parse_from_type<'def, 'inst>(
     f_type: FieldOrPropType<'inst>,
     src: &'inst [u8],
     offset: &mut usize,
-    resolution: &'def Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FixedArg<'inst>> {
     use FieldOrPropType::*;
@@ -54,13 +53,7 @@ fn parse_from_type<'def, 'inst>(
             Some(s) => FixedArg::Type(s),
             None => throw!("invalid null type name"),
         },
-        Object => FixedArg::Object(Box::new(parse_from_type(
-            src.gread(offset)?,
-            src,
-            offset,
-            resolution,
-            resolve,
-        )?)),
+        Object => FixedArg::Object(Box::new(parse_from_type(src.gread(offset)?, src, offset, resolve)?)),
         Vector(t) => {
             let num_elem: u32 = src.gread_with(offset, scroll::LE)?;
             FixedArg::Array(if num_elem == u32::MAX {
@@ -68,14 +61,14 @@ fn parse_from_type<'def, 'inst>(
             } else {
                 Some(
                     (0..num_elem)
-                        .map(|_| parse_from_type(*t.clone(), src, offset, resolution, resolve))
+                        .map(|_| parse_from_type(*t.clone(), src, offset, resolve))
                         .collect::<Result<_>>()?,
                 )
             })
         }
         Enum(name) => {
             let t = process_def(resolve(name)?)?;
-            match parse_from_type(t, src, offset, resolution, resolve)? {
+            match parse_from_type(t, src, offset, resolve)? {
                 FixedArg::Integral(i) => FixedArg::Enum(name, i),
                 bad => throw!("bad value {:?} for enum {}", bad, name),
             }
@@ -86,10 +79,7 @@ fn parse_from_type<'def, 'inst>(
 fn process_def<'def, 'inst>(
     (def, res): (&'def TypeDefinition<'def>, &'def Resolution<'def>),
 ) -> Result<FieldOrPropType<'inst>> {
-    let supertype = match &def.extends {
-        Some(t) => t,
-        None => return Ok(FieldOrPropType::Object),
-    };
+    let Some(supertype) = &def.extends else { return Ok(FieldOrPropType::Object) };
     match supertype {
         TypeSource::User(u) if u.type_name(res) == "System.Enum" => def
             .fields
@@ -173,7 +163,6 @@ fn method_to_type<'def, 'inst>(
 fn parse_named<'def, 'inst>(
     src: &'inst [u8],
     offset: &mut usize,
-    resolution: &'def Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<Vec<NamedArg<'inst>>> {
     let num_named: u16 = src.gread_with(offset, scroll::LE)?;
@@ -187,7 +176,7 @@ fn parse_named<'def, 'inst>(
                 .0
                 .ok_or_else(|| scroll::Error::Custom("null string name found when parsing".to_string()))?;
 
-            let value = parse_from_type(f_type, src, offset, resolution, resolve)?;
+            let value = parse_from_type(f_type, src, offset, resolve)?;
 
             Ok(match kind {
                 0x53 => NamedArg::Field(name, value),
@@ -235,13 +224,9 @@ impl<'a> Attribute<'a> {
             .parameters
             .iter()
             .map(|Parameter(_, param)| match param {
-                ParameterType::Value(p_type) => parse_from_type(
-                    method_to_type(p_type, resolution, &resolve)?,
-                    bytes,
-                    offset,
-                    resolution,
-                    &resolve,
-                ),
+                ParameterType::Value(p_type) => {
+                    parse_from_type(method_to_type(p_type, resolution, &resolve)?, bytes, offset, &resolve)
+                }
                 ParameterType::Ref(_) => {
                     throw!("ref parameters are not allowed in custom attributes")
                 }
@@ -251,7 +236,7 @@ impl<'a> Attribute<'a> {
             })
             .collect::<Result<_>>()?;
 
-        let named = parse_named(bytes, offset, resolution, &resolve)?;
+        let named = parse_named(bytes, offset, &resolve)?;
 
         Ok(CustomAttributeData {
             constructor_args: fixed,
@@ -292,7 +277,6 @@ pub struct Permission<'a> {
 impl<'a> SecurityDeclaration<'a> {
     pub fn requested_permissions(
         &'a self,
-        resolution: &'a Resolution<'a>,
         resolver: &'a impl Resolver<'a>,
     ) -> Result<Vec<Permission<'a>>> {
         let offset = &mut 0;
@@ -316,7 +300,7 @@ impl<'a> SecurityDeclaration<'a> {
                     })?
                     .into();
 
-                let fields = parse_named(value, offset, resolution, &|s| {
+                let fields = parse_named(value, offset, &|s| {
                     resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
                 })?;
 

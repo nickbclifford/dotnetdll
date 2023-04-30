@@ -137,7 +137,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     // builds unit variant if no fields, else builds tuple variant
     // impl IntoIterator avoids unnecessary Vec construction
     // impl ToTokens allows for usage with both variant definition and construction
-    fn make_variant(id: &Ident, iter: impl IntoIterator<Item = impl quote::ToTokens>) -> proc_macro2::TokenStream {
+    fn make_variant(id: &Ident, iter: impl IntoIterator<Item = impl quote::ToTokens>) -> TokenStream {
         let mut peek = iter.into_iter().peekable();
         if peek.peek().is_none() {
             quote! { #id }
@@ -153,7 +153,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
     // builds a sorted iterator of variants
     // they look much better in docs when sorted
-    fn build_sorted_variants(map: &FieldsMap) -> impl Iterator<Item = proc_macro2::TokenStream> + '_ {
+    fn build_sorted_variants(map: &FieldsMap) -> impl Iterator<Item = TokenStream> + '_ {
         let mut sorted: Vec<_> = map.iter().collect();
         sorted.sort_by_key(|e| e.0);
         sorted.into_iter().map(|(i, f)| make_variant(i, f))
@@ -264,7 +264,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         // same logic for ident matching as parse building
         for (id, fields) in input_map.iter() {
             let variant_name = id.to_string();
-            if let Some(bare) = variant_name.strip_prefix(&prefix_name) {
+            if let Some(bare) = variant_name.strip_prefix(prefix_name) {
                 let bare_ident = Ident::new(bare, Span::call_site());
 
                 let (suffix_size, _) = base_sizes[&bare_ident];

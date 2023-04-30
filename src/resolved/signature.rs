@@ -110,7 +110,14 @@ impl<T: Debug> MethodSignature<T> {
             buf.push_str("static ");
         }
 
-        write!(buf, "{} {}({})", self.return_type.show(res), name, self.show_parameters(res)).unwrap();
+        write!(
+            buf,
+            "{} {}({})",
+            self.return_type.show(res),
+            name,
+            self.show_parameters(res)
+        )
+        .unwrap();
 
         buf
     }

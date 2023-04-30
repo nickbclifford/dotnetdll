@@ -59,13 +59,10 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
 }
 
 fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
-    let value_kind = match value_kind {
-        Some(vk) => vk,
-        None => {
-            return Err(DLLError::CLI(scroll::Error::Custom(
-                "attempted to use type of unknown value kind inside a signature".to_string(),
-            )))
-        }
+    let Some(value_kind) = value_kind else {
+        return Err(DLLError::CLI(scroll::Error::Custom(
+            "attempted to use type of unknown value kind inside a signature".to_string(),
+        )))
     };
     Ok(match t {
         TypeSource::User(u) => match value_kind {
@@ -252,7 +249,7 @@ fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.type_modifiers),
         by_ref: f.by_ref,
-        field_type: f.return_type.as_sig(ctx)?
+        field_type: f.return_type.as_sig(ctx)?,
     })
 }
 
@@ -264,7 +261,7 @@ fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldS
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.custom_modifiers),
         by_ref: false,
-        field_type: f.field_type.as_sig(ctx)?
+        field_type: f.field_type.as_sig(ctx)?,
     })
 }
 

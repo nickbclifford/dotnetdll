@@ -20,6 +20,8 @@ pub struct Resolution<'a> {
     pub module_references: Vec<ExternalModuleReference<'a>>,
     pub type_definitions: Vec<TypeDefinition<'a>>,
     pub type_references: Vec<ExternalTypeReference<'a>>,
+    // TODO: does this match the philosophy of the API? I don't like having a pub(crate) field like this
+    // I feel like it should be maybe in a CachedWriter type or something
     pub(crate) object_ctor_cache: Option<MethodRefIndex>,
 }
 

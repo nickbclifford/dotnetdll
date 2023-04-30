@@ -518,7 +518,7 @@ impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
             FunctionPointer(sig) => format!(
                 "delegate*{}<{}>",
                 match sig.calling_convention {
-                    DefaultManaged => "".to_string(),
+                    DefaultManaged => String::new(),
                     DefaultUnmanaged => " unmanaged".to_string(),
                     other => format!(" unmanaged[{:?}]", other),
                 },
