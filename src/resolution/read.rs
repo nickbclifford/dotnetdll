@@ -777,7 +777,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     variance: match p.flags & 0x3 {
                         0x0 => Variance::Invariant,
                         0x1 => Variance::Covariant,
-                        0x2 => Variance::Invariant,
+                        0x2 => Variance::Contravariant,
                         _ => {
                             throw!("invalid variance value 0x3 for generic parameter {}", name)
                         }
