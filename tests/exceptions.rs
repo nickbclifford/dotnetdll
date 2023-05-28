@@ -99,7 +99,7 @@ pub fn write() {
                 my_exception,
                 Field::new(false, Accessibility::Public, "code", ctype! { int }),
             );
-            let object_ctor = ctx.resolution.object_ctor();
+            let object_ctor = ctx.ctor_cache.get_object_ctor(&mut ctx.resolution);
             let my_exception_ctor = ctx.resolution.push_method(
                 my_exception,
                 Method::constructor(

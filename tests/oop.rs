@@ -60,7 +60,7 @@ pub fn write() {
             );
 
             let bike = ctx.resolution.push_type_definition(TypeDefinition::new(None, "Bike"));
-            let bike_ctor = ctx.resolution.add_default_ctor(bike);
+            let bike_ctor = ctx.ctor_cache.define_default_ctor(&mut ctx.resolution, bike);
             ctx.resolution[bike].set_extends(ctx.object);
             ctx.resolution[bike].add_implementation(ivehicle);
             ctx.resolution.push_method(
@@ -132,7 +132,7 @@ pub fn write() {
                     )
                 },
             );
-            let car_ctor = ctx.resolution.add_default_ctor(car);
+            let car_ctor = ctx.ctor_cache.define_default_ctor(&mut ctx.resolution, car);
 
             let mscorlib = ctx.mscorlib;
             let ilist: MethodType = BaseType::class(

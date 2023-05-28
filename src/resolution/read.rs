@@ -1426,7 +1426,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         module_references: module_refs,
         type_definitions: types,
         type_references: type_refs,
-        object_ctor_cache: None,
     };
 
     debug!("custom attributes");

@@ -1,4 +1,5 @@
 pub mod read;
+pub mod utils;
 pub mod write;
 
 use crate::prelude::*;
@@ -20,9 +21,6 @@ pub struct Resolution<'a> {
     pub module_references: Vec<ExternalModuleReference<'a>>,
     pub type_definitions: Vec<TypeDefinition<'a>>,
     pub type_references: Vec<ExternalTypeReference<'a>>,
-    // TODO: does this match the philosophy of the API? I don't like having a pub(crate) field like this
-    // I feel like it should be maybe in a CachedWriter type or something
-    pub(crate) object_ctor_cache: Option<MethodRefIndex>,
 }
 
 impl<'a> Resolution<'a> {
@@ -40,7 +38,6 @@ impl<'a> Resolution<'a> {
             module_references: vec![],
             type_definitions: vec![TypeDefinition::new(None, "<Module>")],
             type_references: vec![],
-            object_ctor_cache: None,
         }
     }
 
@@ -51,32 +48,6 @@ impl<'a> Resolution<'a> {
 
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
         write::write_impl(self, opts)
-    }
-
-    pub fn object_ctor(&mut self) -> MethodRefIndex {
-        if let Some(i) = self.object_ctor_cache {
-            i
-        } else {
-            let i = self.push_method_reference(method_ref! { void object::.ctor() });
-            self.object_ctor_cache = Some(i);
-            i
-        }
-    }
-
-    pub fn add_default_ctor(&mut self, parent: TypeIndex) -> MethodIndex {
-        let object_ctor = self.object_ctor();
-        self.push_method(
-            parent,
-            Method::constructor(
-                Accessibility::Public,
-                vec![],
-                Some(body::Method::new(asm! {
-                    LoadArgument 0;
-                    call object_ctor;
-                    Return;
-                })),
-            ),
-        )
     }
 
     pub fn set_entry_point(&mut self, entry_point: impl Into<EntryPoint>) {

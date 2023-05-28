@@ -30,6 +30,7 @@ pub struct WriteContext<'a> {
     pub mscorlib: AssemblyRefIndex,
     pub console: TypeRefIndex,
     pub class: TypeIndex,
+    pub ctor_cache: ConstructorCache,
     pub default_ctor: MethodIndex,
     pub object: TypeRefIndex,
 }
@@ -81,13 +82,16 @@ pub fn write_fixture(
 
     let class = res.push_type_definition(TypeDefinition::new(None, "Program"));
     res[class].set_extends(object);
-    let default_ctor = res.add_default_ctor(class);
+
+    let mut cache = ConstructorCache::new();
+    let default_ctor = cache.define_default_ctor(&mut res, class);
 
     let mut ctx = WriteContext {
         resolution: res,
         mscorlib,
         console,
         class,
+        ctor_cache: cache,
         default_ctor,
         object,
     };
