@@ -7,24 +7,40 @@ use dotnetdll_macros::From;
 use paste::paste;
 use std::ops::{Index, IndexMut};
 
+/// A structured representation of a .NET DLL file's metadata, according to the ECMA-335 standard.
+///
+/// `Resolution` is the top-level data structure of dotnetdll.
+/// By working with a `Resolution` instance, you can access all the details of the assembly, modules, types, and other members defined or referenced in a DLL.
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
+    /// Assembly metadata, if the DLL defines an assembly.
     pub assembly: Option<Assembly<'a>>,
+    /// All external assemblies referenced by the DLL.
     pub assembly_references: Vec<ExternalAssemblyReference<'a>>,
+    /// Entry point for the DLL, if one is defined.
     pub entry_point: Option<EntryPoint>,
+    /// Types that the DLL exports. Note that this is a separate notion to type accessibility modifiers.
     pub exported_types: Vec<ExportedType<'a>>,
+    /// References to fields defined in external assemblies.
     pub field_references: Vec<ExternalFieldReference<'a>>,
+    /// File resources that the DLL references or contains.
     pub files: Vec<File<'a>>,
+    /// Resources embedded within the DLL.
     pub manifest_resources: Vec<resource::ManifestResource<'a>>,
+    /// References to methods defined in external assemblies.
     pub method_references: Vec<ExternalMethodReference<'a>>,
+    /// The module defined by the DLL. Note that this is a distinct object from an assembly.
     pub module: Module<'a>,
+    /// References to modules defined in external assemblies.
     pub module_references: Vec<ExternalModuleReference<'a>>,
+    /// Types defined within the DLL.
     pub type_definitions: Vec<TypeDefinition<'a>>,
+    /// References to types defined in external assemblies.
     pub type_references: Vec<ExternalTypeReference<'a>>,
 }
 
 impl<'a> Resolution<'a> {
-    pub fn new(module: Module<'a>) -> Resolution<'a> {
+    pub fn new(module: Module<'a>) -> Self {
         Resolution {
             assembly: None,
             assembly_references: vec![],

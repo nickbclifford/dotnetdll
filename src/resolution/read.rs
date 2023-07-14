@@ -14,11 +14,11 @@ use scroll::Pread;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-/// A dictionary of options for [`DLL::resolve`].
+/// A dictionary of options for [`Resolution::parse`] and [`DLL::resolve`].
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Options {
-    /// If this flag is set, [`DLL::resolve`] will not resolve the bodies of class methods,
-    /// meaning [`Method::body`](resolved::members::Method::body) will always be `None`.
+    /// If this flag is set, [`Resolution::parse`] and [`DLL::resolve`] will not resolve the bodies of class methods,
+    /// meaning [`Method::body`](members::Method::body) will always be `None`.
     ///
     /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,

@@ -167,21 +167,42 @@ impl TypeFlags {
     }
 }
 
+/// A .NET type definition, including all the members that type declares.
+///
+/// A `TypeDefinition` instance represents the complete declaration of a type defined inside its owning [`Resolution`].
+/// This includes members, object-oriented characteristics like inheritance and accessibility, generic type information, and all other metadata declared on a type.
 #[derive(Debug, Clone)]
 pub struct TypeDefinition<'a> {
+    /// All attributes present on the type's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the type.
     pub name: Cow<'a, str>,
+    /// Namespace of the type, if it resides within one.
     pub namespace: Option<Cow<'a, str>>,
+    /// Fields that the type declares.
     pub fields: Vec<members::Field<'a>>,
+    /// Properties that the type declares.
     pub properties: Vec<members::Property<'a>>,
+    /// Methods that the type declares.
     pub methods: Vec<members::Method<'a>>,
+    /// Events that the type declares.
     pub events: Vec<members::Event<'a>>,
+    /// The enclosing type, if this type is nested inside another.
     pub encloser: Option<TypeIndex>,
+    /// Method interface implementation overrides that the type declares.
     pub overrides: Vec<MethodOverride>,
+    /// The type that this type extends, if any.
+    ///
+    /// Note that all types extend another except for `System.Object` itself.
+    /// This field is an `Option` so that types such as `System.Object` are still representable.
     pub extends: Option<TypeSource<MemberType>>,
+    /// Interfaces that the type implements, including any attributes present on the interface implementation metadata.
     pub implements: Vec<(Vec<Attribute<'a>>, TypeSource<MemberType>)>,
+    /// Generic type parameters, if the type declares any.
     pub generic_parameters: Vec<Type<'a>>,
+    /// Additional details and flags regarding the type, including accessibility and inheritance modifiers.
     pub flags: TypeFlags,
+    /// Security metadata associated with the type.
     pub security: Option<SecurityDeclaration<'a>>,
 }
 impl ResolvedDebug for TypeDefinition<'_> {
