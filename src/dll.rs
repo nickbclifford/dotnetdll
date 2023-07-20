@@ -22,7 +22,7 @@ use DLLError::*;
 #[derive(Debug)]
 pub struct DLL<'a> {
     buffer: &'a [u8],
-    /// The CLI header of the DLL, read from the 15th PE data directory. See ECMA-335, II.25.3.3 for more information.
+    /// The CLI header of the DLL, read from the 15th PE data directory. See ECMA-335, II.25.3.3 (page 283) for more information.
     pub cli: Header,
     sections: SectionTable<'a>,
 }

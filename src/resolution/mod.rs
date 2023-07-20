@@ -19,7 +19,7 @@ pub struct Resolution<'a> {
     pub assembly_references: Vec<ExternalAssemblyReference<'a>>,
     /// Entry point for the DLL, if one is defined.
     pub entry_point: Option<EntryPoint>,
-    /// Types that the DLL exports. Note that this is a separate notion to type accessibility modifiers.
+    /// Types that this assembly exports, but are not defined in the assembly's main module.
     pub exported_types: Vec<ExportedType<'a>>,
     /// References to fields defined in external assemblies.
     pub field_references: Vec<ExternalFieldReference<'a>>,

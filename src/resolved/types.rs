@@ -304,20 +304,36 @@ impl<'a> TypeDefinition<'a> {
     }
 }
 
+/// Outlines the possible locations where an externally defined type could be, thus specifying the scope of reference resolution for an [`ExternalTypeReference`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq, From)]
 pub enum ResolutionScope {
+    /// Indicates that the type is nested within another type.
     Nested(TypeRefIndex),
+    /// Indicates that the type is located in an external module within the same assembly as this [`ExternalTypeReference`]'s owning module.
     ExternalModule(ModuleRefIndex),
+    /// Indicates that the type is located in the current module.
+    // TODO: explain how this is different from an index to a TypeDef
     CurrentModule,
+    /// Indicates that the type is located in an external assembly.
     Assembly(AssemblyRefIndex),
+    /// Indicates that the type is an exported type. See [`ExportedType`] for details.
     Exported,
 }
 
+
+/// A reference to type that is defined externally to the current DLL or module.
+///
+/// This could point to a type defined in another module in the same assembly, a different DLL altogether, or a type that is nested within another type.
+/// The external location is specified by the `scope` member.
 #[derive(Debug, Clone)]
 pub struct ExternalTypeReference<'a> {
+    /// All attributes presents on this type reference's metadata record.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the type as defined in the external scope.
     pub name: Cow<'a, str>,
+    /// Namespace of the type, if it resides within one.
     pub namespace: Option<Cow<'a, str>>,
+    /// Reference resolution scope, indicating where the type is defined.
     pub scope: ResolutionScope,
 }
 
@@ -360,19 +376,45 @@ impl<'a> ExternalTypeReference<'a> {
     }
 }
 
+/// Specifies where the implementation (i.e. [`TypeDefinition`]) of an [`ExportedType`] is.
 #[derive(Debug, Copy, Clone, From)]
 pub enum TypeImplementation {
+    /// Indicates that this type is nested within another type exported by this assembly.
     Nested(ExportedTypeIndex),
-    ModuleFile { type_def: TypeIndex, file: FileIndex },
+    /// Indicates that this type is present within another module of this assembly.
+    ///
+    /// Note that the standard specifies that the `type_def` field is a *hint only*, and that resolution should be ultimately determined by
+    /// the [`ExportedType`] declaration's `name` and `namespace`. See ECMA-335, II.22.14 (page 222) for more information.
+    ModuleFile {
+        /// The module that the type's implementation resides in.
+        file: FileIndex,
+        /// An index into the external module's [`Resolution::type_definitions`] table.
+        type_def: TypeIndex,
+    },
+    /// Indicates that this type was originally defined within the current assembly, but has since moved to an external assembly.
     TypeForwarder(AssemblyRefIndex),
 }
 
+/// A type exported by and made available in this assembly, but not present in the module that defines the assembly.
+///
+/// Note that this is different from simply a `public` type. An `ExportedType` declaration means that the type with the given name and namespace
+/// is made available by this assembly; i.e., external modules can reference this type by importing this assembly; however, the *implementation*
+/// resides in a module other than the assembly's main module.
+///
+/// For more information, see the following sections of the standard:
+/// - `ilasm` type export declarations: ECMA-335, II.6.7 (page 120)
+/// - `ExportedType` metadata records: ECMA-335, II.22.14 (page 222)
 #[derive(Debug, Clone)]
 pub struct ExportedType<'a> {
+    /// All attributes present on the type export declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Additional details and flags regarding the type, including accessibility and inheritance modifiers.
     pub flags: TypeFlags,
+    /// Name of the type.
     pub name: Cow<'a, str>,
+    /// Namespace of the type, if it resides within one.
     pub namespace: Option<Cow<'a, str>>,
+    /// The location of the type's complete declaration and implementation.
     pub implementation: TypeImplementation,
 }
 
