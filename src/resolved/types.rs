@@ -441,6 +441,12 @@ type_name_impl!(TypeDefinition<'_>);
 type_name_impl!(ExternalTypeReference<'_>);
 type_name_impl!(ExportedType<'_>);
 
+/// Sum type that combines a [`TypeIndex`] and [`TypeRefIndex`].
+///
+/// This type defines free [`From`]/[`Into`] trait conversions with [`TypeIndex`] and [`TypeRefIndex`].
+///
+/// Semantically, a `UserType` is either a type definition or a type reference; that is, it does not have any generic parameters and it is not a primitive runtime type.
+/// It is named because either of these cases represent a type defined by a *user* and not by the runtime itself.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, From)]
 pub enum UserType {
     Definition(TypeIndex),
@@ -465,6 +471,13 @@ impl ResolvedDebug for UserType {
     }
 }
 
+/// A [`UserType`] that can be attached to any other type to add additional information to a type.
+/// A type with a `CustomTypeModifier` is considered *not equal* to the same type without a modifier.
+///
+/// The distinction between "optional" and "required" modifiers refers to how compilers and metadata tools treat them:
+/// - An optional type modifier can be freely ignored when encountered by a compiler.
+/// - A required type modifier should be treated specially by a compiler, as it indicates that the modified type has special semantics that cannot be ignored.
+/// See ECMA-335, II.7.1.1 (page 123) for more information.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum CustomTypeModifier {
     Optional(UserType),
@@ -480,6 +493,9 @@ impl ResolvedDebug for CustomTypeModifier {
     }
 }
 
+/// Specifies whether the user-defined type being referenced is a class or a value type. Used in the [`BaseType::Type`] variant.
+///
+/// This is analogous to the `class` and `valuetype` keywords in ILAsm type syntax. See ECMA-335, II.7.1 (page 122) for more information.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ValueKind {
     Class,
@@ -488,6 +504,13 @@ pub enum ValueKind {
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
+/// A sum type representing either a plain [`UserType`] reference or a generic instantiation of a [`UserType`].
+///
+/// This type defines free [`From`]/[`Into`] trait conversions with [`TypeIndex`] and [`TypeRefIndex`].
+///
+/// Note that a bare reference is distinct from generic instantiation with zero parameters.
+/// The two kinds of type reference are represented differently in metadata (ECMA-335, II.23.2.13, page 265), thus they are represented differently here.
+/// When constructing a `TypeSource`, keep this in mind.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, From)]
 pub enum TypeSource<EnclosingType> {
     User(#[nested(TypeIndex, TypeRefIndex)] UserType),
