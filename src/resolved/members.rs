@@ -550,17 +550,10 @@ impl ResolvedDebug for UserMethod {
             }
         }
 
-        let mut buf = if signature.instance {
-            String::new()
-        } else {
-            String::from("static ")
-        };
-
         let ret_type = signature.return_type.show(res);
 
         match &signature.varargs {
-            Some(v) => write!(
-                buf,
+            Some(v) => format!(
                 "vararg {} {}.{}({})",
                 ret_type,
                 parent_name,
@@ -573,12 +566,9 @@ impl ResolvedDebug for UserMethod {
                     .chain(v.iter().map(|p| p.show(res)))
                     .collect::<Vec<_>>()
                     .join(", ")
-            )
-            .unwrap(),
-            None => buf.push_str(&signature.show_with_name(res, format!("{}.{}", parent_name, method_name))),
-        };
-
-        buf
+            ),
+            None => signature.show_with_name(res, format!("{}.{}", parent_name, method_name)),
+        }
     }
 }
 

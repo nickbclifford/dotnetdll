@@ -105,6 +105,10 @@ impl<T: Debug> ResolvedDebug for MethodSignature<T> {
 impl<T: Debug> MethodSignature<T> {
     pub fn show_with_name(&self, res: &Resolution, name: impl Display) -> String {
         let mut buf = format!("[{:?}] ", self.calling_convention);
+        // ignore default convention for managed method signatures (will keep for maybe unmanaged signatures)
+        if buf == "[Default] " {
+            buf.clear();
+        }
 
         if !self.instance {
             buf.push_str("static ");
