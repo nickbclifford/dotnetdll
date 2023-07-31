@@ -125,6 +125,10 @@ try_into_ctx!(TypeDefOrRefOrSpec, |self, into| {
     Ok(*offset)
 });
 
+// TODO: explain sizes vs rank, specifics of lower bounds
+/// Defines the shape of an array that is potentially multi-dimensional and may have size bounds.
+///
+/// See ECMA-335, II.23.2.13 (page 265) for more information.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArrayShape {
     pub rank: usize,

@@ -506,6 +506,9 @@ pub enum ValueKind {
 // however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
 /// A sum type representing either a plain [`UserType`] reference or a generic instantiation of a [`UserType`].
 ///
+/// The `EnclosingType` type parameter represents the types allowed in the list of parameters instantiating a generic type.
+/// See [`BaseType`]'s documentation for more information.
+///
 /// This type defines free [`From`]/[`Into`] trait conversions with [`TypeIndex`] and [`TypeRefIndex`].
 ///
 /// Note that a bare reference is distinct from generic instantiation with zero parameters.
@@ -533,31 +536,108 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
     }
 }
 
+/// A sum type containing all fundamental types of .NET, including user type references, primitive value types, primitive reference types, and unmanaged pointers.
+///
+/// ## Primitives versus `System.*` References
+/// When encoding type signature information, primitive types should be represented with their corresponding primitive variants
+/// instead of with a reference to their location in the `System` namespace (ECMA-335, II.23.2.16, page 267).
+///
+/// For example, when encoding a 32-bit signed integer, one should always use the `BaseType::Int32` variant
+/// and not a `BaseType::Type` with an [`ExternalTypeReference`] to `System.Int32`.
+///
+/// A future version of dotnetdll may eventually automatically check for such references and either automatically convert them to the correct format
+/// **or** throw errors when they are encountered.
+///
+/// ## Generics and `EnclosingType`
+/// You'll notice that `BaseType` not only does not include a variant for quantified generic type variables,
+/// but also is defined with its own type parameter `EnclosingType`.
+/// These are for the same reason: in the interest of making invalid types unrepresentable,
+/// dotnetdll puts generic type variables into separate [`MemberType`] and [`MethodType`]
+/// enums that wrap `BaseType` by instantiating *themselves* as the `EnclosingType`.
+///
+/// At the metadata level, generic type variables from a generic type and those from a generic method are represented differently,
+/// and this trick of composing `BaseType` allows dotnetdll to prevent method type variables from being used anywhere other than in
+/// a method's signature.
+///
+/// ### Examples
+/// Here, the variables `T0`, `T1`, etc. represent type variables from a generic type declaration (i.e. `public class MyType<T0, T1, ...>`),
+/// whereas `M0`, `M1`, etc. are those from a generic method declaration (i.e. `public void MyMethod<M0, M1, ...>()`).
+///
+/// A [`Field`](members::Field)'s [`return_type`](members::Field::return_type) is a [`MemberType`],
+/// which wraps a `BaseType<MemberType>` with an additional variant for type variables from a generic type.
+/// This means a field's type could be `T0`, `T1[]`, or `T2*`, but not `M0`, because there is no quantification from a generic method to introduce `M0`.
+///
+/// A [`Method`](members::Method)'s [`signature`](members::Method::signature) is a [`signature::ManagedMethod`], which represents
+/// parameters and return types with [`MethodType`]s. `T0`, `T1[]`, etc. are acceptable types here, but because this is in a method context,
+/// [`MethodType`] has an additional variant for method generic type variables that means `M0`, `M1[]`, etc. are acceptable as well.
+///
+/// ## Which type do I use?
+/// - If you are representing types in a method signature (parameters or return types), use [`MethodType`].
+/// - If you are representing types in any other position, use [`MemberType`].
+/// - If you are writing something that has to act generically over both [`MemberType`] and [`MethodType`],
+///   use `BaseType<T>` with appropriate trait bounds on `T`.
+///
+/// ## Conversions
+/// `BaseType` defines free [`From`]/[`Into`] trait conversions with [`TypeSource`], [`MemberType`], and [`MethodType`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BaseType<EnclosingType> {
+    /// A type definition, type reference, or generic instantiation.
     Type {
+        // TODO: explain ValueKind and when it can be omitted
         value_kind: Option<ValueKind>,
         source: TypeSource<EnclosingType>,
     },
+    /// The primitive `System.Boolean` type, which is either `true` or `false`. Equivalent to C#'s `bool` type.
     Boolean,
+    /// The primitive `System.Char` type, which is a UTF-16 code unit. Equivalent to C#'s `char` type.
     Char,
+    /// The primitive `System.Int8` type, which is an 8-bit signed integer. Equivalent to C#'s `sbyte` type.
     Int8,
+    /// The primitive `System.UInt8` type, which is an 8-bit unsigned integer. Equivalent to C#'s `byte` type.
     UInt8,
+    /// The primitive `System.Int16` type, which is a 16-bit signed integer. Equivalent to C#'s `short` type.
     Int16,
+    /// The primitive `System.UInt16` type, which is a 16-bit unsigned integer. Equivalent to C#'s `ushort` type.
     UInt16,
+    /// The primitive `System.Int32` type, which is a 32-bit signed integer. Equivalent to C#'s `int` type.
     Int32,
+    /// The primitive `System.UInt32` type, which is a 32-bit unsigned integer. Equivalent to C#'s `uint` type.
     UInt32,
+    /// The primitive `System.Int64` type, which is a 64-bit signed integer. Equivalent to C#'s `long` type.
     Int64,
+    /// The primitive `System.UInt64` type, which is a 64-bit unsigned integer. Equivalent to C#'s `ulong` type.
     UInt64,
+    /// The primitive `System.Single` type, which is a 32-bit single-precision IEEE 754 floating point number. Equivalent to C#'s `float` type.
     Float32,
+    /// The primitive `System.Double` type, which is a 64-bit double-precision IEEE 754 floating point number.  Equivalent to C#'s `double` type.
     Float64,
+    /// The primitive `System.IntPtr` type, which is a signed integer with the platform's native integer size. Equivalent to C#'s `nint` type.
     IntPtr,
+    /// The primitive `System.UIntPtr` type, which is an unsigned integer with the platform's native integer size. Equivalent to C#'s `nuint` type.
     UIntPtr,
+    /// The primitive `System.Object` type, which is the base type of all reference types in .NET. Equivalent to C#'s `object` type.
     Object,
+    /// The primitive `System.String` type, which is a sequence of UTF-16 characters. Equivalent to C#'s `string` type.
     String,
+    /// A zero-indexed single dimensional array of unspecified size. Equivalent to C#'s `T[]` type.
+    ///
+    /// May contain [`CustomTypeModifier`]s that change the type of the element.
+    ///
+    /// See [`BaseType::vector`] for a convenience constructor for types with no modifiers.
     Vector(Vec<CustomTypeModifier>, EnclosingType),
+    /// A potentially multi-dimensional array with defined lower bounds and potentially fixed sizes, specified by [`ArrayShape`].
+    /// Equivalent to C#'s `T[,]` and `T[M, N, ...]` types.
+    ///
+    /// See ECMA-335, II.23.2.13 (page 265) for more information.
     Array(EnclosingType, ArrayShape),
+    /// A pointer, either to a typed value or to `void`. Equivalent to C#'s `void*` and `T*` types.
+    ///
+    /// May contain [`CustomTypeModifier`]s that change the type of the pointee.
+    ///
+    /// See [`BaseType::VOID_PTR`] and [`BaseType::pointer`] for convenience constructors for types with no modifiers..
     ValuePointer(Vec<CustomTypeModifier>, Option<EnclosingType>),
+    /// A pointer to a function, which may be a .NET managed method or an unmanaged native function.
+    /// Equivalent to C#'s `delegate*<T..., R>` type.
     FunctionPointer(signature::MaybeUnmanagedMethod),
 }
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
@@ -673,9 +753,17 @@ macro_rules! impl_typekind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
+/// A sum type that wraps [`BaseType`] and includes type variables quantified by a type's generic parameters declaration.
+///
+/// See [`BaseType`] for a detailed explanation of this type's structure and its relationship to [`BaseType`] and [`MethodType`].
+///
+/// [`MemberType`] defines a free [`From`]/[`Into`] conversion with [`MethodType`].
 pub enum MemberType {
     // NOTE: lots of heap allocation taking place because of how common this type is
     Base(Box<BaseType<MemberType>>),
+    /// Represents the type variable present at the specified 0-based index in the type's generic parameter list.
+    ///
+    /// For example, inside a type declaration `public class ExampleType<T, U, V>`, `U` would be represented by `TypeGeneric(1)`.
     TypeGeneric(usize),
 }
 impl ResolvedDebug for MemberType {
@@ -691,10 +779,21 @@ impl_typekind!(MemberType);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
+/// A sum type that wraps [`BaseType`] and includes type variables quantified by either a type's or a method's generic parameters declaration.
+///
+/// See [`BaseType`] for a detailed explanation of this type's structure and its relationship to [`BaseType`] and [`MemberType`].
+///
+/// [`MethodType`] defines a free [`From`]/[`Into`] conversion with [`MemberType`].
 pub enum MethodType {
     // ditto
     Base(Box<BaseType<MethodType>>),
+    /// Represents the type variable present at the specified 0-based index in the type's generic parameter list.
+    ///
+    /// For example, inside a type declaration `public class ExampleType<T, U, V>`, `U` would be represented by `TypeGeneric(1)`.
     TypeGeneric(usize),
+    /// Represents the type variable present at the specified 0-based index in the method's generic parameter list.
+    ///
+    /// For example, inside a generic method `public V ExampleMethod<T, U, V>()`, `V` would be represented by `MethodGeneric(2)`.
     MethodGeneric(usize),
 }
 impl ResolvedDebug for MethodType {
