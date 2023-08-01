@@ -52,26 +52,49 @@ impl Accessibility {
     }
 }
 
+/// A field definition, owned by a [`TypeDefinition`](super::types::TypeDefinition)'s [`fields`](super::types::TypeDefinition::fields) collection.
 #[derive(Debug, Clone)]
 pub struct Field<'a> {
+    /// All attributes present on the field's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the field.
     pub name: Cow<'a, str>,
+    /// Custom type modifiers associated with the field's type.
     pub type_modifiers: Vec<CustomTypeModifier>,
+    /// Indicates if the field stores a reference to its contents.
+    /// See the [C# documentation on `ref` fields](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/ref-struct#ref-fields)
+    /// for details.
     pub by_ref: bool,
+    /// Type of the field.
     pub return_type: MemberType,
+    /// Visibility scope of the field.
     pub accessibility: Accessibility,
+    /// Specifies if the field is a static member of its owning type.
     pub static_member: bool,
+    /// Indicates if the field is read-only after initialization.
     pub init_only: bool,
+    /// Specifies if the field is a compile-time constant.
     pub literal: bool,
+    /// Default constant value of the field, if any.
     pub default: Option<Constant>,
+    /// Indicates if the field should be excluded when the type is serialized.
     pub not_serialized: bool,
+    /// Specifies if the field is named with special meaning for a compiler.
+    // TODO: examples
     pub special_name: bool,
+    /// If this field is a P/Invoke binding, specifies the import information.
     pub pinvoke: Option<PInvoke<'a>>,
+    /// Specifies if the field is named with special meaning for the runtime.
+    // TODO: examples (enum value__, ...)
     pub runtime_special_name: bool,
+    /// Specifies the explicit byte offset of this field within its owning type, if provided.
     pub offset: Option<usize>,
+    /// Specifies the custom marshaling behavior of the field, if defined.
     pub marshal: Option<MarshalSpec>,
+    /// If the field was declared with data directly embedded in the DLL file, specifies the field's initial byte value.
     pub initial_value: Option<Cow<'a, [u8]>>,
 }
+
 name_display!(Field<'_>);
 impl ResolvedDebug for Field<'_> {
     fn show(&self, res: &Resolution) -> String {
@@ -127,20 +150,31 @@ impl<'a> Field<'a> {
     }
 }
 
+/// Outlines the possible locations where an externally defined field could be, thus specifying the parent type for an [`ExternalFieldReference`].
 #[derive(Debug, Clone, From, Eq, PartialEq)]
 pub enum FieldReferenceParent {
+    /// Indicates that the field is located on an external type, including primitive types.
     Type(MethodType),
+    /// Indicates that the field is a global field on an external module.
+    // TODO: explain module globals
     Module(ModuleRefIndex),
 }
 
+/// A reference to a field whose owning type is defined externally to the current DLL or module.
 #[derive(Debug, Clone)]
 pub struct ExternalFieldReference<'a> {
+    /// All attributes presents on this field reference's metadata record.
     pub attributes: Vec<Attribute<'a>>,
+    /// Parent location of the field reference, which could be a type or a module.
     pub parent: FieldReferenceParent,
+    /// Mame of the field.
     pub name: Cow<'a, str>,
+    /// Custom type modifiers associated with the field's type.
     pub custom_modifiers: Vec<CustomTypeModifier>,
+    /// Type of the field.
     pub field_type: MemberType,
 }
+
 name_display!(ExternalFieldReference<'_>);
 impl<'a> ExternalFieldReference<'a> {
     pub const fn new(parent: FieldReferenceParent, field_type: MemberType, name: Cow<'a, str>) -> Self {

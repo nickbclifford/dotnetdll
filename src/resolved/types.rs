@@ -321,7 +321,7 @@ pub enum ResolutionScope {
 }
 
 
-/// A reference to type that is defined externally to the current DLL or module.
+/// A reference to a type that is defined externally to the current DLL or module.
 ///
 /// This could point to a type defined in another module in the same assembly, a different DLL altogether, or a type that is nested within another type.
 /// The external location is specified by the `scope` member.
