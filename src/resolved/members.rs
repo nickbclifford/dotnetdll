@@ -167,7 +167,7 @@ pub struct ExternalFieldReference<'a> {
     pub attributes: Vec<Attribute<'a>>,
     /// Parent location of the field reference, which could be a type or a module.
     pub parent: FieldReferenceParent,
-    /// Mame of the field.
+    /// Name of the field.
     pub name: Cow<'a, str>,
     /// Custom type modifiers associated with the field's type.
     pub custom_modifiers: Vec<CustomTypeModifier>,
@@ -218,20 +218,36 @@ impl ResolvedDebug for FieldSource {
     }
 }
 
+/// A property definition, owned by a [`TypeDefinition`](super::types::TypeDefinition)'s [`properties`](super::types::TypeDefinition::properties) collection.
 #[derive(Debug, Clone)]
 pub struct Property<'a> {
+    /// All attributes present on the property's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the property.
     pub name: Cow<'a, str>,
+    /// Getter method for the property, if defined.
     pub getter: Option<Method<'a>>,
+    /// Setter method for the property, if defined.
     pub setter: Option<Method<'a>>,
+    /// Other methods associated with the property, typically non-standard accessors.
     pub other: Vec<Method<'a>>,
+    /// Specifies if the property is a static member of its owning type.
     pub static_member: bool,
-    pub property_type: signature::Parameter, // properties can be ref as well
+    /// Type of the property.
+    pub property_type: signature::Parameter,
+    /// Parameters the property takes in during access, such as for custom indexers.
+    // TODO: metadata representation of indexers
     pub parameters: Vec<signature::Parameter>,
+    /// Specifies if the property is named with special meaning for a compiler.
+    // TODO: examples
     pub special_name: bool,
+    /// Specifies if the property is named with special meaning for the runtime.
+    // TODO: examples
     pub runtime_special_name: bool,
+    /// Default constant value of the property, if any.
     pub default: Option<Constant>,
 }
+
 name_display!(Property<'_>);
 impl ResolvedDebug for Property<'_> {
     fn show(&self, res: &Resolution) -> String {
@@ -306,14 +322,22 @@ pub enum VtableLayout {
     NewSlot,
 }
 
+/// Metadata associated with a method's parameter (or return type) other than its type signature.
 #[derive(Debug, Clone, Default)]
 pub struct ParameterMetadata<'a> {
+    /// All attributes present on the parameter's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the parameter, if specified in metadata.
     pub name: Option<Cow<'a, str>>,
+    /// Indicates if the parameter is defined as `in`: that is, it is passed by reference, but modifications are not persisted to the caller.
     pub is_in: bool,
+    /// Indicates if the parameter is defined as `out`: that is, it is passed by reference, and modifications are persisted to the caller.
     pub is_out: bool,
+    /// Specifies if the parameter is optional.
     pub optional: bool,
+    /// Default constant value of the parameter, if any.
     pub default: Option<Constant>,
+    /// Specifies the custom marshaling behavior of the parameter, if defined.
     pub marshal: Option<MarshalSpec>,
 }
 impl Display for ParameterMetadata<'_> {
@@ -350,33 +374,74 @@ pub enum BodyManagement {
     Managed,
 }
 
+/// A method definition.
+/// - If the method is defined by a property, it is owned by the [`Property`]'s
+///   [`getter`](Property::getter)/[`setter`](Property::setter)/[`other`](Property::other) fields.
+/// - If the method is defined by an event, it is owned by the [`Event`]'s
+///   [`add_listener`](Event::add_listener)/[`remove_listener`](Event::remove_listener)/[`raise_event`](Event::raise_event) fields.
+/// - Otherwise, it is a regular type method and owned by a [`TypeDefinition`](super::types::TypeDefinition)'s [`methods`](super::types::TypeDefinition::methods) collection.
 #[derive(Debug, Clone)]
 pub struct Method<'a> {
+    /// All attributes present on the method's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the method.
     pub name: Cow<'a, str>,
+    /// The IL implementation of the method. Not present for abstract methods,
+    /// or if [`ReadOptions::skip_method_bodies`](read::Options::skip_method_bodies) is true at the time of resolution.
     pub body: Option<body::Method>,
+    /// Signature of the method, including return type and parameters.
     pub signature: signature::ManagedMethod,
+    /// Visibility scope of the method.
     pub accessibility: Accessibility,
+    /// Generic type parameters, if the method declares any.
     pub generic_parameters: Vec<generic::Method<'a>>,
+    /// Metadata for the method's return type.
     pub return_type_metadata: Option<ParameterMetadata<'a>>,
+    /// Metadata for each of the method's parameters.
     pub parameter_metadata: Vec<Option<ParameterMetadata<'a>>>,
+    /// Specifies if the method is final and cannot be overridden.
+    /// (`final` is a reserved word in Rust, hence the different name for the field.)
     pub sealed: bool,
+    /// Specifies if the method is virtual.
+    /// (`virtual` is a reserved word in Rust, hence the longer name for the field.)
     pub virtual_member: bool,
+    /// This method hides other methods of the base class by name *and* signature if this flag is true, otherwise they are hidden only by name.
+    /// See ECMA-335, II.15.4.2.2 (page 184) for more information.
     pub hide_by_sig: bool,
+    /// Specifies the position of the method's slot in the vtable.
     pub vtable_layout: VtableLayout,
+    /// Indicates if the method can only be overridden when and accessible.
+    /// See ECMA-335, II.15.4.2.2 (page 184) for more information.
     pub strict: bool,
+    /// Specifies if the method is abstract and doesn't have an implementation.
+    /// (`abstract` is a reserved word in Rust, hence the longer name for the field.)
     pub abstract_member: bool,
+    /// Specifies if the method is named with special meaning for a compiler.
+    // TODO: examples
     pub special_name: bool,
-    pub pinvoke: Option<PInvoke<'a>>,
+    /// Specifies if the method is named with special meaning for the runtime.
+    // TODO: examples
     pub runtime_special_name: bool,
+    /// If this method is a P/Invoke binding, specifies the import information.
+    pub pinvoke: Option<PInvoke<'a>>,
+    /// Runtime security metadata associated with the method.
     pub security: Option<SecurityDeclaration<'a>>,
+    /// Indicates that the method calls another method containing security code.
     pub require_sec_object: bool,
+    /// Describes the format of the method implementation body.
     pub body_format: BodyFormat,
+    /// Indicates whether the method implementation is managed (.NET runtime) or unmanaged (native).
     pub body_management: BodyManagement,
+    /// Indicates if the method is a forward reference to another method; i.e., its declaration is present here but its implementation is defined in another type.
     pub forward_ref: bool,
+    /// Indicates that the HRESULT signature transformation that takes place during COM interop calls should be suppressed for this method.
+    /// Marked as reserved by the ECMA standard.
     pub preserve_sig: bool,
+    /// Indicates if the method is single-threaded and thread-safe throughout the body.
     pub synchronized: bool,
+    /// Specifies that compilers should not inline this method during optimization.
     pub no_inlining: bool,
+    /// Specifies that compilers should not directly optimize this method when generating code.
     pub no_optimization: bool,
 }
 name_display!(Method<'_>);
@@ -500,13 +565,20 @@ pub enum UnmanagedCallingConvention {
     Fastcall,
 }
 
+/// Represents platform invoke (P/Invoke) information defined for a [`Method`](Method::pinvoke) or [`Field`](Field::pinvoke).
 #[derive(Debug, Clone)]
 pub struct PInvoke<'a> {
+    /// Specifies if the imported function should be searched for with C++ name mangling rules or not.
     pub no_mangle: bool,
+    /// Defines how strings should be marshaled for the function call. Also affects name mangling.
     pub character_set: CharacterSet,
+    /// Indicates if the function sets a global error value (Windows `SetLastError` or Unix `errno`) before returning to report errors.
     pub supports_last_error: bool,
+    /// Describes the calling convention of the unmanaged function.
     pub calling_convention: UnmanagedCallingConvention,
+    /// The name of the unmanaged function to be invoked.
     pub import_name: Cow<'a, str>,
+    /// The scope from which the unmanaged function is imported, typically a DLL or shared library.
     pub import_scope: ModuleRefIndex,
 }
 impl<'a> PInvoke<'a> {
@@ -522,20 +594,32 @@ impl<'a> PInvoke<'a> {
     }
 }
 
+/// Outlines the possible locations where an externally defined method could be, thus specifying the parent type for an [`ExternalMethodReference`].
+
 #[derive(Debug, Clone, From)]
 pub enum MethodReferenceParent {
+    /// The method is part of a specific type (e.g., an instance method of a class or a static method).
     Type(MethodType),
+    /// The method is defined at the module level, outside of any specific type.
     Module(ModuleRefIndex),
+    /// The method is defined in this type, but as an instantiation of varargs.
     VarargMethod(MethodIndex),
 }
 
+/// A reference to a method whose owning type is defined externally to the current DLL or module.
+/// Also used for calls to vararg methods.
 #[derive(Debug, Clone)]
 pub struct ExternalMethodReference<'a> {
+    /// All attributes presents on this method reference's metadata record.
     pub attributes: Vec<Attribute<'a>>,
+    /// Parent location of the method reference. Usually the method's owning type.
     pub parent: MethodReferenceParent,
+    /// Name of the method.
     pub name: Cow<'a, str>,
+    /// Signature of the method.
     pub signature: signature::ManagedMethod,
 }
+
 name_display!(ExternalMethodReference<'_>);
 impl<'a> ExternalMethodReference<'a> {
     pub fn new(
@@ -649,16 +733,29 @@ pub enum Constant {
     Null,
 }
 
+/// An event definition, owned by a [`TypeDefinition`](super::types::TypeDefinition)'s [`events`](super::types::TypeDefinition::events) collection.
 #[derive(Debug, Clone)]
 pub struct Event<'a> {
+    /// All attributes present on the event's declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// Name of the event.
     pub name: Cow<'a, str>,
-    pub delegate_type: MemberType, // standard says this can be null, but that doesn't make any sense
+    /// The delegate type that describes the method signature of a handler for this event.
+    // TODO: explain delegate types, Func/Action, etc
+    pub delegate_type: MemberType,
+    /// The method used to add a listener or handler to this event.
     pub add_listener: Method<'a>,
+    /// The method used to remove a listener or handler from this event.
     pub remove_listener: Method<'a>,
+    /// The method used to raise or trigger the event, if explicitly defined.
     pub raise_event: Option<Method<'a>>,
+    /// Any other methods associated with this event, often related to its internal handling.
     pub other: Vec<Method<'a>>,
+    /// Specifies if the event is named with special meaning for a compiler.
+    // TODO: examples
     pub special_name: bool,
+    /// Specifies if the event is named with special meaning for the runtime.
+    // TODO: examples
     pub runtime_special_name: bool,
 }
 name_display!(Event<'_>);

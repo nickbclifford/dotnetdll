@@ -202,7 +202,7 @@ pub struct TypeDefinition<'a> {
     pub generic_parameters: Vec<Type<'a>>,
     /// Additional details and flags regarding the type, including accessibility and inheritance modifiers.
     pub flags: TypeFlags,
-    /// Security metadata associated with the type.
+    /// Runtime security metadata associated with the type.
     pub security: Option<SecurityDeclaration<'a>>,
 }
 impl ResolvedDebug for TypeDefinition<'_> {
