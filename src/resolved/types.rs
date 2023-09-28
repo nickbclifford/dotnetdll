@@ -535,6 +535,14 @@ impl<T: ResolvedDebug> ResolvedDebug for TypeSource<T> {
         }
     }
 }
+impl<T> TypeSource<T> {
+    pub fn generic(base: impl Into<UserType>, parameters: Vec<T>) -> Self {
+        TypeSource::Generic {
+            base: base.into(),
+            parameters,
+        }
+    }
+}
 
 /// A sum type containing all fundamental types of .NET, including user type references, primitive value types, primitive reference types, and unmanaged pointers.
 ///

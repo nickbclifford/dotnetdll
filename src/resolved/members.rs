@@ -695,6 +695,14 @@ pub struct GenericMethodInstantiation {
     pub base: UserMethod,
     pub parameters: Vec<MethodType>,
 }
+impl GenericMethodInstantiation {
+    pub fn new(base: impl Into<UserMethod>, parameters: Vec<MethodType>) -> Self {
+        GenericMethodInstantiation {
+            base: base.into(),
+            parameters,
+        }
+    }
+}
 
 #[derive(Debug, Clone, From, Eq, PartialEq)]
 pub enum MethodSource {

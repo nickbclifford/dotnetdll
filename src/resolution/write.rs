@@ -392,7 +392,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             .into(),
         });
 
-        build_generic!(t.generic_parameters, TypeDef(idx));
+        build_generic!(t.generic_parameters, TypeDef(idx + 1));
 
         tables.interface_impl.reserve(t.implements.len());
         for (attrs, i) in &t.implements {
@@ -407,7 +407,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         // ignore <Module> here
         write_attrs!(t.attributes, TypeDef(idx + 1));
 
-        write_security!(&t.security, TypeDef(idx));
+        write_security!(&t.security, TypeDef(idx + 1));
 
         overrides.extend(
             t.overrides

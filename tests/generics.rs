@@ -79,11 +79,7 @@ pub fn write() {
             let list = ctx
                 .resolution
                 .push_type_reference(type_ref! { System.Collections.Generic.List<1> in #mscorlib });
-            let list_t: MethodType = BaseType::class(TypeSource::Generic {
-                base: list.into(),
-                parameters: vec![ctype! { M0 }],
-            })
-            .into();
+            let list_t: MethodType = BaseType::class(TypeSource::generic(list, vec![ctype! { M0 }])).into();
             let list_ctor = ctx
                 .resolution
                 .push_method_reference(method_ref! { void @list_t::.ctor() });
@@ -99,10 +95,7 @@ pub fn write() {
             let ref_index = ctx
                 .resolution
                 .push_method_reference(method_ref! { static M0 #activator::CreateInstance<1>() });
-            let create_instance = GenericMethodInstantiation {
-                base: ref_index.into(),
-                parameters: vec![ctype! { M0 }],
-            };
+            let create_instance = GenericMethodInstantiation::new(ref_index, vec![ctype! { M0 }]);
 
             let init = ctx.resolution.push_method(
                 ctx.class,
@@ -142,34 +135,25 @@ pub fn write() {
                 t
             });
 
-            let init_class = GenericMethodInstantiation {
-                base: init.into(),
-                parameters: vec![BaseType::class(ctx.class).into()],
-            };
+            let init_class = GenericMethodInstantiation::new(init, vec![BaseType::class(ctx.class).into()]);
 
             let ienum = ctx
                 .resolution
                 .push_type_reference(type_ref! { System.Collections.Generic.IEnumerable<1> in #mscorlib });
-            let ienum_class: MethodType = BaseType::class(TypeSource::Generic {
-                base: ienum.into(),
-                parameters: vec![BaseType::class(ctx.class).into()],
-            })
-            .into();
+            let ienum_class: MethodType =
+                BaseType::class(TypeSource::generic(ienum, vec![BaseType::class(ctx.class).into()])).into();
             let generic_enumerator = ctx
                 .resolution
                 .push_type_reference(type_ref! { System.Collections.Generic.IEnumerator<1> in #mscorlib });
-            let enum_t: MethodType = BaseType::class(TypeSource::Generic {
-                base: generic_enumerator.into(),
-                parameters: vec![ctype! { T0 }],
-            })
-            .into();
+            let enum_t: MethodType =
+                BaseType::class(TypeSource::generic(generic_enumerator, vec![ctype! { T0 }])).into();
             let get_enum = ctx.resolution.push_method_reference(method_ref! {
                 #enum_t #ienum_class::GetEnumerator()
             });
-            let enum_class: MethodType = BaseType::class(TypeSource::Generic {
-                base: generic_enumerator.into(),
-                parameters: vec![BaseType::class(ctx.class).into()],
-            })
+            let enum_class: MethodType = BaseType::class(TypeSource::generic(
+                generic_enumerator,
+                vec![BaseType::class(ctx.class).into()],
+            ))
             .into();
             let get_current = ctx
                 .resolution
@@ -214,6 +198,121 @@ pub fn write() {
             )
         },
         b"0\n1\n2\n3\n4\n",
+    )
+    .unwrap();
+}
+
+#[test]
+pub fn write_generic_class() {
+    common::write_fixture(
+        "generics",
+        |ctx| {
+            let container = ctx
+                .resolution
+                .push_type_definition(TypeDefinition::new(None, "Container"));
+            ctx.ctor_cache.define_default_ctor(&mut ctx.resolution, container);
+            ctx.resolution[container]
+                .generic_parameters
+                .push(generic::Type::new("T"));
+            ctx.resolution[container].flags.before_field_init = true;
+            ctx.resolution[container].extends = Some(ctx.object.into());
+
+            let arr_field = ctx.resolution.push_field(
+                container,
+                Field::new(false, Accessibility::Public, "inner", ctype! { T0[] }),
+            );
+
+            let mscorlib = ctx.mscorlib;
+            let ienum = ctx
+                .resolution
+                .push_type_reference(type_ref! { System.Collections.Generic.IEnumerable<1> in #mscorlib });
+
+            let ienum_inst: MethodType = BaseType::class(TypeSource::generic(ienum, vec![ctype! { M0 }])).into();
+            let string_join = ctx
+                .resolution
+                .push_method_reference(method_ref! { static string string::Join<1>(string, #ienum_inst) });
+            let string_join_inst = GenericMethodInstantiation::new(string_join, vec![ctype! { T0 }]);
+
+            let to_string = ctx.resolution.push_method(
+                container,
+                Method::new(
+                    Accessibility::Public,
+                    msig! { string () },
+                    "ToString",
+                    Some(body::Method::new(asm! {
+                        load_string ",";
+                        LoadArgument 0;
+                        load_field arr_field;
+                        call string_join_inst;
+                        Return;
+                    })),
+                ),
+            );
+
+            let console_type: MethodType = BaseType::class(ctx.console).into();
+            let write_line = ctx
+                .resolution
+                .push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
+
+            let int_container: MethodType =
+                BaseType::class(TypeSource::generic(container, vec![ctype! { int }])).into();
+            let string_container: MethodType =
+                BaseType::class(TypeSource::generic(container, vec![ctype! { string }])).into();
+
+            (
+                vec![],
+                vec![
+                    LocalVariable::new(int_container.clone()),
+                    LocalVariable::new(string_container.clone()),
+                ],
+                asm! {
+                    new_object ctx.resolution.push_method_reference(method_ref! { void @int_container::.ctor() });
+                    StoreLocal 0;
+                    new_object ctx.resolution.push_method_reference(method_ref! { void @string_container::.ctor() });
+                    StoreLocal 1;
+                    LoadLocal 0;
+                    LoadConstantInt32 3;
+                    new_array BaseType::Int32;
+                    Duplicate;
+                    LoadConstantInt32 0;
+                    LoadConstantInt32 1;
+                    store_element_primitive StoreType::Int32;
+                    Duplicate;
+                    LoadConstantInt32 1;
+                    LoadConstantInt32 2;
+                    store_element_primitive StoreType::Int32;
+                    Duplicate;
+                    LoadConstantInt32 2;
+                    LoadConstantInt32 3;
+                    store_element_primitive StoreType::Int32;
+                    store_field arr_field;
+                    LoadLocal 1;
+                    LoadConstantInt32 3;
+                    new_array BaseType::String;
+                    Duplicate;
+                    LoadConstantInt32 0;
+                    load_string "foo";
+                    store_element BaseType::String;
+                    Duplicate;
+                    LoadConstantInt32 1;
+                    load_string "bar";
+                    store_element BaseType::String;
+                    Duplicate;
+                    LoadConstantInt32 2;
+                    load_string "baz";
+                    store_element BaseType::String;
+                    store_field arr_field;
+                    LoadLocal 0;
+                    call ctx.resolution.push_method_reference(method_ref! { string #int_container::ToString() });
+                    call write_line;
+                    LoadLocal 1;
+                    call ctx.resolution.push_method_reference(method_ref! { string #string_container::ToString() });
+                    call write_line;
+                    Return;
+                },
+            )
+        },
+        b"1,2,3\nfoo,bar,baz\n",
     )
     .unwrap();
 }
