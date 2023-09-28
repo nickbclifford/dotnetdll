@@ -22,7 +22,7 @@ RUN rpm -Uvh https://packages.microsoft.com/config/centos/7/packages-microsoft-p
     yum -y install dotnet-sdk-7.0 dotnet-runtime-7.0
 
 # Install Rust (CARGO_HOME var)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain nightly
 
 WORKDIR /dotnetdll
-CMD ["/cargo/bin/cargo", "test"]
+CMD ["/cargo/bin/cargo", "-Z", "sparse-registry", "test"]
