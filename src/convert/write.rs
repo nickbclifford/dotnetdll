@@ -29,7 +29,9 @@ use paste::paste;
 use scroll::{ctx::TryIntoCtx, Pwrite};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
+#[derive(Debug)]
 pub struct Context<'a> {
     pub blobs: &'a mut BlobWriter,
     pub specs: &'a mut Vec<TypeSpec>,
@@ -37,6 +39,7 @@ pub struct Context<'a> {
     pub blob_scratch: &'a mut DynamicBuffer,
 }
 
+#[tracing::instrument]
 pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
     let hash = crate::utils::hash(t);
 
@@ -51,6 +54,7 @@ pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(result)
 }
 
+#[tracing::instrument]
 pub fn user_index(t: UserType) -> TypeDefOrRef {
     match t {
         UserType::Definition(d) => TypeDefOrRef::TypeDef(d.0 + 1),
@@ -58,6 +62,7 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
     }
 }
 
+#[tracing::instrument]
 fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     let Some(value_kind) = value_kind else {
         return Err(DLLError::CLI(scroll::Error::Custom(
@@ -80,6 +85,7 @@ fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx:
     })
 }
 
+#[tracing::instrument]
 pub fn source_index(
     value_kind: Option<ValueKind>,
     t: &TypeSource<impl TypeKind>,
@@ -92,6 +98,7 @@ pub fn source_index(
     }
 }
 
+#[tracing::instrument]
 pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match base {
         BaseType::Type { value_kind, source } => source_index(*value_kind, source, ctx)?,
@@ -99,7 +106,8 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
     })
 }
 
-pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>, ctx: &mut Context) -> Result<Blob> {
+#[tracing::instrument]
+pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug, ctx: &mut Context) -> Result<Blob> {
     ctx.blob_scratch.clear();
 
     ctx.blob_scratch.pwrite(sig, 0)?;
@@ -107,8 +115,9 @@ pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>,
     Ok(ctx.blobs.write(ctx.blob_scratch.get())?)
 }
 
+#[tracing::instrument]
 pub(super) fn into_index(
-    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error>,
+    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug,
     ctx: &mut Context,
 ) -> Result<TypeDefOrRef> {
     let len = ctx.specs.len();
@@ -121,6 +130,7 @@ pub(super) fn into_index(
     Ok(TypeDefOrRef::TypeSpec(len + 1))
 }
 
+#[tracing::instrument]
 pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     use BaseType::*;
 
@@ -155,6 +165,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     })
 }
 
+#[tracing::instrument]
 fn maybe_unmanaged_method(sig: &MaybeUnmanagedMethod, ctx: &mut Context) -> Result<StandAloneMethodSig> {
     Ok(StandAloneMethodSig {
         has_this: sig.instance,
@@ -175,6 +186,7 @@ fn maybe_unmanaged_method(sig: &MaybeUnmanagedMethod, ctx: &mut Context) -> Resu
     })
 }
 
+#[tracing::instrument]
 pub fn custom_modifiers(mods: &[CustomTypeModifier]) -> Vec<CustomMod> {
     mods.iter()
         .map(|m| match m {
@@ -184,6 +196,7 @@ pub fn custom_modifiers(mods: &[CustomTypeModifier]) -> Vec<CustomMod> {
         .collect()
 }
 
+#[tracing::instrument]
 fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
     Ok(Param(
         custom_modifiers(&p.0),
@@ -199,6 +212,7 @@ fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
 //     into_blob(parameter_sig(p, ctx)?, ctx)
 // }
 
+#[tracing::instrument]
 fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
         custom_modifiers(&r.0),
@@ -211,6 +225,7 @@ fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
     ))
 }
 
+#[tracing::instrument]
 fn method_def_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> {
     Ok(MethodDefSig {
         has_this: sig.instance,
@@ -225,10 +240,12 @@ fn method_def_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig
     })
 }
 
+#[tracing::instrument]
 pub fn method_def(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_def_sig(sig, ctx)?, ctx)
 }
 
+#[tracing::instrument]
 fn method_ref_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodRefSig> {
     Ok(MethodRefSig {
         method_def: method_def_sig(sig, ctx)?,
@@ -241,10 +258,12 @@ fn method_ref_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodRefSig
     })
 }
 
+#[tracing::instrument]
 pub fn method_ref(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_ref_sig(sig, ctx)?, ctx)
 }
 
+#[tracing::instrument]
 fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.type_modifiers),
@@ -253,10 +272,12 @@ fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
     })
 }
 
+#[tracing::instrument]
 pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
     into_blob(field_sig(f, ctx)?, ctx)
 }
 
+#[tracing::instrument]
 fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.custom_modifiers),
@@ -265,10 +286,12 @@ fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldS
     })
 }
 
+#[tracing::instrument]
 pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {
     into_blob(field_ref_sig(f, ctx)?, ctx)
 }
 
+#[tracing::instrument]
 fn property_sig(p: &Property, ctx: &mut Context) -> Result<PropertySig> {
     Ok(PropertySig {
         has_this: !p.static_member,
@@ -281,10 +304,12 @@ fn property_sig(p: &Property, ctx: &mut Context) -> Result<PropertySig> {
     })
 }
 
+#[tracing::instrument]
 pub fn property(p: &Property, ctx: &mut Context) -> Result<Blob> {
     into_blob(property_sig(p, ctx)?, ctx)
 }
 
+#[tracing::instrument]
 pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {
     if let Some(BaseType::Type {
         source: TypeSource::User(u),
@@ -296,6 +321,7 @@ pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &
         let sig = t.as_sig(ctx)?;
         let mods = custom_modifiers(mods);
 
+        #[derive(Debug)]
         struct Wrapper(Vec<CustomMod>, SType);
         impl TryIntoCtx<(), DynamicBuffer> for Wrapper {
             type Error = scroll::Error;
@@ -316,6 +342,7 @@ pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &
     }
 }
 
+#[tracing::instrument]
 fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSig> {
     Ok(LocalVarSig(
         vars.iter()
@@ -339,6 +366,7 @@ fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSi
     ))
 }
 
+#[tracing::instrument]
 pub fn local_vars(vars: &[LocalVariable], ctx: &mut Context) -> Result<Blob> {
     into_blob(local_var_sig(vars, ctx)?, ctx)
 }
@@ -351,6 +379,7 @@ pub struct MethodContext<'a, T, U> {
     pub field_source: &'a U,
 }
 
+#[tracing::instrument(skip(m_ctx))]
 #[allow(clippy::too_many_lines)]
 pub fn instruction(
     instruction: &Instruction,

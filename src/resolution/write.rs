@@ -28,6 +28,7 @@ use object::{
 use scroll::Pwrite;
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
+use tracing::debug;
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Options {
@@ -189,6 +190,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         }};
     }
 
+    debug!("assembly");
+
     if let Some(a) = &res.assembly {
         tables.assembly.push(Assembly {
             hash_alg_id: match a.hash_algorithm {
@@ -210,6 +213,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         write_security!(&a.security, Assembly(1));
     }
 
+    debug!("assembly refs");
+
     tables.assembly_ref.reserve(res.assembly_references.len());
     for (idx, a) in res.assembly_references.iter().enumerate() {
         tables.assembly_ref.push(AssemblyRef {
@@ -226,6 +231,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
         write_attrs!(a.attributes, AssemblyRef(idx + 1));
     }
+
+    debug!("exported types");
 
     tables.exported_type.reserve(res.exported_types.len());
     for (idx, e) in res.exported_types.iter().enumerate() {
@@ -254,6 +261,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         tables.exported_type.push(export);
     }
 
+    debug!("files");
+
     tables.file.reserve(res.files.len());
     for (idx, f) in res.files.iter().enumerate() {
         tables.file.push(File {
@@ -265,6 +274,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         write_attrs!(f.attributes, File(idx + 1));
     }
 
+    debug!("resources");
     let mut resources = vec![];
 
     tables.manifest_resource.reserve(res.manifest_resources.len());
@@ -295,6 +305,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         write_attrs!(r.attributes, ManifestResource(idx + 1));
     }
 
+    debug!("module");
+
     tables.module.push(Module {
         generation: 0,
         name: heap_idx!(strings, res.module.name),
@@ -303,6 +315,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         enc_base_id: 0.into(),
     });
     write_attrs!(res.module.attributes, Module(1));
+
+    debug!("module refs");
 
     tables.module_ref.reserve(res.module_references.len());
     for (idx, r) in res.module_references.iter().enumerate() {
@@ -359,6 +373,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         };
     }
 
+    debug!("type definitions");
+
     let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
     let mut bodies = Vec::new();
 
@@ -394,6 +410,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
         build_generic!(t.generic_parameters, TypeDef(idx + 1));
 
+        debug!("interface implementations for type {}", t.name);
         tables.interface_impl.reserve(t.implements.len());
         for (attrs, i) in &t.implements {
             let impl_idx = tables.interface_impl.len() + 1;
@@ -521,6 +538,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             }};
         }
 
+        debug!("fields for type {}", t.name);
+
         field_index_map.reserve(t.fields.len());
         tables.field.reserve(t.fields.len());
         for (internal_idx, f) in t.fields.iter().enumerate() {
@@ -589,6 +608,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             .map(|(i, m)| (MethodMemberIndex::Method(i), None, m))
             .collect();
 
+        debug!("properties for type {}", t.name);
+
         tables.property.reserve(t.properties.len());
         if !t.properties.is_empty() {
             tables.property_map.push(PropertyMap {
@@ -644,6 +665,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             );
         }
 
+        debug!("events for type {}", t.name);
+
         tables.event.reserve(t.events.len());
         if !t.events.is_empty() {
             tables.event_map.push(EventMap {
@@ -688,6 +711,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                 .map(|(i, m)| (i, association, m)),
             );
         }
+
+        debug!("methods for type {}", t.name);
 
         method_index_map.reserve(all_methods.len());
         tables.method_def.reserve(all_methods.len());
@@ -841,6 +866,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             index: r.0 + 1 + field_offset,
         },
     };
+
+    debug!("method bodies");
 
     for (def_idx, body) in bodies {
         let ctx = build_ctx!();
@@ -1056,6 +1083,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         };
     }
 
+    debug!("member refs");
+
     tables
         .member_ref
         .reserve(res.method_references.len() + res.field_references.len());
@@ -1085,6 +1114,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         write_attrs!(f.attributes, MemberRef(field_offset + idx + 1));
     }
 
+    debug!("type refs");
+
     tables.type_ref.reserve(res.type_references.len());
     for (idx, r) in res.type_references.iter().enumerate() {
         tables.type_ref.push(TypeRef {
@@ -1101,6 +1132,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
         write_attrs!(r.attributes, TypeRef(idx + 1));
     }
+
+    debug!("attributes");
 
     tables.custom_attribute.reserve(attributes.len());
     for (a, parent) in attributes {
@@ -1135,6 +1168,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     };
 
     // begin writing
+    debug!("write to DLL");
 
     let strings_vec = strings.into_vec();
     let guids_vec = guids.into_vec();

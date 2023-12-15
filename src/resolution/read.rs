@@ -227,6 +227,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }};
     }
 
+    debug!("assembly");
+
     let mut assembly = None;
     if let Some(a) = tables.assembly.first() {
         use assembly::*;
@@ -248,6 +250,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         });
     }
 
+    debug!("assembly refs");
+
     let assembly_refs = tables
         .assembly_ref
         .iter()
@@ -265,6 +269,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             })
         })
         .collect::<Result<Vec<_>>>()?;
+
+    debug!("type definitions");
 
     let mut types = tables
         .type_def
@@ -317,6 +323,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         })
         .collect::<Result<Vec<_>>>()?;
 
+    debug!("nested types");
+
     for n in &tables.nested_class {
         let nest_idx = n.nested_class.0 - 1;
         match types.get_mut(nest_idx) {
@@ -350,6 +358,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         .map(|e| Ok(range_index!(enumerated e => range method_list in type_def indexes method_def)))
         .collect::<Result<Vec<_>>>()?;
 
+    debug!("files");
+
     let files: Vec<_> = tables
         .file
         .iter()
@@ -362,6 +372,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             })
         })
         .collect::<Result<_>>()?;
+
+    debug!("resources");
 
     let resources: Vec<_> = tables
         .manifest_resource
@@ -423,6 +435,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             })
         })
         .collect::<Result<_>>()?;
+
+    debug!("exported types");
 
     let exports: Vec<_> = tables
         .exported_type

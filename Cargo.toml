@@ -25,7 +25,7 @@ num-derive = "0.4"
 object = { version = "0.32.1", features = ['write'] }
 paste = "1.0.5"
 scroll = { version = "0.11.0", features = ['derive'] }
-scroll-buffer = "0.3.0"
+scroll-buffer = "0.3.1"
 thiserror = "1.0.31"
 tracing = "0.1.40"
 
