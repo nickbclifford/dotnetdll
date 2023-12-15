@@ -5,14 +5,15 @@ use super::{
 use crate::binary::{heap::*, metadata, method};
 use crate::convert::{self, TypeKind};
 use crate::dll::{DLLError::*, Result, DLL};
+use crate::prelude::generic::{Constraint, Generic, SpecialConstraint, Variance};
 use crate::resolved::{
     types::{MemberType, MethodType},
     *,
 };
-use log::{debug, warn};
 use scroll::Pread;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use tracing::{debug, warn};
 
 /// A dictionary of options for [`Resolution::parse`] and [`DLL::resolve`].
 #[derive(Debug, Default, Copy, Clone)]
@@ -22,6 +23,172 @@ pub struct Options {
     ///
     /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,
+}
+
+macro_rules! throw {
+    ($($arg:tt)*) => {
+        return Err(CLI(scroll::Error::Custom(format!($($arg)*))))
+    }
+}
+
+macro_rules! heap_idx {
+    ($heap:ident, $idx:expr) => {
+        Cow::Borrowed($heap.at_index($idx)?)
+    };
+}
+
+macro_rules! optional_idx {
+    ($heap:ident, $idx:expr) => {
+        if $idx.is_null() {
+            None
+        } else {
+            Some(heap_idx!($heap, $idx))
+        }
+    };
+}
+
+// we use filter_maps for the member refs because we distinguish between the two
+// kinds by testing if they parse successfully or not, and filter_map makes it really
+// easy to implement that inside an iterator. however, we need to propagate the Results
+// through the final iterator so that they don't get turned into None and swallowed on failure
+macro_rules! filter_map_try {
+    ($e:expr) => {
+        match $e {
+            Ok(n) => n,
+            Err(e) => return Some(Err(e)),
+        }
+    };
+}
+
+macro_rules! build_version {
+    ($src:ident) => {
+        Version {
+            major: $src.major_version,
+            minor: $src.minor_version,
+            build: $src.build_number,
+            revision: $src.revision_number,
+        }
+    };
+}
+
+// this allows us to initialize the Vec out of order
+// we consider it safe because we assert that the body will fully initialize everything
+// it's much simpler and more efficient than trying to use a HashMap or something
+macro_rules! build_vec {
+    ($name:ident = $t:ty[$len:expr], $body:expr) => {
+        let mut $name = vec![std::mem::MaybeUninit::uninit(); $len];
+        $body;
+        // see transmute docs: this makes sure the original vector is not dropped
+        let mut $name = std::mem::ManuallyDrop::new($name);
+        // SAFETY: MaybeUninit<T> has the same layout as T, so the following pointer cast is legal
+        // this is just to avoid copying the Vec<MaybeUninit<T>> version into a new Vec
+        #[allow(unused_mut)]
+        let mut $name = unsafe { Vec::from_raw_parts($name.as_mut_ptr().cast::<$t>(), $name.len(), $name.capacity()) };
+    };
+}
+
+// since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
+// if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
+fn extract_method<'a>(
+    parent: &mut types::TypeDefinition<'a>,
+    idx: MethodIndex,
+    methods: &mut [MethodIndex],
+    tables: &metadata::table::Tables,
+) -> members::Method<'a> {
+    let MethodMemberIndex::Method(internal_idx) = idx.member else { unreachable!() };
+
+    if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
+        // first element is the index into methods, second element is the internal index
+        let mut max_internal: Option<(usize, usize)> = None;
+
+        // look for the maximum internal index for all methods in the same type
+        let mut find_max = |start: usize, inc: isize, stop: usize| {
+            let mut current_index = start;
+            while methods[current_index].parent_type == idx.parent_type {
+                if let MethodMemberIndex::Method(i) = methods[current_index].member {
+                    match &max_internal {
+                        Some((_, max_i)) if i <= *max_i => {}
+                        _ => {
+                            max_internal = Some((current_index, i));
+                        }
+                    }
+                }
+                if current_index == stop {
+                    break;
+                }
+                current_index = current_index.checked_add_signed(inc).unwrap();
+            }
+        };
+
+        // since we only sorted on parent_type, we could land anywhere in the group with the same parent
+        // so we need to iterate in both directions to make sure we don't miss anything
+        find_max(start_idx, 1, tables.method_def.len() - 1);
+        if start_idx != 0 {
+            find_max(start_idx - 1, -1, 0);
+        }
+
+        // once we have the maximum internal index, this corresponds to the last method in the type
+        // since we're about to swap_remove, change this method's internal index to where it's going to be put
+        if let Some((max_index, _)) = max_internal {
+            methods[max_index].member = MethodMemberIndex::Method(internal_idx);
+        }
+    }
+
+    parent.methods.swap_remove(internal_idx)
+}
+
+fn make_generic<'a, T: TypeKind>(
+    name: Cow<'a, str>,
+    p: &metadata::table::GenericParam,
+    param_idx: usize,
+    constraint_map: &mut HashMap<usize, (usize, usize)>,
+    tables: &metadata::table::Tables,
+    ctx: &convert::read::Context<'_, 'a>,
+) -> Result<Generic<'a, T>> {
+    Ok(Generic {
+        attributes: vec![],
+        variance: match p.flags & 0x3 {
+            0x0 => Variance::Invariant,
+            0x1 => Variance::Covariant,
+            0x2 => Variance::Contravariant,
+            _ => {
+                throw!("invalid variance value 0x3 for generic parameter {}", name)
+            }
+        },
+        name,
+        special_constraint: SpecialConstraint {
+            reference_type: check_bitmask!(p.flags, 0x04),
+            value_type: check_bitmask!(p.flags, 0x08),
+            has_default_constructor: check_bitmask!(p.flags, 0x10),
+        },
+        type_constraints: tables
+            .generic_param_constraint
+            .iter()
+            .enumerate()
+            .filter_map(|(c_idx, c)| {
+                if c.owner.0 - 1 == param_idx {
+                    let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(c.constraint, ctx));
+                    Some(Ok((
+                        c_idx,
+                        Constraint {
+                            attributes: vec![],
+                            custom_modifiers: cmod,
+                            constraint_type: ty,
+                        },
+                    )))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .enumerate()
+            .map(|(internal, (original, c))| {
+                constraint_map.insert(original, (param_idx, internal));
+                c
+            })
+            .collect(),
+    })
 }
 
 #[allow(clippy::too_many_lines, clippy::nonminimal_bool)]
@@ -41,28 +208,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         userstrings: &userstrings,
     };
 
-    macro_rules! throw {
-        ($($arg:tt)*) => {
-            return Err(CLI(scroll::Error::Custom(format!($($arg)*))))
-        }
-    }
-
-    macro_rules! heap_idx {
-        ($heap:ident, $idx:expr) => {
-            Cow::Borrowed($heap.at_index($idx)?)
-        };
-    }
-
-    macro_rules! optional_idx {
-        ($heap:ident, $idx:expr) => {
-            if $idx.is_null() {
-                None
-            } else {
-                Some(heap_idx!($heap, $idx))
-            }
-        };
-    }
-
     macro_rules! range_index {
         (enumerated $enum:expr => range $field:ident in $table:ident indexes $index_table:ident) => {{
             let (idx, var) = $enum;
@@ -80,30 +225,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 ),
             }
         }};
-    }
-
-    // we use filter_maps for the member refs because we distinguish between the two
-    // kinds by testing if they parse successfully or not, and filter_map makes it really
-    // easy to implement that inside an iterator. however, we need to propagate the Results
-    // through the final iterator so that they don't get turned into None and swallowed on failure
-    macro_rules! filter_map_try {
-        ($e:expr) => {
-            match $e {
-                Ok(n) => n,
-                Err(e) => return Some(Err(e)),
-            }
-        };
-    }
-
-    macro_rules! build_version {
-        ($src:ident) => {
-            Version {
-                major: $src.major_version,
-                minor: $src.minor_version,
-                build: $src.build_number,
-                revision: $src.revision_number,
-            }
-        };
     }
 
     let mut assembly = None;
@@ -464,28 +585,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         })
     }
 
-    // this allows us to initialize the Vec out of order
-    // we consider it safe because we assert that the body will fully initialize everything
-    // it's much simpler and more efficient than trying to use a HashMap or something
-    macro_rules! build_vec {
-        ($name:ident = $t:ty[$len:expr], $body:expr) => {
-            let mut $name = vec![std::mem::MaybeUninit::uninit(); $len];
-            $body;
-            // see transmute docs: this makes sure the original vector is not dropped
-            let mut $name = std::mem::ManuallyDrop::new($name);
-            // SAFETY: MaybeUninit<T> has the same layout as T, so the following pointer cast is legal
-            // this is just to avoid copying the Vec<MaybeUninit<T>> version into a new Vec
-            #[allow(unused_mut)]
-            let mut $name = unsafe {
-                Vec::from_raw_parts(
-                    $name.as_mut_ptr().cast::<$t>(),
-                    $name.len(),
-                    $name.capacity()
-                )
-            };
-        };
-    }
-
     build_vec!(fields = FieldIndex[tables.field.len()], {
         debug!("fields");
 
@@ -764,66 +863,25 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     // this table is supposed to be sorted by owner and number (ECMA-335, II.22, page 210)
     // thus no need to sort the generics by sequence after the fact
-    for (idx, p) in tables.generic_param.iter().enumerate() {
-        use generic::*;
+    for (param_idx, p) in tables.generic_param.iter().enumerate() {
         use metadata::index::TypeOrMethodDef;
 
         let name = heap_idx!(strings, p.name);
-
-        macro_rules! make_generic {
-            () => {
-                Generic {
-                    attributes: vec![],
-                    variance: match p.flags & 0x3 {
-                        0x0 => Variance::Invariant,
-                        0x1 => Variance::Covariant,
-                        0x2 => Variance::Contravariant,
-                        _ => {
-                            throw!("invalid variance value 0x3 for generic parameter {}", name)
-                        }
-                    },
-                    name,
-                    special_constraint: SpecialConstraint {
-                        reference_type: check_bitmask!(p.flags, 0x04),
-                        value_type: check_bitmask!(p.flags, 0x08),
-                        has_default_constructor: check_bitmask!(p.flags, 0x10),
-                    },
-                    type_constraints: tables
-                        .generic_param_constraint
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(c_idx, c)| {
-                            if c.owner.0 - 1 == idx {
-                                let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(c.constraint, &ctx));
-                                Some(Ok((
-                                    c_idx,
-                                    Constraint {
-                                        attributes: vec![],
-                                        custom_modifiers: cmod,
-                                        constraint_type: ty,
-                                    },
-                                )))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Result<Vec<_>>>()?
-                        .into_iter()
-                        .enumerate()
-                        .map(|(internal, (original, c))| {
-                            constraint_map.insert(original, (idx, internal));
-                            c
-                        })
-                        .collect(),
-                }
-            };
-        }
 
         match p.owner {
             TypeOrMethodDef::TypeDef(i) => {
                 let idx = i - 1;
                 match types.get_mut(idx) {
-                    Some(t) => t.generic_parameters.push(make_generic!()),
+                    Some(t) => {
+                        t.generic_parameters.push(make_generic(
+                            name,
+                            p,
+                            param_idx,
+                            &mut constraint_map,
+                            &tables,
+                            &ctx,
+                        )?);
+                    }
                     None => throw!("invalid type index {} for generic parameter {}", idx, name),
                 }
             }
@@ -834,7 +892,9 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     None => throw!("invalid method index {} for generic parameter {}", idx, name),
                 };
 
-                method.generic_parameters.push(make_generic!());
+                method
+                    .generic_parameters
+                    .push(make_generic(name, p, param_idx, &mut constraint_map, &tables, &ctx)?);
             }
             TypeOrMethodDef::Null => {
                 throw!("invalid null owner index for generic parameter {}", name)
@@ -881,7 +941,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("field marshal");
 
-    for marshal in tables.field_marshal {
+    for marshal in &tables.field_marshal {
         use crate::binary::{metadata::index::HasFieldMarshal, signature::kinds::MarshalSpec};
 
         let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
@@ -1043,55 +1103,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    // sorts in preparation for the binary search below
+    // sorts in preparation for the binary search in extract_method
     methods.sort_unstable_by_key(|m| m.parent_type);
-
-    // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
-    // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
-    macro_rules! extract_method {
-        ($parent:ident, $idx:expr) => {{
-            let idx = $idx;
-            let MethodMemberIndex::Method(internal_idx) = idx.member else { unreachable!() };
-
-            if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
-                // first element is the index into methods, second element is the internal index
-                let mut max_internal: Option<(usize, usize)> = None;
-
-                // look for the maximum internal index for all methods in the same type
-                macro_rules! find_max {
-                    ($start:expr, $inc:tt, $stop:expr) => {
-                        let mut current_index = $start;
-                        while methods[current_index].parent_type == idx.parent_type {
-                            match methods[current_index].member {
-                                MethodMemberIndex::Method(i) => match &max_internal {
-                                    Some((_, max_i)) if i <= *max_i => {}
-                                    _ => { max_internal = Some((current_index, i)); }
-                                },
-                                _ => {}
-                            }
-                            if current_index == $stop { break; }
-                            current_index $inc 1;
-                        }
-                    };
-                }
-
-                // since we only sorted on parent_type, we could land anywhere in the group with the same parent
-                // so we need to iterate in both directions to make sure we don't miss anything
-                find_max!(start_idx, +=, tables.method_def.len() - 1);
-                if start_idx != 0 {
-                    find_max!(start_idx - 1, -=, 0);
-                }
-
-                // once we have the maximum internal index, this corresponds to the last method in the type
-                // since we're about to swap_remove, change this method's internal index to where it's going to be put
-                if let Some((max_index, _)) = max_internal {
-                    methods[max_index].member = MethodMemberIndex::Method(internal_idx);
-                }
-            }
-
-            $parent.methods.swap_remove(internal_idx)
-        }};
-    }
 
     build_vec!(events = (usize, usize)[tables.event.len()], {
         debug!("events");
@@ -1105,7 +1118,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     type_idx, map_idx
                 ))
             })?;
-            let parent_events = &mut parent.events;
 
             for (e_idx, event) in range_index!(
                 enumerated (map_idx, map) =>
@@ -1115,7 +1127,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 let name = heap_idx!(strings, event.name);
 
-                let internal_idx = parent_events.len();
+                let internal_idx = parent.events.len();
 
                 macro_rules! get_listener {
                     ($l_name:literal, $flag:literal, $variant:ident) => {{
@@ -1127,7 +1139,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         let sem = tables.method_semantics.remove(position);
                         let m_idx = sem.method.0 - 1;
                         if m_idx < tables.method_def.len() {
-                            let method = extract_method!(parent, methods[m_idx]);
+                            let method = extract_method(parent, methods[m_idx], &mut methods, &tables);
                             methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
                             method
                         } else {
@@ -1136,11 +1148,14 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     }}
                 }
 
-                parent_events.push(Event {
+                let add_listener = get_listener!("add", 0x8, EventAdd);
+                let remove_listener = get_listener!("remove", 0x10, EventRemove);
+
+                parent.events.push(Event {
                     attributes: vec![],
                     delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
-                    add_listener: get_listener!("add", 0x8, EventAdd),
-                    remove_listener: get_listener!("remove", 0x10, EventRemove),
+                    add_listener,
+                    remove_listener,
                     name,
                     raise_event: None,
                     other: vec![],
@@ -1165,7 +1180,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
         let parent = &mut types[method_idx.parent_type.0];
 
-        let new_meth = extract_method!(parent, method_idx);
+        let new_meth = extract_method(parent, method_idx, &mut methods, &tables);
 
         let member_idx = &mut methods[raw_idx].member;
 
