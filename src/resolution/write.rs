@@ -3,18 +3,21 @@ use crate::binary::{
     cli::{Header, Metadata, RVASize},
     heap::*,
     metadata::{header, index, table::*},
-    method, stream,
+    method,
+    signature::kinds::MarshalSpec,
+    stream,
 };
 use crate::convert;
 use crate::dll::Result;
+use crate::prelude::SecurityDeclaration;
 use crate::resolved::{
     assembly::HashAlgorithm,
     attribute::Attribute,
     body,
-    generic::Variance,
+    generic::{Generic, Variance},
     members::{
         BodyFormat, BodyManagement, CharacterSet, Constant as ConstantValue, FieldReferenceParent, FieldSource,
-        MethodReferenceParent, UnmanagedCallingConvention, UserMethod, VtableLayout,
+        MethodReferenceParent, PInvoke, UnmanagedCallingConvention, UserMethod, VtableLayout,
     },
     resource::{Implementation, Visibility},
     signature::CallingConvention,
@@ -34,6 +37,199 @@ use tracing::debug;
 pub struct Options {
     pub is_32_bit: bool,
     pub is_executable: bool,
+}
+
+macro_rules! heap_idx {
+    ($heap:ident, $val:expr) => {
+        $heap.write(&$val)?
+    };
+}
+
+macro_rules! opt_heap {
+    ($heap:ident, $val:expr) => {
+        match &$val {
+            Some(v) => heap_idx!($heap, v),
+            None => 0.into(),
+        }
+    };
+}
+
+fn _write_attrs<'r, 'data: 'r>(
+    all_attrs: &mut Vec<(&'r Attribute<'data>, index::HasCustomAttribute)>,
+    source: &'r [Attribute<'data>],
+    parent: index::HasCustomAttribute,
+) {
+    all_attrs.extend(source.iter().map(|r| (r, parent)));
+}
+
+fn _write_security<'r, 'data: 'r>(
+    s: &'r Option<SecurityDeclaration<'data>>,
+    parent: index::HasDeclSecurity,
+    blobs: &mut BlobWriter,
+    tables: &mut Tables,
+    all_attrs: &mut Vec<(&'r Attribute<'data>, index::HasCustomAttribute)>,
+) -> Result<()> {
+    if let Some(s) = s {
+        let idx = tables.decl_security.len() + 1;
+        tables.decl_security.push(DeclSecurity {
+            action: s.action,
+            parent,
+            permission_set: heap_idx!(blobs, &s.value),
+        });
+
+        _write_attrs(all_attrs, &s.attributes, index::HasCustomAttribute::DeclSecurity(idx));
+    }
+    Ok(())
+}
+
+fn _write_generic<'r, 'data: 'r, T: convert::TypeKind>(
+    gs: &'r [Generic<'data, T>],
+    parent: index::TypeOrMethodDef,
+    strings: &mut StringsWriter,
+    generic_param: &mut Vec<GenericParam>,
+    generic_param_constraint: &mut Vec<GenericParamConstraint>,
+    all_attrs: &mut Vec<(&'r Attribute<'data>, index::HasCustomAttribute)>,
+    ctx: &mut convert::write::Context,
+) -> Result<()> {
+    generic_param.reserve(gs.len());
+    for (idx, g) in gs.iter().enumerate() {
+        let table_idx = generic_param.len() + 1;
+        generic_param.push(GenericParam {
+            number: idx as u16,
+            flags: match g.variance {
+                Variance::Invariant => 0x0,
+                Variance::Covariant => 0x1,
+                Variance::Contravariant => 0x2,
+            } | build_bitmask!(
+                g.special_constraint,
+                reference_type => 0x04,
+                value_type => 0x08,
+                has_default_constructor => 0x10
+            ),
+            owner: parent,
+            name: heap_idx!(strings, g.name),
+        });
+        _write_attrs(
+            all_attrs,
+            &g.attributes,
+            index::HasCustomAttribute::GenericParam(table_idx),
+        );
+
+        generic_param_constraint.reserve(g.type_constraints.len());
+        for c in &g.type_constraints {
+            let constraint_idx = generic_param_constraint.len() + 1;
+            generic_param_constraint.push(GenericParamConstraint {
+                owner: table_idx.into(),
+                constraint: convert::write::idx_with_modifiers(&c.constraint_type, &c.custom_modifiers, ctx)?,
+            });
+            _write_attrs(
+                all_attrs,
+                &c.attributes,
+                index::HasCustomAttribute::GenericParamConstraint(constraint_idx),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn _write_default(
+    d: &Option<ConstantValue>,
+    parent: index::HasConstant,
+    blobs: &mut BlobWriter,
+    tables: &mut Tables,
+) -> Result<()> {
+    if let Some(c) = d {
+        use crate::binary::signature::encoded::*;
+        use ConstantValue::*;
+
+        macro_rules! blob {
+            ($v:expr) => {
+                heap_idx!(blobs, $v.to_le_bytes())
+            };
+        }
+        let (constant_type, value) = match c {
+            Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(*b as u8)),
+            Char(u) => (ELEMENT_TYPE_CHAR, blob!(u)),
+            Int8(i) => (ELEMENT_TYPE_I1, blob!(i)),
+            UInt8(u) => (ELEMENT_TYPE_U1, blob!(u)),
+            Int16(i) => (ELEMENT_TYPE_I2, blob!(i)),
+            UInt16(u) => (ELEMENT_TYPE_U2, blob!(u)),
+            Int32(i) => (ELEMENT_TYPE_I4, blob!(i)),
+            UInt32(u) => (ELEMENT_TYPE_U4, blob!(u)),
+            Int64(i) => (ELEMENT_TYPE_I8, blob!(i)),
+            UInt64(u) => (ELEMENT_TYPE_U8, blob!(u)),
+            Float32(f) => (ELEMENT_TYPE_R4, blob!(f)),
+            Float64(f) => (ELEMENT_TYPE_R8, blob!(f)),
+            String(cs) => (
+                ELEMENT_TYPE_STRING,
+                heap_idx!(blobs, &cs.iter().flat_map(|c| c.to_le_bytes()).collect::<Vec<_>>()),
+            ),
+            Null => (ELEMENT_TYPE_CLASS, blob!(0_u32)),
+        };
+
+        tables.constant.push(Constant {
+            constant_type,
+            padding: 0,
+            parent,
+            value,
+        });
+    }
+    Ok(())
+}
+
+fn _write_pinvoke(
+    p: &Option<PInvoke>,
+    parent: index::MemberForwarded,
+    strings: &mut StringsWriter,
+    tables: &mut Tables,
+) -> Result<()> {
+    if let Some(p) = p {
+        tables.impl_map.push(ImplMap {
+            mapping_flags: build_bitmask!(p,
+                no_mangle => 0x1, supports_last_error => 0x40
+            ) | match p.character_set {
+                CharacterSet::NotSpecified => 0x0,
+                CharacterSet::Ansi => 0x2,
+                CharacterSet::Unicode => 0x4,
+                CharacterSet::Auto => 0x6,
+            } | match p.calling_convention {
+                UnmanagedCallingConvention::Platformapi => 0x100,
+                UnmanagedCallingConvention::Cdecl => 0x200,
+                UnmanagedCallingConvention::Stdcall => 0x300,
+                UnmanagedCallingConvention::Thiscall => 0x400,
+                UnmanagedCallingConvention::Fastcall => 0x500,
+            },
+            member_forwarded: parent,
+            import_name: heap_idx!(strings, p.import_name),
+            import_scope: (p.import_scope.0 + 1).into(),
+        });
+    }
+    Ok(())
+}
+
+fn _write_marshal(
+    spec: Option<MarshalSpec>,
+    parent: index::HasFieldMarshal,
+    field_marshal: &mut Vec<FieldMarshal>,
+    ctx: &mut convert::write::Context,
+) -> Result<()> {
+    if let Some(s) = spec {
+        field_marshal.push(FieldMarshal {
+            parent,
+            native_type: convert::write::into_blob(s, ctx)?,
+        });
+    }
+    Ok(())
+}
+
+fn type_to_parent(t: &impl convert::TypeKind, ctx: &mut convert::write::Context) -> Result<index::MemberRefParent> {
+    Ok(match convert::write::index(t, ctx)? {
+        index::TypeDefOrRef::TypeDef(d) => index::MemberRefParent::TypeDef(d),
+        index::TypeDefOrRef::TypeRef(r) => index::MemberRefParent::TypeRef(r),
+        index::TypeDefOrRef::TypeSpec(s) => index::MemberRefParent::TypeSpec(s),
+        _ => unreachable!(),
+    })
 }
 
 #[allow(clippy::too_many_lines)]
@@ -131,21 +327,6 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         };
     }
 
-    macro_rules! heap_idx {
-        ($heap:ident, $val:expr) => {
-            $heap.write(&$val)?
-        };
-    }
-
-    macro_rules! opt_heap {
-        ($heap:ident, $val:expr) => {
-            match &$val {
-                Some(v) => heap_idx!($heap, v),
-                None => 0.into(),
-            }
-        };
-    }
-
     let mut strings = StringsWriter::new();
     let mut blobs = BlobWriter::new();
     let mut guids = GUIDWriter::new();
@@ -169,25 +350,60 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
     let mut attributes: Vec<(&Attribute, index::HasCustomAttribute)> = vec![];
 
+    // convenience macros for temporary mutable borrows
     macro_rules! write_attrs {
         ($a:expr, $parent:ident($idx:expr)) => {
-            attributes.extend($a.iter().map(|r| (r, index::HasCustomAttribute::$parent($idx))))
+            _write_attrs(&mut attributes, &$a, index::HasCustomAttribute::$parent($idx))
         };
     }
-
     macro_rules! write_security {
-        ($s:expr, $parent:ident($idx:expr)) => {{
-            if let Some(s) = $s {
-                let idx = tables.decl_security.len() + 1;
-                tables.decl_security.push(DeclSecurity {
-                    action: s.action,
-                    parent: index::HasDeclSecurity::$parent($idx),
-                    permission_set: heap_idx!(blobs, &s.value),
-                });
-
-                write_attrs!(s.attributes, DeclSecurity(idx));
-            }
-        }};
+        ($s:expr, $parent:ident($idx:expr)) => {
+            _write_security(
+                &$s,
+                index::HasDeclSecurity::$parent($idx),
+                &mut blobs,
+                &mut tables,
+                &mut attributes,
+            )?
+        };
+    }
+    macro_rules! build_generic {
+        ($gs:expr, $parent:ident($idx:expr)) => {
+            _write_generic(
+                &$gs,
+                index::TypeOrMethodDef::$parent($idx),
+                &mut strings,
+                &mut tables.generic_param,
+                &mut tables.generic_param_constraint,
+                &mut attributes,
+                build_ctx!(),
+            )?
+        };
+    }
+    macro_rules! write_pinvoke {
+        ($p:expr, $parent:ident($idx:expr)) => {
+            _write_pinvoke(
+                &$p,
+                index::MemberForwarded::$parent($idx),
+                &mut strings,
+                &mut tables,
+            )?
+        };
+    }
+    macro_rules! write_marshal {
+        ($spec:expr, $parent:ident($idx:expr)) => {
+            _write_marshal(
+                $spec,
+                index::HasFieldMarshal::$parent($idx),
+                &mut tables.field_marshal,
+                build_ctx!(),
+            )?
+        };
+    }
+    macro_rules! write_default {
+        ($d:expr, $parent:ident($idx:expr)) => {
+            _write_default(&$d, index::HasConstant::$parent($idx), &mut blobs, &mut tables)?
+        };
     }
 
     debug!("assembly");
@@ -210,7 +426,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
         });
 
         write_attrs!(a.attributes, Assembly(1));
-        write_security!(&a.security, Assembly(1));
+        write_security!(a.security, Assembly(1));
     }
 
     debug!("assembly refs");
@@ -330,49 +546,6 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     let mut method_index_map = HashMap::new();
     let mut field_index_map = HashMap::new();
 
-    macro_rules! build_generic {
-        ($gs:expr, $parent:ident($idx:expr)) => {
-            tables.generic_param.reserve($gs.len());
-            for (idx, g) in $gs.iter().enumerate() {
-                let table_idx = tables.generic_param.len() + 1;
-                tables.generic_param.push(GenericParam {
-                    number: idx as u16,
-                    flags: match g.variance {
-                        Variance::Invariant => 0x0,
-                        Variance::Covariant => 0x1,
-                        Variance::Contravariant => 0x2,
-                    } | build_bitmask!(
-                        g.special_constraint,
-                        reference_type => 0x04,
-                        value_type => 0x08,
-                        has_default_constructor => 0x10
-                    ),
-                    owner: index::TypeOrMethodDef::$parent($idx),
-                    name: heap_idx!(strings, g.name),
-                });
-                write_attrs!(g.attributes, GenericParam(table_idx));
-
-                tables
-                    .generic_param_constraint
-                    .reserve(g.type_constraints.len());
-                for c in &g.type_constraints {
-                    let constraint_idx = tables.generic_param_constraint.len() + 1;
-                    tables
-                        .generic_param_constraint
-                        .push(GenericParamConstraint {
-                            owner: table_idx.into(),
-                            constraint: convert::write::idx_with_modifiers(
-                                &c.constraint_type,
-                                &c.custom_modifiers,
-                                build_ctx!(),
-                            )?,
-                        });
-                    write_attrs!(c.attributes, GenericParamConstraint(constraint_idx));
-                }
-            }
-        };
-    }
-
     debug!("type definitions");
 
     let mut overrides: Vec<(index::Simple<TypeDef>, _, _)> = Vec::new();
@@ -423,8 +596,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
         // ignore <Module> here
         write_attrs!(t.attributes, TypeDef(idx + 1));
-
-        write_security!(&t.security, TypeDef(idx + 1));
+        write_security!(t.security, TypeDef(idx + 1));
 
         overrides.extend(
             t.overrides
@@ -455,87 +627,6 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                 nested_class: simple_idx,
                 enclosing_class: enc.0.into(),
             });
-        }
-
-        macro_rules! write_pinvoke {
-            ($p:expr, $parent:ident($idx:expr)) => {{
-                if let Some(p) = $p {
-                    tables.impl_map.push(ImplMap {
-                        mapping_flags: build_bitmask!(p,
-                            no_mangle => 0x1, supports_last_error => 0x40
-                        ) | match p.character_set {
-                            CharacterSet::NotSpecified => 0x0,
-                            CharacterSet::Ansi => 0x2,
-                            CharacterSet::Unicode => 0x4,
-                            CharacterSet::Auto => 0x6,
-                        } | match p.calling_convention {
-                            UnmanagedCallingConvention::Platformapi => 0x100,
-                            UnmanagedCallingConvention::Cdecl => 0x200,
-                            UnmanagedCallingConvention::Stdcall => 0x300,
-                            UnmanagedCallingConvention::Thiscall => 0x400,
-                            UnmanagedCallingConvention::Fastcall => 0x500,
-                        },
-                        member_forwarded: index::MemberForwarded::$parent($idx),
-                        import_name: heap_idx!(strings, p.import_name),
-                        import_scope: (p.import_scope.0 + 1).into(),
-                    });
-                }
-            }}
-        }
-
-        macro_rules! write_marshal {
-            ($spec:expr, $parent:ident($idx:expr)) => {{
-                if let Some(s) = $spec {
-                    tables.field_marshal.push(FieldMarshal {
-                        parent: index::HasFieldMarshal::$parent($idx),
-                        native_type: convert::write::into_blob(s, build_ctx!())?,
-                    });
-                }
-            }};
-        }
-
-        macro_rules! write_default {
-            ($d:expr, $parent:ident($idx:expr)) => {{
-                if let Some(c) = $d {
-                    use crate::binary::signature::encoded::*;
-                    use ConstantValue::*;
-
-                    macro_rules! blob {
-                        ($v:expr) => {
-                            heap_idx!(blobs, $v.to_le_bytes())
-                        };
-                    }
-                    let (constant_type, value) = match c {
-                        Boolean(b) => (ELEMENT_TYPE_BOOLEAN, blob!(*b as u8)),
-                        Char(u) => (ELEMENT_TYPE_CHAR, blob!(u)),
-                        Int8(i) => (ELEMENT_TYPE_I1, blob!(i)),
-                        UInt8(u) => (ELEMENT_TYPE_U1, blob!(u)),
-                        Int16(i) => (ELEMENT_TYPE_I2, blob!(i)),
-                        UInt16(u) => (ELEMENT_TYPE_U2, blob!(u)),
-                        Int32(i) => (ELEMENT_TYPE_I4, blob!(i)),
-                        UInt32(u) => (ELEMENT_TYPE_U4, blob!(u)),
-                        Int64(i) => (ELEMENT_TYPE_I8, blob!(i)),
-                        UInt64(u) => (ELEMENT_TYPE_U8, blob!(u)),
-                        Float32(f) => (ELEMENT_TYPE_R4, blob!(f)),
-                        Float64(f) => (ELEMENT_TYPE_R8, blob!(f)),
-                        String(cs) => (
-                            ELEMENT_TYPE_STRING,
-                            heap_idx!(
-                                blobs,
-                                &cs.iter().map(|c| c.to_le_bytes()).flatten().collect::<Vec<_>>()
-                            ),
-                        ),
-                        Null => (ELEMENT_TYPE_CLASS, blob!(0_u32)),
-                    };
-
-                    tables.constant.push(Constant {
-                        constant_type,
-                        padding: 0,
-                        parent: index::HasConstant::$parent($idx),
-                        value,
-                    });
-                }
-            }};
         }
 
         debug!("fields for type {}", t.name);
@@ -581,9 +672,9 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             });
 
             write_attrs!(f.attributes, Field(table_idx));
-            write_pinvoke!(&f.pinvoke, Field(table_idx));
+            write_pinvoke!(f.pinvoke, Field(table_idx));
             write_marshal!(f.marshal, Field(table_idx));
-            write_default!(&f.default, Field(table_idx));
+            write_default!(f.default, Field(table_idx));
 
             if let Some(v) = &f.initial_value {
                 tables.field_rva.push(FieldRva {
@@ -636,7 +727,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             });
 
             write_attrs!(p.attributes, Property(table_idx));
-            write_default!(&p.default, Property(table_idx));
+            write_default!(p.default, Property(table_idx));
 
             all_methods.extend(
                 p.other
@@ -810,8 +901,8 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             build_generic!(m.generic_parameters, MethodDef(def_index));
 
             write_attrs!(m.attributes, MethodDef(def_index));
-            write_pinvoke!(&m.pinvoke, MethodDef(def_index));
-            write_security!(&m.security, MethodDef(def_index));
+            write_pinvoke!(m.pinvoke, MethodDef(def_index));
+            write_security!(m.security, MethodDef(def_index));
 
             tables.param.reserve(m.parameter_metadata.len());
             for (idx, p) in std::iter::once(&m.return_type_metadata)
@@ -841,7 +932,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
                     write_attrs!(p.attributes, Param(param_idx));
                     write_marshal!(p.marshal, Param(param_idx));
-                    write_default!(&p.default, Param(param_idx));
+                    write_default!(p.default, Param(param_idx));
                 }
             }
         }
@@ -1072,17 +1163,6 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             method_declaration: user_method(decl),
         }));
 
-    macro_rules! type_to_parent {
-        ($t:expr) => {
-            match convert::write::index($t, build_ctx!())? {
-                index::TypeDefOrRef::TypeDef(d) => index::MemberRefParent::TypeDef(d),
-                index::TypeDefOrRef::TypeRef(r) => index::MemberRefParent::TypeRef(r),
-                index::TypeDefOrRef::TypeSpec(s) => index::MemberRefParent::TypeSpec(s),
-                _ => unreachable!(),
-            }
-        };
-    }
-
     debug!("member refs");
 
     tables
@@ -1091,7 +1171,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     for (idx, m) in res.method_references.iter().enumerate() {
         tables.member_ref.push(MemberRef {
             class: match &m.parent {
-                MethodReferenceParent::Type(t) => type_to_parent!(t),
+                MethodReferenceParent::Type(t) => type_to_parent(t, build_ctx!())?,
                 MethodReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
                 MethodReferenceParent::VarargMethod(m) => index::MemberRefParent::MethodDef(method_index_map[m]),
             },
@@ -1104,7 +1184,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
     for (idx, f) in res.field_references.iter().enumerate() {
         tables.member_ref.push(MemberRef {
             class: match &f.parent {
-                FieldReferenceParent::Type(t) => type_to_parent!(t),
+                FieldReferenceParent::Type(t) => type_to_parent(t, build_ctx!())?,
                 FieldReferenceParent::Module(m) => index::MemberRefParent::ModuleRef(m.0 + 1),
             },
             name: heap_idx!(strings, f.name),
