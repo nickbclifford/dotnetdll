@@ -64,9 +64,22 @@ pub fn read_fixture(name: &str, source: &str, test: impl FnOnce(Resolution)) -> 
     Ok(())
 }
 
+pub enum WriteTestResult {
+    MainBody(Vec<Instruction>),
+    WithVariables {
+        main_body: Vec<Instruction>,
+        locals: Vec<LocalVariable>
+    },
+    WithExceptions {
+        main_body: Vec<Instruction>,
+        locals: Vec<LocalVariable>,
+        exceptions: Vec<body::Exception>
+    }
+}
+
 pub fn write_fixture(
     name: &str,
-    test: impl FnOnce(&mut WriteContext) -> (Vec<body::Exception>, Vec<LocalVariable>, Vec<Instruction>),
+    test: impl FnOnce(&mut WriteContext) -> WriteTestResult,
     expect: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dll_name = format!("{}.dll", name);
@@ -96,7 +109,11 @@ pub fn write_fixture(
         object,
     };
 
-    let (exceptions, vars, ins) = test(&mut ctx);
+    let (exceptions, vars, ins) = match test(&mut ctx) {
+        WriteTestResult::MainBody(ins) => (vec![], vec![], ins),
+        WriteTestResult::WithVariables { main_body, locals } => (vec![], locals, main_body),
+        WriteTestResult::WithExceptions { main_body, locals, exceptions } => (exceptions, locals, main_body),
+    };
 
     let main = ctx.resolution.push_method(
         class,

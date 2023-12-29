@@ -156,10 +156,9 @@ pub fn write() {
 
             let console: MethodType = BaseType::class(ctx.console).into();
 
-            (
-                vec![],
-                vec![LocalVariable::new(array_list.clone()), LocalVariable::new(enumerator.clone())],
-                asm! {
+            common::WriteTestResult::WithVariables {
+                locals: vec![LocalVariable::new(array_list.clone()), LocalVariable::new(enumerator.clone())],
+                main_body: asm! {
                     new_object ctx.resolution.push_method_reference(method_ref! { void @array_list::.ctor() });
                     StoreLocal 0;
                     LoadLocal 0;
@@ -189,7 +188,7 @@ pub fn write() {
                     BranchTruthy loop_body;
                     Return;
                 },
-            )
+            }
         },
         b"20\n500\n",
     )

@@ -143,10 +143,9 @@ pub fn write() {
                 ),
             );
 
-            (
-                vec![],
-                vec![LocalVariable::new(BaseType::class(ctx.class).into())],
-                asm! {
+            common::WriteTestResult::WithVariables {
+                locals: vec![LocalVariable::new(BaseType::class(ctx.class).into())],
+                main_body: asm! {
                     // init static
                     LoadConstantInt32 -1;
                     call static_setter;
@@ -178,7 +177,7 @@ pub fn write() {
                     call write_line;
                     Return;
                 },
-            )
+            }
         },
         b"0, 2\n",
     )

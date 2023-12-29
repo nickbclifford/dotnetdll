@@ -162,13 +162,12 @@ pub fn write() {
             let add = ctx.resolution.event_add_index(event);
             let remove = ctx.resolution.event_remove_index(event);
 
-            (
-                vec![],
-                vec![
+            common::WriteTestResult::WithVariables {
+                locals: vec![
                     LocalVariable::new(BaseType::class(ctx.class).into()),
                     LocalVariable::new(handler_method),
                 ],
-                asm! {
+                main_body: asm! {
                     // init obj
                     new_object ctx.default_ctor;
                     StoreLocal 0;
@@ -196,7 +195,7 @@ pub fn write() {
                     call invoke;
                     Return;
                 },
-            )
+            }
         },
         b"listener triggered\n",
     )

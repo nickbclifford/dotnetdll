@@ -173,10 +173,9 @@ pub fn write() {
                 .resolution
                 .push_method_reference(method_ref! { static void #console_type::WriteLine(string, object) });
 
-            (
-                vec![],
-                vec![LocalVariable::new(enum_class)],
-                asm! {
+            common::WriteTestResult::WithVariables {
+                locals: vec![LocalVariable::new(enum_class)],
+                main_body: asm! {
                     LoadConstantInt32 5;
                     call init_class;
                     call_virtual get_enum;
@@ -195,7 +194,7 @@ pub fn write() {
                     BranchTruthy loop_body;
                     Return;
                 },
-            )
+            }
         },
         b"0\n1\n2\n3\n4\n",
     )
@@ -259,13 +258,12 @@ pub fn write_generic_class() {
             let string_container: MethodType =
                 BaseType::class(TypeSource::generic(container, vec![ctype! { string }])).into();
 
-            (
-                vec![],
-                vec![
+            common::WriteTestResult::WithVariables {
+                locals: vec![
                     LocalVariable::new(int_container.clone()),
                     LocalVariable::new(string_container.clone()),
                 ],
-                asm! {
+                main_body: asm! {
                     new_object ctx.resolution.push_method_reference(method_ref! { void @int_container::.ctor() });
                     StoreLocal 0;
                     new_object ctx.resolution.push_method_reference(method_ref! { void @string_container::.ctor() });
@@ -310,7 +308,7 @@ pub fn write_generic_class() {
                     call write_line;
                     Return;
                 },
-            )
+            }
         },
         b"1,2,3\nfoo,bar,baz\n",
     )

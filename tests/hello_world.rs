@@ -40,9 +40,7 @@ pub fn write() {
                 .resolution
                 .push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
 
-            (
-                vec![],
-                vec![],
+            common::WriteTestResult::MainBody(
                 asm! {
                     load_string "Hello, world!";
                     call write_line;

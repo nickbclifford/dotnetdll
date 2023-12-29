@@ -42,9 +42,7 @@ pub fn write() {
 
             let puts = libc_method("puts", msig! { static void (string) });
 
-            (
-                vec![],
-                vec![],
+            common::WriteTestResult::MainBody(
                 asm! {
                     load_string "hello from libc";
                     call puts;
