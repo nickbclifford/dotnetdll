@@ -169,7 +169,7 @@ pub fn write() {
                 Return;
             };
 
-            common::WriteTestResult::WithExceptions {
+            common::MainMethod::WithExceptions {
                 exceptions: vec![
                     body::Exception {
                         kind: body::ExceptionKind::Filter { offset: filter_start },
@@ -187,7 +187,7 @@ pub fn write() {
                     }
                 ],
                 locals: vec![LocalVariable::new(ctype! { object })],
-                main_body: instructions
+                body: instructions
             }
         },
         b"before throw\nerror code 1\nfinally\n",

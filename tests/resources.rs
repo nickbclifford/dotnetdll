@@ -62,7 +62,7 @@ pub fn write() {
                     .push_type_reference(type_ref! { System.Reflection.Assembly in #mscorlib })
             ).into();
 
-            common::WriteTestResult::MainBody(
+            common::MainMethod::Body(
                 asm! {
                     load_string "strings";
                     load_token_type BaseType::class(ctx.class);

@@ -156,9 +156,9 @@ pub fn write() {
 
             let console: MethodType = BaseType::class(ctx.console).into();
 
-            common::WriteTestResult::WithVariables {
+            common::MainMethod::WithVariables {
                 locals: vec![LocalVariable::new(array_list.clone()), LocalVariable::new(enumerator.clone())],
-                main_body: asm! {
+                body: asm! {
                     new_object ctx.resolution.push_method_reference(method_ref! { void @array_list::.ctor() });
                     StoreLocal 0;
                     LoadLocal 0;

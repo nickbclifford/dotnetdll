@@ -173,9 +173,9 @@ pub fn write() {
                 .resolution
                 .push_method_reference(method_ref! { static void #console_type::WriteLine(string, object) });
 
-            common::WriteTestResult::WithVariables {
+            common::MainMethod::WithVariables {
                 locals: vec![LocalVariable::new(enum_class)],
-                main_body: asm! {
+                body: asm! {
                     LoadConstantInt32 5;
                     call init_class;
                     call_virtual get_enum;
@@ -258,12 +258,12 @@ pub fn write_generic_class() {
             let string_container: MethodType =
                 BaseType::class(TypeSource::generic(container, vec![ctype! { string }])).into();
 
-            common::WriteTestResult::WithVariables {
+            common::MainMethod::WithVariables {
                 locals: vec![
                     LocalVariable::new(int_container.clone()),
                     LocalVariable::new(string_container.clone()),
                 ],
-                main_body: asm! {
+                body: asm! {
                     new_object ctx.resolution.push_method_reference(method_ref! { void @int_container::.ctor() });
                     StoreLocal 0;
                     new_object ctx.resolution.push_method_reference(method_ref! { void @string_container::.ctor() });

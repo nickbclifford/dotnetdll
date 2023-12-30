@@ -143,9 +143,9 @@ pub fn write() {
                 ),
             );
 
-            common::WriteTestResult::WithVariables {
+            common::MainMethod::WithVariables {
                 locals: vec![LocalVariable::new(BaseType::class(ctx.class).into())],
-                main_body: asm! {
+                body: asm! {
                     // init static
                     LoadConstantInt32 -1;
                     call static_setter;

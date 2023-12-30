@@ -161,7 +161,7 @@ pub fn write() {
             let console = BaseType::class(ctx.console).into();
             let test_attr_t: MethodType = BaseType::class(test_attr).into();
 
-            common::WriteTestResult::WithVariables {
+            common::MainMethod::WithVariables {
                 locals: vec![
                     LocalVariable::new(ctype! { object[] }),
                     LocalVariable::new(ctype! { int }),
@@ -170,7 +170,7 @@ pub fn write() {
                     LocalVariable::new(ctype! { object[] }),
                     LocalVariable::new(ctype! { int }),
                 ],
-                main_body: asm! {
+                body: asm! {
                     load_token_type BaseType::class(ctx.class);
                     call get_type;
                     LoadTokenType test_attr_t;
