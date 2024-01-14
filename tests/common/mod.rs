@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::path::PathBuf;
 use dotnetdll::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
@@ -151,17 +152,17 @@ pub fn write_fixture(
     let stderr = String::from_utf8(output.stderr)?;
 
     if stderr.contains("Unhandled exception") {
-        if env::optional("ILDASM").is_some() {
-            Command::new(env::ILDASM.clone()).arg(&dll_path).spawn()?.wait()?;
+        if let Some(path) = env::optional("ILDASM") {
+            Command::new(path).arg(&dll_path).spawn()?.wait()?;
         }
 
-        if let Ok(r) = std::env::var("RUNTIME") {
+        if let Some(r) = env::optional("RUNTIME") {
             Command::new("gdb")
                 .arg("-ex")
                 .arg(format!("set substitute-path /runtime {}", r))
                 .arg("--args")
-                .arg(if env::optional("ILDASM").is_some() {
-                    env::ILDASM.clone()
+                .arg(if let Some(path) = env::optional("ILDASM"){
+                    PathBuf::from(path)
                 } else {
                     env::LIBRARIES.join("corerun")
                 })
