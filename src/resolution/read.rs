@@ -734,9 +734,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     },
                     forward_ref: check_bitmask!(m.impl_flags, 0x10),
                     preserve_sig: check_bitmask!(m.impl_flags, 0x80),
+                    internal_call: check_bitmask!(m.impl_flags, 0x1000),
                     synchronized: check_bitmask!(m.impl_flags, 0x20),
                     no_inlining: check_bitmask!(m.impl_flags, 0x8),
-                    no_optimization: check_bitmask!(m.impl_flags, 0x40),
+                    no_optimization: check_bitmask!(m.impl_flags, 0x40)
                 });
 
                 methods[m_idx].write(MethodIndex {

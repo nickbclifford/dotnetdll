@@ -844,6 +844,7 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                     let mut mask = build_bitmask!(m,
                         forward_ref => 0x0010,
                         preserve_sig => 0x0080,
+                        internal_call => 0x1000,
                         synchronized => 0x0020,
                         no_inlining => 0x0008,
                         no_optimization => 0x0040);

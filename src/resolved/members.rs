@@ -437,6 +437,8 @@ pub struct Method<'a> {
     /// Indicates that the HRESULT signature transformation that takes place during COM interop calls should be suppressed for this method.
     /// Marked as reserved by the ECMA standard.
     pub preserve_sig: bool,
+    /// Indicates if the method implementation is internal to the runtime.
+    pub internal_call: bool,
     /// Indicates if the method is single-threaded and thread-safe throughout the body.
     pub synchronized: bool,
     /// Specifies that compilers should not inline this method during optimization.
@@ -520,6 +522,7 @@ impl<'a> Method<'a> {
             body_management: BodyManagement::Managed,
             forward_ref: false,
             preserve_sig: false,
+            internal_call: false,
             synchronized: false,
             no_inlining: false,
             no_optimization: false,
