@@ -150,7 +150,7 @@ r_instructions! {
     Call(MethodSource),
     CallConstrained(MethodType, MethodSource),
     #[flags(tail_call)]
-    CallIndirect(signature::MaybeUnmanagedMethod),
+    CallIndirect(signature::MaybeUnmanagedMethod<MethodType>),
     CompareEqual,
     CompareGreater(NumberSign),
     CheckFinite,

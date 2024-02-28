@@ -4,16 +4,16 @@
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:centos-7
 
 # Environment variables
-ENV RUNTIME_ARTIFACTS=/runtime-7.0.2/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
+ENV RUNTIME_ARTIFACTS=/runtime-8.0.2/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
 
 # Download/extract runtime
 WORKDIR /
-RUN wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v7.0.2.tar.gz && \
-    tar xzf v7.0.2.tar.gz && \
-    rm v7.0.2.tar.gz
+RUN wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v8.0.2.tar.gz && \
+    tar xzf v8.0.2.tar.gz && \
+    rm v8.0.2.tar.gz
 
 # Build runtime
-WORKDIR /runtime-7.0.2
+WORKDIR /runtime-8.0.2
 RUN ./build.sh clr+libs -rc debug && \
     rm -rf /root/.local/share/NuGet /root/.nuget $RUNTIME_ARTIFACTS/obj
 

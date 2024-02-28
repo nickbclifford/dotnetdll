@@ -1,17 +1,23 @@
-use super::{
-    attribute::{Attribute, SecurityDeclaration},
-    generic::{show_constraints, Type},
-    members, signature, ResolvedDebug,
-};
-use crate::binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention};
-use crate::convert::TypeKind;
-use crate::resolution::*;
-use dotnetdll_macros::From;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
+
 use thiserror::Error;
 
 pub use dotnetdll_macros::{ctype, type_name, type_ref};
+use dotnetdll_macros::From;
+
+use crate::{
+    binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention},
+    convert::TypeKind,
+    prelude::MaybeUnmanagedMethod,
+    resolution::*,
+};
+
+use super::{
+    attribute::{Attribute, SecurityDeclaration},
+    generic::{show_constraints, Type},
+    members, ResolvedDebug,
+};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Kind {
@@ -319,7 +325,6 @@ pub enum ResolutionScope {
     /// Indicates that the type is an exported type. See [`ExportedType`] for details.
     Exported,
 }
-
 
 /// A reference to a type that is defined externally to the current DLL or module.
 ///
@@ -633,7 +638,7 @@ pub enum BaseType<EnclosingType> {
     ///
     /// See [`BaseType::vector`] for a convenience constructor for types with no modifiers.
     Vector(Vec<CustomTypeModifier>, EnclosingType),
-    /// A potentially multi-dimensional array with defined lower bounds and potentially fixed sizes, specified by [`ArrayShape`].
+    /// A potentially multidimensional array with defined lower bounds and potentially fixed sizes, specified by [`ArrayShape`].
     /// Equivalent to C#'s `T[,]` and `T[M, N, ...]` types.
     ///
     /// See ECMA-335, II.23.2.13 (page 265) for more information.
@@ -646,7 +651,7 @@ pub enum BaseType<EnclosingType> {
     ValuePointer(Vec<CustomTypeModifier>, Option<EnclosingType>),
     /// A pointer to a function, which may be a .NET managed method or an unmanaged native function.
     /// Equivalent to C#'s `delegate*<T..., R>` type.
-    FunctionPointer(signature::MaybeUnmanagedMethod),
+    FunctionPointer(MaybeUnmanagedMethod<EnclosingType>),
 }
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     fn show(&self, res: &Resolution) -> String {
@@ -714,6 +719,49 @@ impl<T> From<TypeSource<T>> for BaseType<T> {
         BaseType::Type {
             value_kind: None,
             source,
+        }
+    }
+}
+impl<A> BaseType<A> {
+    pub fn map<B>(self, mut f: impl FnMut(A) -> B) -> BaseType<B> {
+        match self {
+            BaseType::Type { value_kind, source } => BaseType::Type {
+                value_kind,
+                source: match source {
+                    TypeSource::User(u) => TypeSource::User(u),
+                    TypeSource::Generic { base, parameters } => TypeSource::Generic {
+                        base,
+                        parameters: parameters.into_iter().map(f).collect(),
+                    },
+                },
+            },
+            BaseType::Vector(cmod, t) => BaseType::Vector(cmod, f(t)),
+            BaseType::Array(t, shape) => BaseType::Array(f(t), shape),
+            BaseType::ValuePointer(cmod, o) => BaseType::ValuePointer(cmod, o.map(f)),
+            BaseType::FunctionPointer(s) => BaseType::FunctionPointer(MaybeUnmanagedMethod {
+                instance: s.instance,
+                explicit_this: s.explicit_this,
+                calling_convention: s.calling_convention,
+                parameters: s.parameters.into_iter().map(|p| p.map(&mut f)).collect(),
+                varargs: s.varargs.map(|v| v.into_iter().map(|p| p.map(&mut f)).collect()),
+                return_type: s.return_type.map(f),
+            }),
+            BaseType::Boolean => BaseType::Boolean,
+            BaseType::Char => BaseType::Char,
+            BaseType::Int8 => BaseType::Int8,
+            BaseType::UInt8 => BaseType::UInt8,
+            BaseType::Int16 => BaseType::Int16,
+            BaseType::UInt16 => BaseType::UInt16,
+            BaseType::Int32 => BaseType::Int32,
+            BaseType::UInt32 => BaseType::UInt32,
+            BaseType::Int64 => BaseType::Int64,
+            BaseType::UInt64 => BaseType::UInt64,
+            BaseType::Float32 => BaseType::Float32,
+            BaseType::Float64 => BaseType::Float64,
+            BaseType::IntPtr => BaseType::IntPtr,
+            BaseType::UIntPtr => BaseType::UIntPtr,
+            BaseType::Object => BaseType::Object,
+            BaseType::String => BaseType::String,
         }
     }
 }

@@ -25,7 +25,7 @@ impl<T: ResolvedDebug> ResolvedDebug for ParameterType<T> {
     }
 }
 impl<A> ParameterType<A> {
-    pub fn map<B>(self, f: impl FnMut(A) -> B) -> ParameterType<B> {
+    pub fn map<B>(self, f: impl FnOnce(A) -> B) -> ParameterType<B> {
         use ParameterType::*;
         match self {
             Value(t) => Value(f(t)),
@@ -104,6 +104,7 @@ impl<T> ReturnType<T> {
     }
 }
 
+// TODO: explain InnerType parameter
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodSignature<CallConv, InnerType> {
@@ -114,12 +115,12 @@ pub struct MethodSignature<CallConv, InnerType> {
     pub return_type: ReturnType<InnerType>,
     pub varargs: Option<Vec<Parameter<InnerType>>>,
 }
-impl<C: Debug, T: Debug> ResolvedDebug for MethodSignature<C, T> {
+impl<C: Debug, T: ResolvedDebug> ResolvedDebug for MethodSignature<C, T> {
     fn show(&self, res: &Resolution) -> String {
         self.show_with_name(res, "")
     }
 }
-impl<C: Debug, T: Debug> MethodSignature<C, T> {
+impl<C: Debug, T: ResolvedDebug> MethodSignature<C, T> {
     pub fn show_with_name(&self, res: &Resolution, name: impl Display) -> String {
         let mut buf = format!("[{:?}] ", self.calling_convention);
         // ignore default convention for managed method signatures (will keep for maybe unmanaged signatures)
