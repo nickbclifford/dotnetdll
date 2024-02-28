@@ -1,21 +1,20 @@
+use std::fmt::{Debug, Display, Write};
+
+pub use dotnetdll_macros::msig;
+
 pub use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
 use crate::{
     resolution::Resolution,
-    resolved::{
-        types::{CustomTypeModifier, MethodType},
-        ResolvedDebug,
-    },
+    resolved::{types::CustomTypeModifier, ResolvedDebug},
 };
-pub use dotnetdll_macros::msig;
-use std::fmt::{Debug, Display, Write};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ParameterType {
-    Value(MethodType),
-    Ref(MethodType),
+pub enum ParameterType<InnerType> {
+    Value(InnerType),
+    Ref(InnerType),
     TypedReference,
 }
-impl ResolvedDebug for ParameterType {
+impl<T: ResolvedDebug> ResolvedDebug for ParameterType<T> {
     fn show(&self, res: &Resolution) -> String {
         use ParameterType::*;
         match self {
@@ -25,10 +24,20 @@ impl ResolvedDebug for ParameterType {
         }
     }
 }
+impl<A> ParameterType<A> {
+    pub fn map<B>(self, f: impl FnMut(A) -> B) -> ParameterType<B> {
+        use ParameterType::*;
+        match self {
+            Value(t) => Value(f(t)),
+            Ref(t) => Ref(f(t)),
+            TypedReference => TypedReference,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Parameter(pub Vec<CustomTypeModifier>, pub ParameterType);
-impl ResolvedDebug for Parameter {
+pub struct Parameter<InnerType>(pub Vec<CustomTypeModifier>, pub ParameterType<InnerType>);
+impl<T: ResolvedDebug> ResolvedDebug for Parameter<T> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
         for c in &self.0 {
@@ -40,23 +49,27 @@ impl ResolvedDebug for Parameter {
         buf
     }
 }
-impl Parameter {
-    pub const fn new(t: ParameterType) -> Self {
+impl<T> Parameter<T> {
+    pub const fn new(t: ParameterType<T>) -> Self {
         Parameter(vec![], t)
     }
 
-    pub const fn value(t: MethodType) -> Self {
+    pub const fn value(t: T) -> Self {
         Self::new(ParameterType::Value(t))
     }
 
-    pub const fn reference(t: MethodType) -> Self {
+    pub const fn reference(t: T) -> Self {
         Self::new(ParameterType::Ref(t))
+    }
+
+    pub fn map<B>(self, f: impl FnMut(T) -> B) -> Parameter<B> {
+        Parameter(self.0, self.1.map(f))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ReturnType(pub Vec<CustomTypeModifier>, pub Option<ParameterType>);
-impl ResolvedDebug for ReturnType {
+pub struct ReturnType<InnerType>(pub Vec<CustomTypeModifier>, pub Option<ParameterType<InnerType>>);
+impl<T: ResolvedDebug> ResolvedDebug for ReturnType<T> {
     fn show(&self, res: &Resolution) -> String {
         let mut buf = String::new();
         for c in &self.0 {
@@ -71,38 +84,42 @@ impl ResolvedDebug for ReturnType {
         buf
     }
 }
-impl ReturnType {
+impl<T> ReturnType<T> {
     pub const VOID: Self = ReturnType(vec![], None);
 
-    pub const fn new(t: ParameterType) -> Self {
+    pub const fn new(t: ParameterType<T>) -> Self {
         ReturnType(vec![], Some(t))
     }
 
-    pub const fn value(t: MethodType) -> Self {
+    pub const fn value(t: T) -> Self {
         Self::new(ParameterType::Value(t))
     }
 
-    pub const fn reference(t: MethodType) -> Self {
+    pub const fn reference(t: T) -> Self {
         Self::new(ParameterType::Ref(t))
+    }
+
+    pub fn map<B>(self, f: impl FnMut(T) -> B) -> ReturnType<B> {
+        ReturnType(self.0, self.1.map(|p| p.map(f)))
     }
 }
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MethodSignature<CallConv> {
+pub struct MethodSignature<CallConv, InnerType> {
     pub instance: bool,
     pub explicit_this: bool,
     pub calling_convention: CallConv,
-    pub parameters: Vec<Parameter>,
-    pub return_type: ReturnType,
-    pub varargs: Option<Vec<Parameter>>,
+    pub parameters: Vec<Parameter<InnerType>>,
+    pub return_type: ReturnType<InnerType>,
+    pub varargs: Option<Vec<Parameter<InnerType>>>,
 }
-impl<T: Debug> ResolvedDebug for MethodSignature<T> {
+impl<C: Debug, T: Debug> ResolvedDebug for MethodSignature<C, T> {
     fn show(&self, res: &Resolution) -> String {
         self.show_with_name(res, "")
     }
 }
-impl<T: Debug> MethodSignature<T> {
+impl<C: Debug, T: Debug> MethodSignature<C, T> {
     pub fn show_with_name(&self, res: &Resolution, name: impl Display) -> String {
         let mut buf = format!("[{:?}] ", self.calling_convention);
         // ignore default convention for managed method signatures (will keep for maybe unmanaged signatures)
@@ -126,7 +143,7 @@ impl<T: Debug> MethodSignature<T> {
         buf
     }
 }
-impl<T> MethodSignature<T> {
+impl<C, T: ResolvedDebug> MethodSignature<C, T> {
     pub fn show_parameters(&self, res: &Resolution) -> String {
         self.parameters
             .iter()
@@ -135,10 +152,10 @@ impl<T> MethodSignature<T> {
             .join(", ")
     }
 }
-pub type ManagedMethod = MethodSignature<CallingConvention>;
-pub type MaybeUnmanagedMethod = MethodSignature<StandAloneCallingConvention>;
-impl ManagedMethod {
-    pub const fn new(instance: bool, return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+pub type ManagedMethod<T> = MethodSignature<CallingConvention, T>;
+pub type MaybeUnmanagedMethod<T> = MethodSignature<StandAloneCallingConvention, T>;
+impl<T> ManagedMethod<T> {
+    pub const fn new(instance: bool, return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self {
             instance,
             explicit_this: false,
@@ -149,11 +166,11 @@ impl ManagedMethod {
         }
     }
 
-    pub const fn instance(return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+    pub const fn instance(return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self::new(true, return_type, parameters)
     }
 
-    pub const fn static_member(return_type: ReturnType, parameters: Vec<Parameter>) -> Self {
+    pub const fn static_member(return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self::new(false, return_type, parameters)
     }
 }
