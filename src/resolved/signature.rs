@@ -62,7 +62,7 @@ impl<T> Parameter<T> {
         Self::new(ParameterType::Ref(t))
     }
 
-    pub fn map<B>(self, f: impl FnMut(T) -> B) -> Parameter<B> {
+    pub fn map<B>(self, f: impl FnOnce(T) -> B) -> Parameter<B> {
         Parameter(self.0, self.1.map(f))
     }
 }
@@ -99,7 +99,7 @@ impl<T> ReturnType<T> {
         Self::new(ParameterType::Ref(t))
     }
 
-    pub fn map<B>(self, f: impl FnMut(T) -> B) -> ReturnType<B> {
+    pub fn map<B>(self, f: impl FnOnce(T) -> B) -> ReturnType<B> {
         ReturnType(self.0, self.1.map(|p| p.map(f)))
     }
 }
