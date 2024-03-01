@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Includes dependencies for building the local runtime from scratch
-FROM mcr.microsoft.com/dotnet-buildtools/prereqs:cbl-mariner-2.0-cross-amd64
+FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04-arm64
 
 # Environment variables
 ENV RUNTIME_ARTIFACTS=/runtime-8.0.2/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
