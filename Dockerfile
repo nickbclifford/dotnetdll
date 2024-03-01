@@ -18,7 +18,7 @@ RUN ./build.sh clr+libs -rc debug && \
     rm -rf /root/.local/share/NuGet /root/.nuget $RUNTIME_ARTIFACTS/obj
 
 # Install production runtime + SDK
-RUN curl -OL https://packages.microsoft.com/config/ubuntu/$repo_version/packages-microsoft-prod.deb && \
+RUN curl -OL https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     rm packages-microsoft-prod.deb && \
     apt update && \
