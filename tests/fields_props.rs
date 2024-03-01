@@ -79,11 +79,12 @@ pub fn write() {
                 Field::instance(Accessibility::Private, "instance_field", ctype! { uint }),
             );
 
-            let static_type: MethodType = ctx.resolution[static_field].return_type.clone().into();
+            let static_type = ctx.resolution[static_field].return_type.clone();
             let static_prop = ctx.resolution.push_property(
                 ctx.class,
                 Property::new(false, "StaticProperty", Parameter::value(static_type.clone())),
             );
+            let static_type: MethodType = static_type.into();
             let static_getter = ctx.resolution.set_property_getter(
                 static_prop,
                 Method::new(
@@ -110,11 +111,12 @@ pub fn write() {
                 ),
             );
 
-            let instance_type: MethodType = ctx.resolution[instance_field].return_type.clone().into();
+            let instance_type = ctx.resolution[instance_field].return_type.clone();
             let instance_prop = ctx.resolution.push_property(
                 ctx.class,
                 Property::new(false, "InstanceProperty", Parameter::value(instance_type.clone())),
             );
+            let instance_type: MethodType = instance_type.into();
             let instance_getter = ctx.resolution.set_property_getter(
                 instance_prop,
                 Method::new(

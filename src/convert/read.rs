@@ -199,7 +199,7 @@ pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<Type
 }
 
 #[tracing::instrument]
-pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
+pub fn parameter<T: TypeKind>(p: Param, ctx: &Context) -> Result<signature::Parameter<T>> {
     use signature::ParameterType::*;
 
     Ok(signature::Parameter(
@@ -207,8 +207,8 @@ pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
             .map(|c| custom_modifier(c, ctx))
             .collect::<Result<_>>()?,
         match p.1 {
-            ParamType::Type(t) => Value(MethodType::from_sig(t, ctx)?),
-            ParamType::ByRef(t) => Ref(MethodType::from_sig(t, ctx)?),
+            ParamType::Type(t) => Value(T::from_sig(t, ctx)?),
+            ParamType::ByRef(t) => Ref(T::from_sig(t, ctx)?),
             ParamType::TypedByRef => TypedReference,
         },
     ))
@@ -217,7 +217,7 @@ pub fn parameter(p: Param, ctx: &Context) -> Result<signature::Parameter> {
 macro_rules! def_method_sig {
     (fn $name:ident($type:ty) -> $sig:ident) => {
         #[tracing::instrument]
-        pub fn $name(sig: $type, ctx: &Context) -> Result<signature::$sig> {
+        pub fn $name<T: TypeKind>(sig: $type, ctx: &Context) -> Result<signature::$sig<T>> {
             use signature::*;
             Ok($sig {
                 instance: sig.has_this,
@@ -235,8 +235,8 @@ macro_rules! def_method_sig {
                         .map(|c| custom_modifier(c, ctx))
                         .collect::<Result<_>>()?,
                     match sig.ret_type.1 {
-                        RetTypeType::Type(t) => Some(ParameterType::Value(MethodType::from_sig(t, ctx)?)),
-                        RetTypeType::ByRef(t) => Some(ParameterType::Ref(MethodType::from_sig(t, ctx)?)),
+                        RetTypeType::Type(t) => Some(ParameterType::Value(T::from_sig(t, ctx)?)),
+                        RetTypeType::ByRef(t) => Some(ParameterType::Ref(T::from_sig(t, ctx)?)),
                         RetTypeType::TypedByRef => Some(ParameterType::TypedReference),
                         RetTypeType::Void => None,
                     },

@@ -166,7 +166,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
 }
 
 #[tracing::instrument]
-fn maybe_unmanaged_method(sig: &MaybeUnmanagedMethod, ctx: &mut Context) -> Result<StandAloneMethodSig> {
+fn maybe_unmanaged_method<T: TypeKind>(sig: &MaybeUnmanagedMethod<T>, ctx: &mut Context) -> Result<StandAloneMethodSig> {
     Ok(StandAloneMethodSig {
         has_this: sig.instance,
         explicit_this: sig.explicit_this,
@@ -197,7 +197,7 @@ pub fn custom_modifiers(mods: &[CustomTypeModifier]) -> Vec<CustomMod> {
 }
 
 #[tracing::instrument]
-fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
+fn parameter_sig<T: TypeKind>(p: &Parameter<T>, ctx: &mut Context) -> Result<Param> {
     Ok(Param(
         custom_modifiers(&p.0),
         match &p.1 {
@@ -213,7 +213,7 @@ fn parameter_sig(p: &Parameter, ctx: &mut Context) -> Result<Param> {
 // }
 
 #[tracing::instrument]
-fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
+fn ret_type_sig<T: TypeKind>(r: &ReturnType<T>, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
         custom_modifiers(&r.0),
         match &r.1 {
@@ -226,7 +226,7 @@ fn ret_type_sig(r: &ReturnType, ctx: &mut Context) -> Result<RetType> {
 }
 
 #[tracing::instrument]
-fn method_def_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig> {
+fn method_def_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<MethodDefSig> {
     Ok(MethodDefSig {
         has_this: sig.instance,
         explicit_this: sig.explicit_this,
@@ -241,12 +241,12 @@ fn method_def_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodDefSig
 }
 
 #[tracing::instrument]
-pub fn method_def(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
+pub fn method_def<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_def_sig(sig, ctx)?, ctx)
 }
 
 #[tracing::instrument]
-fn method_ref_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodRefSig> {
+fn method_ref_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<MethodRefSig> {
     Ok(MethodRefSig {
         method_def: method_def_sig(sig, ctx)?,
         varargs: sig
@@ -259,7 +259,7 @@ fn method_ref_sig(sig: &ManagedMethod, ctx: &mut Context) -> Result<MethodRefSig
 }
 
 #[tracing::instrument]
-pub fn method_ref(sig: &ManagedMethod, ctx: &mut Context) -> Result<Blob> {
+pub fn method_ref<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_ref_sig(sig, ctx)?, ctx)
 }
 

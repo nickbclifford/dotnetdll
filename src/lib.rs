@@ -94,7 +94,7 @@ pub mod prelude {
     pub use crate::{
         access, asm,
         dll::{DLLError, DLL},
-        resolution::{read::Options as ReadOptions, write::Options as WriteOptions, utils::*, *},
+        resolution::{read::Options as ReadOptions, utils::*, write::Options as WriteOptions, *},
         resolved::{
             assembly::*,
             attribute::*,
@@ -125,7 +125,9 @@ mod tests {
         let m: MethodType = ctype! { void*[] };
         println!("{:?}", m);
 
-        println!("{:?}", msig! { static void (string[]) });
-        println!("{:?}", msig! { string (int, ref #m) });
+        let m: ManagedMethod<_> = msig! { string (int, ref #m) };
+        println!("{:?}", m);
+        let m: ManagedMethod<MethodType> = msig! { static void (string[]) };
+        println!("{:?}", m);
     }
 }

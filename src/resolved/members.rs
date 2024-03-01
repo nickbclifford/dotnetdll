@@ -234,10 +234,10 @@ pub struct Property<'a> {
     /// Specifies if the property is a static member of its owning type.
     pub static_member: bool,
     /// Type of the property.
-    pub property_type: signature::Parameter,
+    pub property_type: signature::Parameter<MemberType>,
     /// Parameters the property takes in during access, such as for custom indexers.
     // TODO: metadata representation of indexers
-    pub parameters: Vec<signature::Parameter>,
+    pub parameters: Vec<signature::Parameter<MemberType>>,
     /// Specifies if the property is named with special meaning for a compiler.
     // TODO: examples
     pub special_name: bool,
@@ -299,7 +299,7 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 impl<'a> Property<'a> {
-    pub fn new(static_member: bool, name: impl Into<Cow<'a, str>>, property_type: signature::Parameter) -> Self {
+    pub fn new(static_member: bool, name: impl Into<Cow<'a, str>>, property_type: signature::Parameter<MemberType>) -> Self {
         Self {
             attributes: vec![],
             name: name.into(),
@@ -390,7 +390,7 @@ pub struct Method<'a> {
     /// or if [`ReadOptions::skip_method_bodies`](read::Options::skip_method_bodies) is true at the time of resolution.
     pub body: Option<body::Method>,
     /// Signature of the method, including return type and parameters.
-    pub signature: signature::ManagedMethod,
+    pub signature: signature::ManagedMethod<MethodType>,
     /// Visibility scope of the method.
     pub accessibility: Accessibility,
     /// Generic type parameters, if the method declares any.
@@ -494,7 +494,7 @@ impl ResolvedDebug for Method<'_> {
 impl<'a> Method<'a> {
     pub fn new(
         access: super::Accessibility,
-        signature: signature::ManagedMethod,
+        signature: signature::ManagedMethod<MethodType>,
         name: impl Into<Cow<'a, str>>,
         body: Option<body::Method>,
     ) -> Self {
@@ -535,7 +535,7 @@ impl<'a> Method<'a> {
 
     pub fn constructor(
         access: super::Accessibility,
-        parameters: Vec<signature::Parameter>,
+        parameters: Vec<signature::Parameter<MethodType>>,
         body: Option<body::Method>,
     ) -> Self {
         Self {
@@ -603,7 +603,7 @@ impl<'a> PInvoke<'a> {
 pub enum MethodReferenceParent {
     /// The method is part of a specific type (e.g., an instance method of a class or a static method).
     Type(MethodType),
-    /// The method is defined at the module level, outside of any specific type.
+    /// The method is defined at the module level, outside any specific type.
     Module(ModuleRefIndex),
     /// The method is defined in this type, but as an instantiation of varargs.
     VarargMethod(MethodIndex),
@@ -620,7 +620,7 @@ pub struct ExternalMethodReference<'a> {
     /// Name of the method.
     pub name: Cow<'a, str>,
     /// Signature of the method.
-    pub signature: signature::ManagedMethod,
+    pub signature: signature::ManagedMethod<MethodType>,
 }
 
 name_display!(ExternalMethodReference<'_>);
@@ -628,7 +628,7 @@ impl<'a> ExternalMethodReference<'a> {
     pub fn new(
         parent: MethodReferenceParent,
         name: impl Into<Cow<'a, str>>,
-        signature: signature::ManagedMethod,
+        signature: signature::ManagedMethod<MethodType>,
     ) -> Self {
         Self {
             attributes: vec![],
