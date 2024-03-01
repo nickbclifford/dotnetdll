@@ -18,8 +18,12 @@ RUN ./build.sh clr+libs -rc debug && \
     rm -rf /root/.local/share/NuGet /root/.nuget $RUNTIME_ARTIFACTS/obj
 
 # Install production runtime + SDK
-RUN rpm -Uvh https://packages.microsoft.com/config/centos/7/packages-microsoft-prod.rpm && \
-    yum -y install dotnet-sdk-7.0 dotnet-runtime-7.0
+RUN wget https://packages.microsoft.com/config/ubuntu/$repo_version/packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    rm packages-microsoft-prod.deb && \
+    apt update && \
+    apt install -y dotnet-runtime-8.0 dotnet-sdk-8.0
+
 
 # Install Rust (CARGO_HOME var)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain nightly
