@@ -8,7 +8,8 @@ ENV RUNTIME_ARTIFACTS=/runtime-8.0.2/artifacts DOTNET_SDK=dotnet CARGO_HOME=/car
 
 # Download/extract runtime
 WORKDIR /
-RUN wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v8.0.2.tar.gz && \
+RUN apt install -y wget && \
+    wget -nv https://github.com/dotnet/runtime/archive/refs/tags/v8.0.2.tar.gz && \
     tar xzf v8.0.2.tar.gz && \
     rm v8.0.2.tar.gz
 
