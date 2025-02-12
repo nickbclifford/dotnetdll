@@ -4,7 +4,11 @@
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Environment variables
-ENV RUNTIME_MAJOR=9.0 RUNTIME_VERSION=$RUNTIME_MAJOR.1 RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
+ENV RUNTIME_MAJOR=9.0 \
+    RUNTIME_VERSION=9.0.2 \
+    RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts \
+    DOTNET_SDK=dotnet \
+    CARGO_HOME=/cargo
 
 # Download/extract runtime
 WORKDIR /
