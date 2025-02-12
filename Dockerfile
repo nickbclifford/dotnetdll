@@ -1,12 +1,10 @@
 # syntax=docker/dockerfile:1
 
-ENV RUNTIME_VERSION=9.0.1
-
 # Includes dependencies for building the local runtime from scratch
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Environment variables
-ENV RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
+ENV RUNTIME_VERSION=9.0.1 RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
 
 # Download/extract runtime
 WORKDIR /
