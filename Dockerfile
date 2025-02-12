@@ -4,7 +4,7 @@
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Environment variables
-ENV RUNTIME_VERSION=9.0.1 RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
+ENV RUNTIME_MAJOR=9.0 RUNTIME_VERSION=$RUNTIME_MAJOR.1 RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
 
 # Download/extract runtime
 WORKDIR /
@@ -22,7 +22,7 @@ RUN curl -OL https://packages.microsoft.com/config/ubuntu/22.04/packages-microso
     dpkg -i packages-microsoft-prod.deb && \
     rm packages-microsoft-prod.deb && \
     apt update && \
-    apt install -y dotnet-runtime-8.0 dotnet-sdk-8.0
+    apt install -y dotnet-runtime-$RUNTIME_MAJOR dotnet-sdk-$RUNTIME_MAJOR
 
 
 # Install Rust (CARGO_HOME var)
