@@ -1,19 +1,21 @@
 # syntax=docker/dockerfile:1
 
+ENV RUNTIME_VERSION=9.0.1
+
 # Includes dependencies for building the local runtime from scratch
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Environment variables
-ENV RUNTIME_ARTIFACTS=/runtime-8.0.2/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
+ENV RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=dotnet CARGO_HOME=/cargo
 
 # Download/extract runtime
 WORKDIR /
-RUN curl -OL https://github.com/dotnet/runtime/archive/refs/tags/v8.0.2.tar.gz && \
-    tar xzf v8.0.2.tar.gz && \
-    rm v8.0.2.tar.gz
+RUN curl -OL https://github.com/dotnet/runtime/archive/refs/tags/v$RUNTIME_VERSION.tar.gz && \
+    tar xzf v$RUNTIME_VERSION.tar.gz && \
+    rm v$RUNTIME_VERSION.tar.gz
 
 # Build runtime
-WORKDIR /runtime-8.0.2
+WORKDIR /runtime-$RUNTIME_VERSION
 RUN ./build.sh clr+libs -rc debug && \
     rm -rf /root/.local/share/NuGet /root/.nuget $RUNTIME_ARTIFACTS/obj
 
