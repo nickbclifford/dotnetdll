@@ -70,7 +70,7 @@ mod utils {
     use std::hash::*;
 
     pub fn hash(val: impl Hash) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         val.hash(&mut hasher);
         hasher.finish()
     }

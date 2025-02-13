@@ -556,7 +556,7 @@ impl<T> TypeSource<T> {
 /// instead of with a reference to their location in the `System` namespace (ECMA-335, II.23.2.16, page 267).
 ///
 /// For example, when encoding a 32-bit signed integer, one should always use the `BaseType::Int32` variant
-/// and not a `BaseType::Type` with an [`ExternalTypeReference`] to `System.Int32`.
+/// and *not* a `BaseType::Type` with an [`ExternalTypeReference`] to `System.Int32`.
 ///
 /// A future version of dotnetdll may eventually automatically check for such references and either automatically convert them to the correct format
 /// **or** throw errors when they are encountered.

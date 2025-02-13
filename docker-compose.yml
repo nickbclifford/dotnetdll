@@ -4,3 +4,5 @@ services:
     image: ghcr.io/nickbclifford/dotnetdll:main
     volumes:
       - .:/dotnetdll
+    environment:
+      RUST_BACKTRACE: 1
