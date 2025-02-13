@@ -7,24 +7,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Detect which files were changed in this commit
-        uses: tj-actions/changed-files@v35
+        uses: tj-actions/changed-files@v45
         id: changed-files
       - name: Authenticate with GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Get tags for image
         id: metadata
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v3
       - name: Build and publish Docker image (if the Dockerfile has changed)
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         if: github.event_name == 'push' && contains(steps.changed-files.outputs.all_changed_files, 'Dockerfile')
         with:
           # Explicitly pass file so that the repo isn't used as build context
