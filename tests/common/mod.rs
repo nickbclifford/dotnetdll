@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use std::path::PathBuf;
 use dotnetdll::prelude::*;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -69,13 +69,13 @@ pub enum MainMethod {
     Body(Vec<Instruction>),
     WithVariables {
         body: Vec<Instruction>,
-        locals: Vec<LocalVariable>
+        locals: Vec<LocalVariable>,
     },
     WithExceptions {
         body: Vec<Instruction>,
         locals: Vec<LocalVariable>,
-        exceptions: Vec<body::Exception>
-    }
+        exceptions: Vec<body::Exception>,
+    },
 }
 
 pub fn write_fixture(
@@ -112,8 +112,15 @@ pub fn write_fixture(
 
     let (exceptions, vars, ins) = match test(&mut ctx) {
         MainMethod::Body(ins) => (vec![], vec![], ins),
-        MainMethod::WithVariables { body: main_body, locals } => (vec![], locals, main_body),
-        MainMethod::WithExceptions { body: main_body, locals, exceptions } => (exceptions, locals, main_body),
+        MainMethod::WithVariables {
+            body: main_body,
+            locals,
+        } => (vec![], locals, main_body),
+        MainMethod::WithExceptions {
+            body: main_body,
+            locals,
+            exceptions,
+        } => (exceptions, locals, main_body),
     };
 
     let main = ctx.resolution.push_method(
@@ -140,6 +147,7 @@ pub fn write_fixture(
     let dll_path = dir.path().join(&dll_name);
     std::fs::write(&dll_path, written)?;
 
+    // TODO: automatically detect version of installed dotnet and generate corresponding config
     std::fs::copy(
         "tests/common/test.runtimeconfig.json",
         dir.path().join(format!("{}.runtimeconfig.json", name)),
@@ -161,7 +169,7 @@ pub fn write_fixture(
                 .arg("-ex")
                 .arg(format!("set substitute-path /runtime {}", r))
                 .arg("--args")
-                .arg(if let Some(path) = env::optional("ILDASM"){
+                .arg(if let Some(path) = env::optional("ILDASM") {
                     PathBuf::from(path)
                 } else {
                     env::LIBRARIES.join("corerun")
@@ -187,7 +195,14 @@ pub fn write_fixture(
         panic!("{}", stderr);
     }
 
-    assert_eq!(output.stdout, expect);
+    if &output.stdout != expect {
+        panic!(
+            "--- EXPECTED ---\n{}\n--- ACTUAL ---\n{}\n--- STDERR ---\n{}",
+            String::from_utf8(expect.into())?,
+            String::from_utf8(output.stdout)?,
+            stderr
+        );
+    }
 
     Ok(())
 }

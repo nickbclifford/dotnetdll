@@ -5,7 +5,13 @@ macro_rules! lazy_paths {
     ($($name:ident = $value:expr;)*) => {
         $(
             #[allow(dead_code)]
-            pub static $name: Lazy<PathBuf> = Lazy::new(|| $value);
+            pub static $name: Lazy<PathBuf> = Lazy::new(|| {
+                let value = $value;
+                if !value.exists() {
+                    panic!("Path given for variable {} does not exist!", stringify!($name));
+                }
+                value
+            });
         )*
     }
 }
