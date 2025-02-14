@@ -25,6 +25,7 @@ RUN curl -OL https://packages.microsoft.com/config/ubuntu/22.04/packages-microso
     apt update && \
     apt install -y dotnet-runtime-$RUNTIME_MAJOR dotnet-sdk-$RUNTIME_MAJOR
 
+ENV CARGO_HOME=/cargo
 
 # Install Rust (CARGO_HOME var)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain nightly
