@@ -1,0 +1,14 @@
+{
+  "runtimeOptions": {
+    "tfm": "net{{target}}",
+    "framework": {
+      "name": "{{name}}",
+      "version": "{{version}}"
+    },
+    "configProperties": {
+      "System.GC.Concurrent": false,
+      "System.Threading.ThreadPool.MinThreads": 4,
+      "System.Threading.ThreadPool.MaxThreads": 25
+    }
+  }
+}
