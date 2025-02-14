@@ -2,17 +2,17 @@
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Variables for controlling which version of the runtime is built
-ENV RUNTIME_MAJOR=9.0
-    RUNTIME_VERSION=9.0.2
-    # the following are also necessary for dotnetdll tests
-    RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts
-    DOTNET_SDK=/usr/bin/dotnet
+ENV RUNTIME_MAJOR=9.0 RUNTIME_VERSION=9.0.2
 
 # Download/extract runtime
 WORKDIR /
 RUN curl -OL https://github.com/dotnet/runtime/archive/refs/tags/v$RUNTIME_VERSION.tar.gz && \
     tar xzf v$RUNTIME_VERSION.tar.gz && \
     rm v$RUNTIME_VERSION.tar.gz
+
+# Necessary for dotnetdll tests
+ENV RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts
+    DOTNET_SDK=/usr/bin/dotnet
 
 # Build runtime
 WORKDIR /runtime-$RUNTIME_VERSION
