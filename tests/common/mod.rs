@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use dotnetdll::prelude::*;
+use regex::Regex;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
@@ -147,11 +148,24 @@ pub fn write_fixture(
     let dll_path = dir.path().join(&dll_name);
     std::fs::write(&dll_path, written)?;
 
-    // TODO: automatically detect version of installed dotnet and generate corresponding config
-    std::fs::copy(
-        "tests/common/test.runtimeconfig.json",
-        dir.path().join(format!("{}.runtimeconfig.json", name)),
-    )?;
+    // introspect installed .NET for available runtimes
+    let versions = Command::new(env::DOTNET_SDK.clone())
+        .arg("--list-runtimes")
+        .output()?
+        .stdout;
+    let versions = String::from_utf8(versions)?;
+    let regex = Regex::new(r"^(?<sdkname>[\w.]+) (?<version>(?<major>\d+\.\d+)\.\d+)")?;
+    let Some(caps) = regex.captures(&versions) else {
+        panic!("Could not automatically determine installed .NET runtime")
+    };
+
+    // substitute first available runtime into our config template
+    let template = include_str!("./template.runtimeconfig.json");
+    let config = template
+        .replace("{{name}}", &caps["sdkname"])
+        .replace("{{target}}", &caps["major"])
+        .replace("{{version}}", &caps["version"]);
+    std::fs::write(dir.path().join(format!("{}.runtimeconfig.json", name)), config)?;
 
     let output = Command::new(env::DOTNET_SDK.clone()).arg(&dll_path).output()?;
 
