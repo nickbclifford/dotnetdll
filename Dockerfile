@@ -11,8 +11,7 @@ RUN curl -OL https://github.com/dotnet/runtime/archive/refs/tags/v$RUNTIME_VERSI
     rm v$RUNTIME_VERSION.tar.gz
 
 # Necessary for dotnetdll tests
-ENV RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts
-    DOTNET_SDK=/usr/bin/dotnet
+ENV RUNTIME_ARTIFACTS=/runtime-$RUNTIME_VERSION/artifacts DOTNET_SDK=/usr/bin/dotnet
 
 # Build runtime
 WORKDIR /runtime-$RUNTIME_VERSION
