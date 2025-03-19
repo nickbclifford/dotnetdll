@@ -61,7 +61,7 @@ fn r#type<T: From<BaseType<T>>>(decl: ast::Type, ctx: &mut Context) -> T {
     }
 }
 
-fn param_type(decl: ast::ParamType, ctx: &mut Context) -> ParameterType {
+fn param_type<T: From<BaseType<T>>>(decl: ast::ParamType, ctx: &mut Context) -> ParameterType<T> {
     let t = r#type(decl.r#type, ctx);
     if decl.r#ref {
         ParameterType::Ref(t)
@@ -343,7 +343,7 @@ fn main() {
                             }
                         }
                         TypeItemKind::Property(p) => {
-                            let return_type: MethodType = r#type(p.r#type, ctx!());
+                            let return_type: MemberType = r#type(p.r#type, ctx!());
 
                             let property = resolution.push_property(
                                 idx,
@@ -353,6 +353,8 @@ fn main() {
                                     Parameter::value(return_type.clone()),
                                 ),
                             );
+
+                            let return_type: MethodType = return_type.into();
 
                             for ast::SemanticMethod(name, body) in p.methods {
                                 let method = match name.as_str() {

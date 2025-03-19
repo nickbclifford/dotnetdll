@@ -13,20 +13,21 @@ description = "A framework for reading and writing .NET metadata files, such as 
 [workspace]
 members = [
     "dotnetdll-macros",
-    "examples/smolasm"
+    "examples/smolasm",
+    "examples/dump-dll"
 ]
 
 [dependencies]
-bitfield = "0.14"
+bitfield = "0.19"
 bitvec = "1"
 dotnetdll-macros = { path = "dotnetdll-macros", version = "0.0.1" }
 num-traits = "0.2"
 num-derive = "0.4"
-object = { version = "0.32", features = ['write'] }
+object = { version = "0.36", features = ['write'] }
 paste = "1"
 scroll = { version = "0.11", features = ['derive'] }
 scroll-buffer = "0.3"
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 
 [dev-dependencies]
