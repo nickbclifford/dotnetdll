@@ -72,15 +72,19 @@ fn print_type(
 
     println!("{}{} {{", "\t".repeat(indent), title);
 
+    let ms = ty.methods.iter().collect::<Vec<_>>();
+
     if let Some(c) = contains.get(&t) {
         auto_newlines! {
             for t in c {
                 print_type(*t, res, indent + 1, contains);
             }
         }
+
+        if !ms.is_empty() {
+            println!();
+        }
     }
-    
-    let ms = ty.methods.clone();
 
     auto_newlines! {
         for m in ms {
