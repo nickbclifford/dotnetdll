@@ -111,7 +111,7 @@ fn process_def<'def, 'inst>(
 
 fn method_to_type<'def, 'inst>(
     m: &'def MethodType,
-    resolution: &'def Resolution<'def>,
+    resolution: &Resolution<'def>,
     resolve: &impl Fn(&str) -> Result<(&'def TypeDefinition<'def>, &'def Resolution<'def>)>,
 ) -> Result<FieldOrPropType<'inst>> {
     match m {
@@ -193,12 +193,12 @@ pub struct Attribute<'a> {
     pub(crate) value: Option<Cow<'a, [u8]>>,
 }
 
-impl<'a> Attribute<'a> {
+impl<'def, 'inst> Attribute<'inst> {
     pub fn instantiation_data(
-        &'a self,
-        resolver: &'a impl Resolver<'a>,
-        resolution: &'a Resolution<'a>,
-    ) -> Result<CustomAttributeData<'a>> {
+        &'inst self,
+        resolver: &impl Resolver<'def>,
+        resolution: &Resolution<'def>,
+    ) -> Result<CustomAttributeData<'inst>> {
         let bytes = self
             .value
             .as_ref()
@@ -244,7 +244,7 @@ impl<'a> Attribute<'a> {
         })
     }
 
-    pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'a>) -> Self {
+    pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'inst>) -> Self {
         let mut buffer = DynamicBuffer::with_increment(8);
 
         // currently, there are no explicit throws in attribute data TryIntoCtx impls

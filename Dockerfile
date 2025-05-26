@@ -2,7 +2,7 @@
 FROM mcr.microsoft.com/dotnet-buildtools/prereqs:ubuntu-22.04
 
 # Variables for controlling which version of the runtime is built
-ENV RUNTIME_MAJOR=9.0 RUNTIME_VERSION=9.0.2
+ENV RUNTIME_MAJOR=9.0 RUNTIME_VERSION=9.0.4
 
 # Download/extract runtime
 WORKDIR /

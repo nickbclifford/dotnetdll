@@ -1,6 +1,6 @@
 [package]
 name = "dotnetdll"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
 edition = "2021"
 license = "GPL-3.0+"
