@@ -62,8 +62,9 @@ fn _write_attrs<'r, 'data: 'r>(
     all_attrs.extend(source.iter().map(|r| (r, parent)));
 }
 
+#[allow(clippy::used_underscore_items)]
 fn _write_security<'r, 'data: 'r>(
-    s: &'r Option<SecurityDeclaration<'data>>,
+    s: Option<&'r SecurityDeclaration<'data>>,
     parent: index::HasDeclSecurity,
     blobs: &mut BlobWriter,
     tables: &mut Tables,
@@ -82,6 +83,7 @@ fn _write_security<'r, 'data: 'r>(
     Ok(())
 }
 
+#[allow(clippy::used_underscore_items)]
 fn _write_generic<'r, 'data: 'r, T: convert::TypeKind>(
     gs: &'r [Generic<'data, T>],
     parent: index::TypeOrMethodDef,
@@ -134,7 +136,7 @@ fn _write_generic<'r, 'data: 'r, T: convert::TypeKind>(
 }
 
 fn _write_default(
-    d: &Option<ConstantValue>,
+    d: Option<&ConstantValue>,
     parent: index::HasConstant,
     blobs: &mut BlobWriter,
     tables: &mut Tables,
@@ -179,7 +181,7 @@ fn _write_default(
 }
 
 fn _write_pinvoke(
-    p: &Option<PInvoke>,
+    p: Option<&PInvoke>,
     parent: index::MemberForwarded,
     strings: &mut StringsWriter,
     tables: &mut Tables,
@@ -352,23 +354,26 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
 
     // convenience macros for temporary mutable borrows
     macro_rules! write_attrs {
-        ($a:expr, $parent:ident($idx:expr)) => {
+        ($a:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
             _write_attrs(&mut attributes, &$a, index::HasCustomAttribute::$parent($idx))
-        };
+        }};
     }
     macro_rules! write_security {
-        ($s:expr, $parent:ident($idx:expr)) => {
+        ($s:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
             _write_security(
-                &$s,
+                $s.as_ref(),
                 index::HasDeclSecurity::$parent($idx),
                 &mut blobs,
                 &mut tables,
                 &mut attributes,
             )?
-        };
+        }};
     }
     macro_rules! build_generic {
-        ($gs:expr, $parent:ident($idx:expr)) => {
+        ($gs:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
             _write_generic(
                 &$gs,
                 index::TypeOrMethodDef::$parent($idx),
@@ -378,32 +383,35 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                 &mut attributes,
                 build_ctx!(),
             )?
-        };
+        }};
     }
     macro_rules! write_pinvoke {
-        ($p:expr, $parent:ident($idx:expr)) => {
+        ($p:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
             _write_pinvoke(
-                &$p,
+                $p.as_ref(),
                 index::MemberForwarded::$parent($idx),
                 &mut strings,
                 &mut tables,
             )?
-        };
+        }};
     }
     macro_rules! write_marshal {
-        ($spec:expr, $parent:ident($idx:expr)) => {
+        ($spec:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
             _write_marshal(
                 $spec,
                 index::HasFieldMarshal::$parent($idx),
                 &mut tables.field_marshal,
                 build_ctx!(),
             )?
-        };
+        }};
     }
     macro_rules! write_default {
-        ($d:expr, $parent:ident($idx:expr)) => {
-            _write_default(&$d, index::HasConstant::$parent($idx), &mut blobs, &mut tables)?
-        };
+        ($d:expr, $parent:ident($idx:expr)) => {{
+            #[allow(clippy::used_underscore_items)]
+            _write_default($d.as_ref(), index::HasConstant::$parent($idx), &mut blobs, &mut tables)?
+        }};
     }
 
     debug!("assembly");

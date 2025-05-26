@@ -5,6 +5,8 @@
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
+    clippy::doc_lazy_continuation,
+    clippy::doc_markdown,
     clippy::enum_glob_use,
     clippy::items_after_statements,
     clippy::match_wildcard_for_single_variants,
@@ -13,7 +15,7 @@
     clippy::must_use_candidate,
     clippy::struct_excessive_bools,
     clippy::uninlined_format_args,
-    clippy::wildcard_imports
+    clippy::wildcard_imports,
 )]
 
 #[macro_use]

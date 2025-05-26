@@ -427,7 +427,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         impl scroll::ctx::TryFromCtx<'_> for Instruction {
             type Error = scroll::Error;
 
-            fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+            fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
                 let offset = &mut 0;
 
                 let val = match from.gread_with::<u8>(offset, scroll::LE)? {
@@ -449,7 +449,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         impl scroll::ctx::TryIntoCtx<(), scroll_buffer::DynamicBuffer> for Instruction {
             type Error = scroll::Error;
 
-            fn try_into_ctx(self, into: &mut scroll_buffer::DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+            fn try_into_ctx(self, into: &mut scroll_buffer::DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
                 let offset = &mut 0;
 
                 match self {

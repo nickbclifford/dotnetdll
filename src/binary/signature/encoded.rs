@@ -89,7 +89,7 @@ impl From<index::TypeDefOrRef> for TypeDefOrRefOrSpec {
 impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(value) = from.gread(offset)?;
@@ -139,7 +139,7 @@ pub struct ArrayShape {
 impl TryFromCtx<'_> for ArrayShape {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(rank) = from.gread(offset)?;
@@ -204,7 +204,7 @@ impl TryFromCtx<'_> for CustomMod {
     // avoid allocating error messages and just fail with a unit
     type Error = FailUnit;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let compressed::Unsigned(tag) = from.gread(offset)?;
@@ -278,7 +278,7 @@ pub enum Type {
 impl TryFromCtx<'_> for Type {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -484,7 +484,7 @@ pub struct Param(pub Vec<CustomMod>, pub ParamType);
 impl TryFromCtx<'_> for Param {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let mods = all_custom_mods(from, offset);
@@ -535,7 +535,7 @@ pub struct RetType(pub Vec<CustomMod>, pub RetTypeType);
 impl TryFromCtx<'_> for RetType {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let mods = all_custom_mods(from, offset);
@@ -634,7 +634,7 @@ native_types! {
 impl TryFromCtx<'_> for NativeIntrinsic {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         use NativeIntrinsic::*;

@@ -8,7 +8,7 @@ pub struct SerString<'a>(pub Option<&'a str>);
 impl<'a> TryFromCtx<'a> for SerString<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let val = match from.gread_with(offset, scroll::LE)? {
             0xFF_u8 => None,
@@ -59,7 +59,7 @@ pub enum FieldOrPropType<'a> {
 impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         use FieldOrPropType::*;

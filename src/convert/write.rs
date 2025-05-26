@@ -326,7 +326,7 @@ pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &
         impl TryIntoCtx<(), DynamicBuffer> for Wrapper {
             type Error = scroll::Error;
 
-            fn try_into_ctx(self, buf: &mut DynamicBuffer, _: ()) -> std::result::Result<usize, Self::Error> {
+            fn try_into_ctx(self, buf: &mut DynamicBuffer, (): ()) -> std::result::Result<usize, Self::Error> {
                 let offset = &mut 0;
 
                 for m in self.0 {

@@ -279,7 +279,7 @@ impl<'a> TypeDefinition<'a> {
         Self {
             attributes: vec![],
             name: name.into(),
-            namespace: namespace.map(Into::into),
+            namespace,
             fields: vec![],
             properties: vec![],
             methods: vec![],
@@ -342,7 +342,7 @@ pub struct ExternalTypeReference<'a> {
     pub scope: ResolutionScope,
 }
 
-impl<'a> ResolvedDebug for ExternalTypeReference<'a> {
+impl ResolvedDebug for ExternalTypeReference<'_> {
     fn show(&self, res: &Resolution) -> String {
         use ResolutionScope::*;
         match self.scope {

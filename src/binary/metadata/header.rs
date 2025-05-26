@@ -27,7 +27,7 @@ pub struct Header {
 impl TryFromCtx<'_> for Header {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let res0 = from.gread_with(offset, scroll::LE)?;
         let maj = from.gread_with(offset, scroll::LE)?;
@@ -46,7 +46,7 @@ impl TryFromCtx<'_> for Header {
                 kinds.push(Kind::from_usize(num).unwrap());
             }
         }
-        let iter = kinds.into_iter().zip(rows.into_iter());
+        let iter = kinds.into_iter().zip(rows);
         let sizes_map: HashMap<_, _> = iter.clone().collect();
 
         let heap_bits = BitSafeU8::new(heap);
@@ -82,7 +82,7 @@ impl TryFromCtx<'_> for Header {
 impl TryIntoCtx<(), DynamicBuffer> for Header {
     type Error = scroll::Error;
 
-    fn try_into_ctx(mut self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(mut self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite_with(self.reserved0, offset, scroll::LE)?;

@@ -25,7 +25,7 @@ pub struct Token {
 impl TryFromCtx<'_> for Token {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let num: u32 = from.gread_with(offset, scroll::LE)?;
 

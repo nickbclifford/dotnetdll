@@ -40,7 +40,7 @@ pub struct Metadata<'a> {
 impl<'a> TryFromCtx<'a> for Metadata<'a> {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &'a [u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &'a [u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let sig = from.gread_with(offset, scroll::LE)?;
         let maj = from.gread_with(offset, scroll::LE)?;
@@ -72,7 +72,7 @@ impl<'a> TryFromCtx<'a> for Metadata<'a> {
 impl TryIntoCtx for Metadata<'_> {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut [u8], (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite_with(self.signature, offset, scroll::LE)?;

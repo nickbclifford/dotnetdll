@@ -10,7 +10,7 @@ pub struct Unsigned(pub u32);
 impl TryFromCtx<'_> for Unsigned {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1: u8 = from.gread_with(offset, scroll::LE)?;
@@ -69,7 +69,7 @@ fn from_twos_complement(bits: usize, source: u32) -> i32 {
 impl TryFromCtx<'_> for Signed {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1: u8 = from.gread_with(offset, scroll::LE)?;

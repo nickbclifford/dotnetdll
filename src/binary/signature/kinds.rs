@@ -106,7 +106,7 @@ write_method_def!(|into, def, num_params| {
 impl TryFromCtx<'_> for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         build_method_def(from, |len, offset| {
             (0..len).map(|_| from.gread(offset)).collect::<Result<_, _>>()
         })
@@ -115,7 +115,7 @@ impl TryFromCtx<'_> for MethodDefSig {
 impl TryIntoCtx for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut [u8], (): ()) -> Result<usize, Self::Error> {
         let len = self.params.len();
         write_method_def(into, self, len)
     }
@@ -123,7 +123,7 @@ impl TryIntoCtx for MethodDefSig {
 impl TryIntoCtx<(), DynamicBuffer> for MethodDefSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let len = self.params.len();
         write_method_def_dyn(into, self, len)
     }
@@ -152,7 +152,7 @@ pub struct MethodRefSig {
 impl TryFromCtx<'_> for MethodRefSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let mut remaining_params = 0;
         let (method_def, mut offset) = build_method_def(from, |mut len, offset| {
             let params = build_params_with_varargs(&mut len, from, offset)?;
@@ -189,14 +189,14 @@ macro_rules! ref_sig_impl {
 impl TryIntoCtx for MethodRefSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut [u8], _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut [u8], (): ()) -> Result<usize, Self::Error> {
         ref_sig_impl!(self, into, write_method_def)
     }
 }
 impl TryIntoCtx<(), DynamicBuffer> for MethodRefSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         ref_sig_impl!(self, into, write_method_def_dyn)
     }
 }
@@ -225,7 +225,7 @@ pub struct StandAloneMethodSig {
 impl TryFromCtx<'_> for StandAloneMethodSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -325,7 +325,7 @@ pub struct FieldSig {
 impl TryFromCtx<'_> for FieldSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -378,7 +378,7 @@ pub struct PropertySig {
 impl TryFromCtx<'_> for PropertySig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -441,7 +441,7 @@ pub struct LocalVarSig(pub Vec<LocalVar>);
 impl TryFromCtx<'_> for LocalVarSig {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -487,7 +487,7 @@ impl TryFromCtx<'_> for LocalVarSig {
 impl TryIntoCtx<(), DynamicBuffer> for LocalVarSig {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         // tag
@@ -532,7 +532,7 @@ pub struct MethodSpec(pub Vec<Type>);
 impl TryFromCtx<'_> for MethodSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
@@ -552,7 +552,7 @@ impl TryFromCtx<'_> for MethodSpec {
 impl TryIntoCtx<(), DynamicBuffer> for MethodSpec {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite_with(0x0a_u8, offset, scroll::LE)?;
@@ -579,7 +579,7 @@ pub enum MarshalSpec {
 impl TryFromCtx<'_> for MarshalSpec {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         use MarshalSpec::*;

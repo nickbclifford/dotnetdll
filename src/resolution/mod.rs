@@ -240,7 +240,7 @@ impl<'a> Index<MethodIndex> for Resolution<'a> {
         }
     }
 }
-impl<'a> IndexMut<MethodIndex> for Resolution<'a> {
+impl IndexMut<MethodIndex> for Resolution<'_> {
     fn index_mut(&mut self, index: MethodIndex) -> &mut Self::Output {
         let parent = &mut self[index.parent_type];
 

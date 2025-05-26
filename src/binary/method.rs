@@ -22,7 +22,7 @@ pub enum Header {
 impl TryFromCtx<'_> for Header {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let b1: u8 = from.gread_with(offset, scroll::LE)?;
@@ -51,7 +51,7 @@ impl TryFromCtx<'_> for Header {
 impl TryIntoCtx<(), DynamicBuffer> for Header {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         use Header::*;
@@ -110,7 +110,7 @@ pub struct Exception {
 impl TryIntoCtx<(), DynamicBuffer> for Exception {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         if let (Ok(tlen), Ok(hlen), Ok(toff), Ok(hoff)) = (
@@ -153,7 +153,7 @@ pub struct DataSection {
 impl TryFromCtx<'_> for DataSection {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
         let kind: u8 = from.gread_with(offset, scroll::LE)?;
@@ -206,7 +206,7 @@ impl TryFromCtx<'_> for DataSection {
 impl TryIntoCtx<(), DynamicBuffer> for DataSection {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         use SectionKind::*;
@@ -283,7 +283,7 @@ pub struct Method {
 impl TryFromCtx<'_> for Method {
     type Error = scroll::Error;
 
-    fn try_from_ctx(from: &[u8], _: ()) -> Result<(Self, usize), Self::Error> {
+    fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
         let header = from.gread(offset)?;
 
@@ -328,7 +328,7 @@ impl TryFromCtx<'_> for Method {
 impl TryIntoCtx<(), DynamicBuffer> for Method {
     type Error = scroll::Error;
 
-    fn try_into_ctx(self, into: &mut DynamicBuffer, _: ()) -> Result<usize, Self::Error> {
+    fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
         into.gwrite(self.header, offset)?;
