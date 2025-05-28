@@ -212,6 +212,21 @@ pub enum StandAloneCallingConvention {
     DefaultUnmanaged,
 }
 
+impl PartialEq<StandAloneCallingConvention> for CallingConvention {
+    fn eq(&self, other: &StandAloneCallingConvention) -> bool {
+        match (self, other) {
+            (CallingConvention::Default, StandAloneCallingConvention::DefaultManaged) => true,
+            (CallingConvention::Vararg, StandAloneCallingConvention::Vararg) => true,
+            _ => false,
+        }
+    }
+}
+impl PartialEq<CallingConvention> for StandAloneCallingConvention {
+    fn eq(&self, other: &CallingConvention) -> bool {
+        other.eq(self)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StandAloneMethodSig {
     pub has_this: bool,

@@ -153,6 +153,19 @@ impl<C, T: ResolvedDebug> MethodSignature<C, T> {
             .join(", ")
     }
 }
+impl<C, T> MethodSignature<C, T> {
+    pub fn map<B>(self, mut f: impl FnMut(T) -> B) -> MethodSignature<C, B> {
+        MethodSignature {
+            instance: self.instance,
+            explicit_this: self.explicit_this,
+            calling_convention: self.calling_convention,
+            parameters: self.parameters.into_iter().map(|p| p.map(&mut f)).collect(),
+            return_type: self.return_type.map(&mut f),
+            varargs: self.varargs.map(|p| p.into_iter().map(|p| p.map(&mut f)).collect()),
+        }   
+    }
+}
+
 pub type ManagedMethod<T> = MethodSignature<CallingConvention, T>;
 pub type MaybeUnmanagedMethod<T> = MethodSignature<StandAloneCallingConvention, T>;
 impl<T> ManagedMethod<T> {
