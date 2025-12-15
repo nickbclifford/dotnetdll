@@ -14,26 +14,6 @@ Implements the [ECMA-335](https://www.ecma-international.org/publications-and-st
 - **Type-safe** navigation using typed indices instead of raw integers
 - **Ergonomic** macros for constructing types, signatures, and IL code
 
-### Macro variable substitution: `#var` (move) and `@var` (clone)
-
-Several of the proc macros support splicing existing Rust values into the macro input:
-
-- `#var` inserts `var` (moves it).
-- `@var` inserts `var.clone()`.
-
-This is most commonly used when a macro expects a type and you want to reuse a previously-built
-`MethodType`/`MemberType`.
-
-```rust
-use dotnetdll::prelude::*;
-
-let elem: MethodType = ctype! { string[] };
-let _sig: ManagedMethod<MethodType> = msig! { void (@elem, @elem) };
-let _still_have_elem = elem;
-```
-
-Note: `asm!` also uses `@...`, but there it introduces labels (e.g. `@loop_start`).
-
 ## Quick Start
 
 Add this to your `Cargo.toml`:
