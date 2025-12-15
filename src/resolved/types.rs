@@ -1,9 +1,158 @@
+//! .NET type system representation.
+//!
+//! This module defines the structures for representing .NET types, including
+//! - [`TypeDefinition`] - A type defined in the current assembly
+//! - [`ExternalTypeReference`] - A reference to an externally defined type
+//! - [`BaseType`] - The fundamental type variants (primitives, pointers, arrays, etc.)
+//! - [`MemberType`] and [`MethodType`] - Wrappers that add generic type variables
+//!
+//! # Type System Design
+//!
+//! The type system uses a layered approach to prevent invalid types at compile time:
+//!
+//! - **[`BaseType<T>`]** - Core type variants (primitives, references, pointers, arrays)
+//! - **[`MemberType`]** - For fields, properties (allows type generics: `T0`, `T1`, ...)
+//! - **[`MethodType`]** - For method signatures (allows both type and method generics: `T0`, `M0`, ...)
+//!
+//! This design ensures that method-level generic variables (`M0`, `M1`) can't appear
+//! in field types where they'd be invalid.
+//!
+//! # Examples
+//!
+//! ## Defining a simple type
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//!
+//! let my_type = res.push_type_definition(
+//!     TypeDefinition::new(Some("MyApp".into()), "Person")
+//! );
+//!
+//! // Set accessibility
+//! res[my_type].flags.accessibility = TypeAccessibility::Public;
+//! ```
+//!
+//! ## Creating a type with inheritance
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+//!
+//! let object = res.push_type_reference(
+//!     type_ref! { System.Object in #mscorlib }
+//! );
+//! let exception = res.push_type_reference(
+//!     type_ref! { System.Exception in #mscorlib }
+//! );
+//!
+//! let my_exception = res.push_type_definition(
+//!     TypeDefinition::new(Some("MyApp".into()), "MyException")
+//! );
+//!
+//! // Extend System.Exception
+//! res[my_exception].set_extends(exception);
+//! ```
+//!
+//! ## Using generic types
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+//!
+//! // Reference to List<string>
+//! let list_ref = res.push_type_reference(
+//!     ExternalTypeReference::new(
+//!         Some("System.Collections.Generic".into()),
+//!         "List`1",
+//!         ResolutionScope::Assembly(mscorlib)
+//!     )
+//! );
+//!
+//! let string_list: MemberType = TypeSource::generic(
+//!     list_ref,
+//!     vec![ctype! { string }]
+//! ).into();
+//! ```
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! // Primitive types
+//! let t: MethodType = ctype! { int };
+//! let t: MethodType = ctype! { string };
+//! let t: MethodType = ctype! { bool };
+//!
+//! // Arrays
+//! let t: MethodType = ctype! { int[] };
+//! let t: MethodType = ctype! { string[] };
+//!
+//! // Pointers
+//! let t: MethodType = ctype! { int* };
+//! let t: MethodType = ctype! { void* };
+//!
+//! // Nested
+//! let t: MethodType = ctype! { int[]* };
+//! let u: MethodType = ctype! { @t[] }; // clones t
+//! let v: MethodType = ctype! { #t[] }; // moves t
+//! ```
+
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
 use thiserror::Error;
 
-pub use dotnetdll_macros::{ctype, type_name, type_ref};
+/// Construct a [`MemberType`] or [`MethodType`] using ILAsm-style type syntax.
+///
+/// This macro is intended for ergonomics when building metadata by hand.
+///
+/// #### Examples
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+///
+/// let t: MethodType = ctype! { string };
+/// let t: MethodType = ctype! { int[] };
+/// let t: MethodType = ctype! { void* };
+/// ```
+///
+/// #### Splicing existing values: `#var` (move) and `@var` (clone)
+///
+/// In places where `ctype!` expects a type, you can splice an existing Rust value into the macro
+/// input:
+///
+/// - `#var` expands to `var` (moves it into the generated expression)
+/// - `@var` expands to `var.clone()`
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+///
+/// let t: MethodType = ctype! { string[] };
+/// let u: MethodType = ctype! { @t[] }; // clones t
+/// let v: MethodType = ctype! { #t[] }; // moves t
+/// # let _ = (u, v);
+/// ```
+pub use dotnetdll_macros::ctype;
+
+/// Construct a type name string (for example, `"System.Collections.Generic.List`1"`).
+///
+/// This is primarily used by other constructor macros, but it can be handy when you want to build
+/// a name programmatically while keeping the same escaping/formatting rules.
+pub use dotnetdll_macros::type_name;
+
+/// Construct an [`ExternalTypeReference`] using ILAsm-style syntax.
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+/// # let mut res = Resolution::new(Module::new("test"));
+///
+/// let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+/// let object = res.push_type_reference(type_ref! { System.Object in #mscorlib });
+/// # let _ = object;
+/// ```
+pub use dotnetdll_macros::type_ref;
 use dotnetdll_macros::From;
 
 use crate::{
@@ -450,8 +599,8 @@ type_name_impl!(ExportedType<'_>);
 ///
 /// This type defines free [`From`]/[`Into`] trait conversions with [`TypeIndex`] and [`TypeRefIndex`].
 ///
-/// Semantically, a `UserType` is either a type definition or a type reference; that is, it does not have any generic parameters and it is not a primitive runtime type.
-/// It is named because either of these cases represent a type defined by a *user* and not by the runtime itself.
+/// Semantically, a `UserType` is either a type definition or a type reference; that is, it does not have any generic parameters, and it is not a primitive runtime type.
+/// It is named because both of these cases represent a type defined by a *user* and not by the runtime itself.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, From)]
 pub enum UserType {
     Definition(TypeIndex),
@@ -508,7 +657,7 @@ pub enum ValueKind {
 }
 
 // the ECMA standard does not necessarily say anything about what TypeSpecs are allowed as supertypes
-// however, looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
+// however; looking at the stdlib and assemblies shipped with .NET 5, it appears that only GenericInstClass is used
 /// A sum type representing either a plain [`UserType`] reference or a generic instantiation of a [`UserType`].
 ///
 /// The `EnclosingType` type parameter represents the types allowed in the list of parameters instantiating a generic type.
@@ -568,8 +717,8 @@ impl<T> TypeSource<T> {
 /// dotnetdll puts generic type variables into separate [`MemberType`] and [`MethodType`]
 /// enums that wrap `BaseType` by instantiating *themselves* as the `EnclosingType`.
 ///
-/// At the metadata level, generic type variables from a generic type and those from a generic method are represented differently,
-/// and this trick of composing `BaseType` allows dotnetdll to prevent method type variables from being used anywhere other than in
+/// At the metadata level, generic type variables from a generic type and those from a generic method are represented differently.
+/// This trick of composing `BaseType` allows dotnetdll to prevent method type variables from being used anywhere other than in
 /// a method's signature.
 ///
 /// ### Examples
@@ -580,7 +729,7 @@ impl<T> TypeSource<T> {
 /// which wraps a `BaseType<MemberType>` with an additional variant for type variables from a generic type.
 /// This means a field's type could be `T0`, `T1[]`, or `T2*`, but not `M0`, because there is no quantification from a generic method to introduce `M0`.
 ///
-/// A [`Method`](members::Method)'s [`signature`](members::Method::signature) is a [`signature::ManagedMethod`], which represents
+/// A [`Method`](members::Method)'s [`signature`](members::Method::signature) is a [`crate::resolved::signature::ManagedMethod`], which represents
 /// parameters and return types with [`MethodType`]s. `T0`, `T1[]`, etc. are acceptable types here, but because this is in a method context,
 /// [`MethodType`] has an additional variant for method generic type variables that means `M0`, `M1[]`, etc. are acceptable as well.
 ///

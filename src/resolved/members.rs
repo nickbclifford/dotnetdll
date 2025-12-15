@@ -1,3 +1,105 @@
+//! Type members: fields, properties, methods, and events.
+//!
+//! This module defines the structures for type members that can be declared
+//! within a [`TypeDefinition`](super::types::TypeDefinition).
+//!
+//! # Examples
+//!
+//! ## Creating fields
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let type_idx = res.type_definition_index(0).unwrap();
+//!
+//! // Instance field
+//! let field = res.push_field(
+//!     type_idx,
+//!     Field::instance(Accessibility::Private, "name", ctype! { string })
+//! );
+//!
+//! // Static field
+//! let counter = res.push_field(
+//!     type_idx,
+//!     Field::static_member(Accessibility::Private, "count", ctype! { int })
+//! );
+//! ```
+//!
+//! ## Creating properties with getters and setters
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let type_idx = res.type_definition_index(0).unwrap();
+//! # let field = res.push_field(type_idx, Field::instance(Accessibility::Private, "value", ctype! { int }));
+//!
+//! // Create property
+//! let prop = res.push_property(
+//!     type_idx,
+//!     Property::new(false, "Value", Parameter::value(ctype! { int }))
+//! );
+//!
+//! // Add getter
+//! res.set_property_getter(
+//!     prop,
+//!     Method::new(
+//!         Accessibility::Public,
+//!         msig! { int () },
+//!         "get_Value",
+//!         Some(body::Method::new(asm! {
+//!             LoadArgument 0;
+//!             load_field field;
+//!             Return;
+//!         }))
+//!     )
+//! );
+//!
+//! // Add setter
+//! res.set_property_setter(
+//!     prop,
+//!     Method::new(
+//!         Accessibility::Public,
+//!         msig! { void (int) },
+//!         "set_Value",
+//!         Some(body::Method::new(asm! {
+//!             LoadArgument 0;
+//!             LoadArgument 1;
+//!             store_field field;
+//!             Return;
+//!         }))
+//!     )
+//! );
+//! ```
+//!
+//! ## Creating methods
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+//! # let console = res.push_type_reference(type_ref! { System.Console in #mscorlib });
+//! # let type_idx = res.type_definition_index(0).unwrap();
+//!
+//! let console_type = BaseType::class(console).into();
+//! let write_line = res.push_method_reference(
+//!     method_ref! { static void #console_type::WriteLine(string) }
+//! );
+//!
+//! let method = res.push_method(
+//!     type_idx,
+//!     Method::new(
+//!         Accessibility::Public,
+//!         msig! { static void (string) },
+//!         "PrintMessage",
+//!         Some(body::Method::new(asm! {
+//!             LoadArgument 0;
+//!             call write_line;
+//!             Return;
+//!         }))
+//!     )
+//! );
+//! ```
+
 use super::{
     attribute::{Attribute, SecurityDeclaration},
     body,
@@ -12,7 +114,40 @@ use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
 pub use crate::binary::signature::{encoded::NativeIntrinsic, kinds::MarshalSpec};
-pub use dotnetdll_macros::{field_ref, method_ref};
+
+/// Construct an [`ExternalMethodReference`] using ILAsm-style syntax.
+///
+/// This is typically used together with [`Resolution::push_method_reference`](crate::resolution::Resolution::push_method_reference)
+/// when emitting call instructions.
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+/// # let mut res = Resolution::new(Module::new("test"));
+/// # let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+/// # let console = res.push_type_reference(type_ref! { System.Console in #mscorlib });
+///
+/// let console_type: MethodType = BaseType::class(console).into();
+/// let write_line = res.push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
+/// # let _ = write_line;
+/// ```
+pub use dotnetdll_macros::method_ref;
+
+/// Construct an [`ExternalFieldReference`] using ILAsm-style syntax.
+///
+/// This is typically used together with [`Resolution::push_field_reference`](crate::resolution::Resolution::push_field_reference)
+/// when emitting `ldfld`/`stfld`-style instructions.
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+/// # let mut res = Resolution::new(Module::new("test"));
+/// # let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+/// # let console = res.push_type_reference(type_ref! { System.Console in #mscorlib });
+///
+/// let console_type: MethodType = BaseType::class(console).into();
+/// let field = res.push_field_reference(field_ref! { string #console_type::OutputEncoding });
+/// # let _ = field;
+/// ```
+pub use dotnetdll_macros::field_ref;
 
 macro_rules! name_display {
     ($i:ty) => {

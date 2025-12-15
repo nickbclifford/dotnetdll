@@ -165,7 +165,7 @@ pub enum IntegralParam {
     UInt64(u64),
 }
 impl IntegralParam {
-    pub fn argument_type(&self) -> FieldOrPropType {
+    pub fn argument_type(&self) -> FieldOrPropType<'_> {
         macro_rules! build_match {
             ($($variant:ident),*) => {
                 match self {
@@ -211,7 +211,7 @@ pub enum FixedArg<'a> {
     Object(Box<FixedArg<'a>>),
 }
 impl FixedArg<'_> {
-    pub fn argument_type(&self) -> FieldOrPropType {
+    pub fn argument_type(&self) -> FieldOrPropType<'_> {
         use FixedArg::*;
         match self {
             Boolean(_) => FieldOrPropType::Boolean,

@@ -1,3 +1,74 @@
+//! CIL (Common Intermediate Language) instruction representation.
+//!
+//! This module provides the [`Instruction`] enum, which represents all CIL opcodes
+//! at a high level. Branch targets use instruction indices (not byte offsets) -
+//! the library handles offset calculation during serialization.
+//!
+//! # Examples
+//!
+//! ## Basic instructions
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! let instructions = vec![
+//!     Instruction::LoadConstantInt32(42),
+//!     Instruction::LoadConstantInt32(8),
+//!     Instruction::Add,
+//!     Instruction::Return,
+//! ];
+//! ```
+//!
+//! ## Using the `asm!` macro with labels
+//!
+//! The [`crate::asm!`] macro makes it easier to construct IL sequences with labels:
+//!
+//! Note: within `asm!`, `@label` introduces a *label definition* (it does **not** mean
+//! “clone this variable”). Other proc macros in this crate (e.g. [`crate::resolved::types::ctype!`]
+//! and [`crate::resolved::signature::msig!`]) use `@var` for variable substitution via
+//! `var.clone()`.
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//! # let mut res = Resolution::new(Module::new("test"));
+//! # let type_idx = res.type_definition_index(0).unwrap();
+//! # let field = res.push_field(type_idx, Field::static_member(Accessibility::Public, "test", ctype! { bool }));
+//!
+//! // Labels are defined with `@label_name` on an instruction and used by name
+//! let body = asm! {
+//!     LoadConstantInt32 0;
+//!     BranchFalsy else_branch;
+//!     LoadString "condition was true".encode_utf16().collect();
+//!     Branch end;
+//!     @else_branch NoOperation;
+//!     LoadString "condition was false".encode_utf16().collect();
+//!     @end Return;
+//! };
+//! ```
+//!
+//! ## Conditional branching
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! // Compare two values and branch
+//! let (instructions, loop_start, loop_end) = asm! {
+//!     + loop_start NoOperation;
+//!     LoadLocal 0;           // Load loop counter
+//!     LoadConstantInt32 10;
+//!     BranchLess NumberSign::Signed, loop_end;
+//!
+//!     // Loop body here
+//!     LoadLocal 0;
+//!     LoadConstantInt32 1;
+//!     Add;
+//!     StoreLocal 0;
+//!
+//!     Branch loop_start;
+//!     + loop_end Return;
+//! };
+//! ```
+
 use super::{members::*, signature, types::*, ResolvedDebug};
 use crate::resolution::Resolution;
 

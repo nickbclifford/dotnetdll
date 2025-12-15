@@ -19,6 +19,18 @@ pub enum Accessibility {
     Public,
 }
 
+/// Construct an [`Accessibility`] value using C#-style keywords.
+///
+/// This is a tiny convenience macro intended for examples and builders.
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+///
+/// let a = access!(public);
+/// let a = access!(private);
+/// let a = access!(protected internal);
+/// let a = access!(private protected);
+/// ```
 #[macro_export]
 macro_rules! access {
     (public) => {

@@ -1,5 +1,68 @@
+//! Method signature types and the [`msig!`](msig) convenience macro.
+//!
+//! ## Constructing signatures with `msig!`
+//!
+//! The [`msig!`](msig) proc macro provides a compact syntax for building managed method
+//! signatures.
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! let sig: ManagedMethod<MethodType> = msig! { static void (int, string) };
+//! let sig: ManagedMethod<MethodType> = msig! { string (ref int) };
+//! ```
+//!
+//! ## Splicing existing values: `#var` (move) and `@var` (clone)
+//!
+//! In places where `msig!` expects a type, you can splice an existing Rust value into the macro
+//! input:
+//!
+//! - `#var` expands to `var` (moves it into the generated expression)
+//! - `@var` expands to `var.clone()`
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! let elem: MethodType = ctype! { string[] };
+//! let _sig: ManagedMethod<MethodType> = msig! { void (@elem, @elem) };
+//! let _still_have_elem = elem;
+//! ```
+
 use std::fmt::{Debug, Display, Write};
 
+/// Construct a [`ManagedMethod`] signature using a compact ILAsm-style syntax.
+///
+/// #### Examples
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+///
+/// // Static method returning void with two parameters
+/// let sig: ManagedMethod<MethodType> = msig! { static void (int, string) };
+///
+/// // Instance method returning string
+/// let sig: ManagedMethod<MethodType> = msig! { string (bool) };
+///
+/// // Method with ref parameter
+/// let sig: ManagedMethod<MethodType> = msig! { void (ref int, string) };
+/// # let _ = sig;
+/// ```
+///
+/// #### Splicing existing values: `#var` (move) and `@var` (clone)
+///
+/// In places where `msig!` expects a type, you can splice an existing Rust value into the macro
+/// input:
+///
+/// - `#var` expands to `var` (moves it into the generated expression)
+/// - `@var` expands to `var.clone()`
+///
+/// ```rust
+/// use dotnetdll::prelude::*;
+///
+/// let elem: MethodType = ctype! { string[] };
+/// let _sig: ManagedMethod<MethodType> = msig! { void (@elem, @elem) };
+/// let _still_have_elem = elem;
+/// ```
 pub use dotnetdll_macros::msig;
 
 pub use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};

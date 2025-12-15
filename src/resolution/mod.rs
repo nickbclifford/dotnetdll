@@ -1,3 +1,68 @@
+//! High-level API for parsing and writing .NET assemblies.
+//!
+//! This module provides [`Resolution`], the main entry point for working with .NET metadata,
+//! along with typed index types for safe navigation.
+//!
+//! # Examples
+//!
+//! ## Parsing and iterating
+//!
+//! ```rust,no_run
+//! use dotnetdll::prelude::*;
+//!
+//! let bytes = std::fs::read("MyLibrary.dll").unwrap();
+//! let res = Resolution::parse(&bytes, ReadOptions::default()).unwrap();
+//!
+//! // Iterate over all types
+//! for (type_idx, typedef) in res.enumerate_type_definitions() {
+//!     println!("Type: {} (namespace: {:?})", typedef.name, typedef.namespace);
+//!     
+//!     // Access fields
+//!     for field in &typedef.fields {
+//!         println!("  Field: {}", field.name);
+//!     }
+//!     
+//!     // Iterate over methods with typed indices
+//!     for (method_idx, method) in res.enumerate_methods(type_idx) {
+//!         println!("  Method: {}", method.name);
+//!     }
+//! }
+//! ```
+//!
+//! ## Creating a new assembly
+//!
+//! ```rust,no_run
+//! use dotnetdll::prelude::*;
+//!
+//! let mut res = Resolution::new(Module::new("Example.dll"));
+//! res.assembly = Some(Assembly::new("Example"));
+//!
+//! // Reference external assemblies
+//! let mscorlib = res.push_assembly_reference(
+//!     ExternalAssemblyReference::new("mscorlib")
+//! );
+//!
+//! // Create a type
+//! let my_type = res.push_type_definition(
+//!     TypeDefinition::new(Some("MyApp".into()), "Program")
+//! );
+//!
+//! // Add a method
+//! let method = res.push_method(
+//!     my_type,
+//!     Method::new(
+//!         Accessibility::Public,
+//!         msig! { static void () },
+//!         "Main",
+//!         None
+//!     )
+//! );
+//!
+//! // Write to disk
+//! let bytes = res.write(WriteOptions::default()).unwrap();
+//! std::fs::write("Example.dll", bytes).unwrap();
+//! ```
+
 pub mod read;
 pub mod utils;
 pub mod write;
@@ -80,6 +145,7 @@ pub enum EntryPoint {
 macro_rules! basic_index {
     ($name:ident indexes $field:ident as $t:ty) => {
         paste! {
+            #[doc = "An index into [`Resolution::" [<$field s>] "`]."]
             #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
             pub struct $name(pub(crate) usize);
 
@@ -96,11 +162,13 @@ macro_rules! basic_index {
                 }
             }
             impl<'a> Resolution<'a> {
+                #[doc = "Adds a new item to [`Resolution::" [<$field s>] "`] and returns its index."]
                 pub fn [<push_ $field>](&mut self, val: $t) -> $name {
                     self.[<$field s>].push(val);
                     $name(self.[<$field s>].len() - 1)
                 }
 
+                #[doc = "Returns the index corresponding to the raw index in [`Resolution::" [<$field s>] "`], if it exists."]
                 pub fn [<$field _index>](&self, index: usize) -> Option<$name> {
                     if index < self.[<$field s>].len() {
                         Some($name(index))
@@ -109,6 +177,7 @@ macro_rules! basic_index {
                     }
                 }
 
+                #[doc = "Iterates through all items in [`Resolution::" [<$field s>] "`] with their corresponding typed indices."]
                 pub fn [<enumerate_ $field s>](&self) -> impl Iterator<Item = ($name, &$t)> {
                     self.[<$field s>].iter().enumerate().map(|(i, f)| ($name(i), f))
                 }
@@ -128,12 +197,14 @@ basic_index!(TypeRefIndex indexes type_reference as ExternalTypeReference<'a>);
 
 macro_rules! internal_index {
     ($name:ident indexes $sing:ident / $plural:ident as $t:ty) => {
+        #[doc = concat!("Index into a [`TypeDefinition`]'s `", stringify!($plural), "` list.")]
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
         pub struct $name {
             pub(crate) parent_type: TypeIndex,
             pub(crate) $sing: usize,
         }
         impl $name {
+            /// Returns the [`TypeIndex`] of the type that defines this member.
             pub fn parent_type(self) -> TypeIndex {
                 self.parent_type
             }
@@ -155,6 +226,7 @@ macro_rules! internal_index {
 
         impl<'a> Resolution<'a> {
             paste! {
+                #[doc = "Adds a new item to the `" [<$plural>] "` of the [`TypeDefinition`] at `parent` and returns its index."]
                 pub fn [<push_ $sing>](&mut self, parent: TypeIndex, $sing: $t) -> $name {
                     let $plural = &mut self[parent].$plural;
                     $plural.push($sing);
@@ -164,6 +236,7 @@ macro_rules! internal_index {
                     }
                 }
 
+                #[doc = "Returns the index corresponding to the raw index in the parent [`TypeDefinition`]'s `" [<$plural>] "`, if it exists."]
                 pub fn [<$sing _index>](&self, parent: TypeIndex, index: usize) -> Option<$name> {
                     if index < self[parent].$plural.len() {
                         Some($name {
@@ -175,6 +248,7 @@ macro_rules! internal_index {
                     }
                 }
 
+                #[doc = "Enumerates all items in the `" [<$plural>] "` of the [`TypeDefinition`] at `parent` with their indices."]
                 pub fn [<enumerate_ $plural>](&self, parent: TypeIndex) -> impl Iterator<Item = ($name, &$t)> {
                     self[parent].$plural.iter().enumerate().map(move |(i, f)| ($name {
                         parent_type: parent,
