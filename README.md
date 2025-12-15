@@ -96,7 +96,7 @@ fn main() -> Result<(), DLLError> {
 ## Documentation
 
 - **[API Documentation](https://docs.rs/dotnetdll)** - Comprehensive API reference
-- **[Examples](examples/)** - Working examples including a DLL dumper and mini-assembler
+- **[Examples](/examples)** - Working examples including a DLL dumper and mini-assembler
 
 ## Architecture
 
@@ -122,6 +122,7 @@ cargo run -p smolasm -- --help
 ```
 ## Compatibility
 
+- Rust 1.85.1+ (Rust 2024 edition)
 - Supports PE32 and PE64 formats
 - Focuses on metadata manipulation, not runtime execution
 - Tested against .NET 5+ assemblies

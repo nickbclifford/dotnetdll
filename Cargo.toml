@@ -2,7 +2,8 @@
 name = "dotnetdll"
 version = "0.0.6"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
-edition = "2021"
+edition = "2024"
+rust-version = "1.85.1"
 license = "GPL-3.0+"
 repository = "https://github.com/nickbclifford/dotnetdll"
 keywords = ["c-sharp", "dotnet", "dll", "compiler", "parser"]

@@ -25,8 +25,10 @@ impl Dotted {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Version(pub Vec<u32>);
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AssemblySpec {
     pub assembly: Dotted,
     pub version: Option<Version>,
@@ -73,6 +75,7 @@ pub struct TypeRef {
     pub target: Dotted,
 }
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[allow(clippy::enum_variant_names)]
 pub enum Type {
     Integer(IntType),
     String,
@@ -116,6 +119,7 @@ impl From<Access> for Accessibility {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Locals {
     pub init: bool,
     pub variables: Vec<(Type, Ident)>,

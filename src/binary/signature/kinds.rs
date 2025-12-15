@@ -214,11 +214,11 @@ pub enum StandAloneCallingConvention {
 
 impl PartialEq<StandAloneCallingConvention> for CallingConvention {
     fn eq(&self, other: &StandAloneCallingConvention) -> bool {
-        match (self, other) {
-            (CallingConvention::Default, StandAloneCallingConvention::DefaultManaged) => true,
-            (CallingConvention::Vararg, StandAloneCallingConvention::Vararg) => true,
-            _ => false,
-        }
+        matches!(
+            (self, other),
+            (CallingConvention::Default, StandAloneCallingConvention::DefaultManaged)
+                | (CallingConvention::Vararg, StandAloneCallingConvention::Vararg)
+        )
     }
 }
 impl PartialEq<CallingConvention> for StandAloneCallingConvention {

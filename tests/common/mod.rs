@@ -19,6 +19,12 @@ macro_rules! assert_inner_eq {
     (@inner $lhs:expr, : true) => {
         assert!($lhs);
     };
+    (@inner $lhs:expr, => true) => {
+        assert!($lhs);
+    };
+    (@inner $lhs:expr, => false) => {
+        assert!(!$lhs);
+    };
     (@inner $lhs:expr, : $rhs:expr) => {
         assert_eq!($lhs, $rhs);
     };
@@ -209,7 +215,7 @@ pub fn write_fixture(
         panic!("{}", stderr);
     }
 
-    if &output.stdout != expect {
+    if output.stdout != expect {
         panic!(
             "--- EXPECTED ---\n{}\n--- ACTUAL ---\n{}\n--- STDERR ---\n{}",
             String::from_utf8(expect.into())?,
