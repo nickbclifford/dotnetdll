@@ -4,3 +4,7 @@ Cargo.lock
 *.runtimeconfig.json
 
 .idea
+
+# AI guidelines
+.junie
+TESTING.md
