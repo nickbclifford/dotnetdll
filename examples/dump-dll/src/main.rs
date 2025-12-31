@@ -15,9 +15,13 @@ macro_rules! auto_newlines {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(path) = std::env::args().nth(1) else {
-        panic!("missing DLL argument")
-    };
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
+        println!("usage: {} <dll_path>", args.get(0).map(|s| s.as_str()).unwrap_or("dump-dll"));
+        return Ok(());
+    }
+
+    let path = &args[1];
 
     let data = std::fs::read(path)?;
     let dll = DLL::parse(&data)?;

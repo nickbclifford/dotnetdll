@@ -140,9 +140,13 @@ fn field_reference(decl: ast::FieldRef, ctx: &mut Context) -> FieldRefIndex {
 }
 
 fn main() {
-    let input_filename = std::env::args()
-        .nth(1)
-        .expect("missing required input filename");
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
+        println!("usage: {} <input_filename>", args.get(0).map(|s| s.as_str()).unwrap_or("smolasm"));
+        return;
+    }
+
+    let input_filename = &args[1];
     let input = std::fs::read_to_string(input_filename).expect("could not open input file");
 
     let ast = parse::assembly(&input).expect("could not parse input");

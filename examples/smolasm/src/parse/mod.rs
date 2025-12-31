@@ -224,7 +224,7 @@ build_rule_parsers! {
                 None => (s, ""),
             }
         }
-        fn parse_single(rule: Rule, s: &str) -> Pair<Rule> {
+        fn parse_single(rule: Rule, s: &str) -> Pair<'_, Rule> {
             match AssemblyParser::parse(rule, s) {
                 Ok(mut ps) => ps.next().unwrap(),
                 Err(e) => panic!("failed to parse {:?} in instruction: {}", rule, e),

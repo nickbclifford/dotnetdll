@@ -26,10 +26,10 @@ bitvec = "1"
 dotnetdll-macros = { path = "dotnetdll-macros", version = "0.1.0" }
 num-traits = "0.2"
 num-derive = "0.4"
-object = { version = "0.36", features = ['write'] }
+object = { version = "0.38", features = ['write'] }
 paste = "1"
-scroll = { version = "0.11", features = ['derive'] }
-scroll-buffer = "0.3"
+scroll = { version = "0.13", features = ['derive'] }
+scroll-buffer = "0.3.2"
 thiserror = "2"
 tracing = "0.1"
 
