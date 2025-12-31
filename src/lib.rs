@@ -190,7 +190,7 @@
     clippy::must_use_candidate,
     clippy::struct_excessive_bools,
     clippy::uninlined_format_args,
-    clippy::wildcard_imports,
+    clippy::wildcard_imports
 )]
 
 #[macro_use]

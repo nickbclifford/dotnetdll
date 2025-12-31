@@ -214,13 +214,13 @@ pub struct Field<'a> {
     pub default: Option<Constant>,
     /// Indicates if the field should be excluded when the type is serialized.
     pub not_serialized: bool,
-    /// Specifies if the field is named with special meaning for a compiler.
-    // TODO: examples
+    /// Specifies if the field is named with special meaning for a compiler or tool.
     pub special_name: bool,
     /// If this field is a P/Invoke binding, specifies the import information.
     pub pinvoke: Option<PInvoke<'a>>,
     /// Specifies if the field is named with special meaning for the runtime.
-    // TODO: examples (enum value__, ...)
+    ///
+    /// For example, the `value__` field of an enum must have this flag set.
     pub runtime_special_name: bool,
     /// Specifies the explicit byte offset of this field within its owning type, if provided.
     pub offset: Option<usize>,
@@ -290,8 +290,10 @@ impl<'a> Field<'a> {
 pub enum FieldReferenceParent {
     /// Indicates that the field is located on an external type, including primitive types.
     Type(MethodType),
-    /// Indicates that the field is a global field on an external module.
-    // TODO: explain module globals
+    /// Indicates that the field is a global field defined at the module level rather than within a type (ECMA-335, II.10.8).
+    ///
+    /// Such fields are associated with the module record and are typically used for global variables
+    /// in languages like C++/CLI or for module-level constants.
     Module(ModuleRefIndex),
 }
 
@@ -370,14 +372,13 @@ pub struct Property<'a> {
     pub static_member: bool,
     /// Type of the property.
     pub property_type: signature::Parameter<MemberType>,
-    /// Parameters the property takes in during access, such as for custom indexers.
-    // TODO: metadata representation of indexers
+    /// Parameters the property takes in during access.
+    ///
+    /// Properties with parameters are typically used to implement indexers (ECMA-335, II.18).
     pub parameters: Vec<signature::Parameter<MemberType>>,
-    /// Specifies if the property is named with special meaning for a compiler.
-    // TODO: examples
+    /// Specifies if the property is named with special meaning for a compiler or tool.
     pub special_name: bool,
     /// Specifies if the property is named with special meaning for the runtime.
-    // TODO: examples
     pub runtime_special_name: bool,
     /// Default constant value of the property, if any.
     pub default: Option<Constant>,
@@ -434,7 +435,11 @@ impl ResolvedDebug for Property<'_> {
     }
 }
 impl<'a> Property<'a> {
-    pub fn new(static_member: bool, name: impl Into<Cow<'a, str>>, property_type: signature::Parameter<MemberType>) -> Self {
+    pub fn new(
+        static_member: bool,
+        name: impl Into<Cow<'a, str>>,
+        property_type: signature::Parameter<MemberType>,
+    ) -> Self {
         Self {
             attributes: vec![],
             name: name.into(),
@@ -551,11 +556,15 @@ pub struct Method<'a> {
     /// Specifies if the method is abstract and doesn't have an implementation.
     /// (`abstract` is a reserved word in Rust, hence the longer name for the field.)
     pub abstract_member: bool,
-    /// Specifies if the method is named with special meaning for a compiler.
-    // TODO: examples
+    /// Specifies if the method is named with special meaning for a compiler or tool.
+    ///
+    /// For example, property accessors (`get_Name`, `set_Name`) and overloaded operators (`op_Addition`)
+    /// often have this flag set.
     pub special_name: bool,
     /// Specifies if the method is named with special meaning for the runtime.
-    // TODO: examples
+    ///
+    /// For example, instance constructors (`.ctor`) and type constructors (`.cctor`)
+    /// must have this flag set.
     pub runtime_special_name: bool,
     /// If this method is a P/Invoke binding, specifies the import information.
     pub pinvoke: Option<PInvoke<'a>>,
@@ -738,7 +747,10 @@ impl<'a> PInvoke<'a> {
 pub enum MethodReferenceParent {
     /// The method is part of a specific type (e.g., an instance method of a class or a static method).
     Type(MethodType),
-    /// The method is defined at the module level, outside any specific type.
+    /// The method is defined at the module level rather than within a type (ECMA-335, II.10.8).
+    ///
+    /// Such methods are associated with the module record and are typically used for global functions
+    /// in languages like C++/CLI.
     Module(ModuleRefIndex),
     /// The method is defined in this type, but as an instantiation of varargs.
     VarargMethod(MethodIndex),
@@ -887,7 +899,9 @@ pub struct Event<'a> {
     /// Name of the event.
     pub name: Cow<'a, str>,
     /// The delegate type that describes the method signature of a handler for this event.
-    // TODO: explain delegate types, Func/Action, etc
+    ///
+    /// In .NET, events are typically backed by a delegate type (like `System.EventHandler`).
+    /// The `add` and `remove` methods will take a parameter of this type.
     pub delegate_type: MemberType,
     /// The method used to add a listener or handler to this event.
     pub add_listener: Method<'a>,
@@ -897,11 +911,9 @@ pub struct Event<'a> {
     pub raise_event: Option<Method<'a>>,
     /// Any other methods associated with this event, often related to its internal handling.
     pub other: Vec<Method<'a>>,
-    /// Specifies if the event is named with special meaning for a compiler.
-    // TODO: examples
+    /// Specifies if the event is named with special meaning for a compiler or tool.
     pub special_name: bool,
     /// Specifies if the event is named with special meaning for the runtime.
-    // TODO: examples
     pub runtime_special_name: bool,
 }
 name_display!(Event<'_>);

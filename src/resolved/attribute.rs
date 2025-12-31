@@ -56,20 +56,23 @@ fn parse_from_type<'def, 'inst>(
         Object => FixedArg::Object(Box::new(parse_from_type(src.gread(offset)?, src, offset, resolve)?)),
         Vector(t) => {
             let num_elem: u32 = src.gread_with(offset, scroll::LE)?;
-            FixedArg::Array(if num_elem == u32::MAX {
-                None
-            } else {
-                Some(
-                    (0..num_elem)
-                        .map(|_| parse_from_type(*t.clone(), src, offset, resolve))
-                        .collect::<Result<_>>()?,
-                )
-            })
+            FixedArg::Array(
+                *t.clone(),
+                if num_elem == u32::MAX {
+                    None
+                } else {
+                    Some(
+                        (0..num_elem)
+                            .map(|_| parse_from_type(*t.clone(), src, offset, resolve))
+                            .collect::<Result<_>>()?,
+                    )
+                },
+            )
         }
         Enum(name) => {
-            let t = process_def(resolve(name)?)?;
+            let t = process_def(resolve(&name)?)?;
             match parse_from_type(t, src, offset, resolve)? {
-                FixedArg::Integral(i) => FixedArg::Enum(name, i),
+                FixedArg::Enum(name, i) => FixedArg::Enum(name, i),
                 bad => throw!("bad value {:?} for enum {}", bad, name),
             }
         }
@@ -79,7 +82,9 @@ fn parse_from_type<'def, 'inst>(
 fn process_def<'def, 'inst>(
     (def, res): (&'def TypeDefinition<'def>, &'def Resolution<'def>),
 ) -> Result<FieldOrPropType<'inst>> {
-    let Some(supertype) = &def.extends else { return Ok(FieldOrPropType::Object) };
+    let Some(supertype) = &def.extends else {
+        return Ok(FieldOrPropType::Object);
+    };
     match supertype {
         TypeSource::User(u) if u.type_name(res) == "System.Enum" => def
             .fields
@@ -187,13 +192,20 @@ fn parse_named<'def, 'inst>(
         .collect()
 }
 
+/// A custom attribute, which can be applied to many metadata elements.
+///
+/// See ECMA-335, II.22.10 (page 218) for more information.
 #[derive(Debug, Clone)]
 pub struct Attribute<'a> {
+    /// The constructor method used to create this attribute.
     pub constructor: members::UserMethod,
     pub(crate) value: Option<Cow<'a, [u8]>>,
 }
 
 impl<'def, 'inst> Attribute<'inst> {
+    /// Decodes the binary blob of the custom attribute into structured [`CustomAttributeData`].
+    ///
+    /// This requires a [`Resolver`] to find the types of enum values and named arguments.
     pub fn instantiation_data(
         &'inst self,
         resolver: &impl Resolver<'def>,
@@ -261,24 +273,30 @@ impl<'def, 'inst> Attribute<'inst> {
 // we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
 // it's not really possible to use those unless you're writing raw metadata though so we'll ignore them (for now)
 
+/// A security declaration, which specifies the requested permissions for a method or type.
+///
+/// See ECMA-335, II.22.11 (page 220) for more information.
 #[derive(Debug, Clone)]
 pub struct SecurityDeclaration<'a> {
+    /// All attributes present on the security declaration.
     pub attributes: Vec<Attribute<'a>>,
+    /// The security action requested.
     pub action: u16,
     pub(crate) value: Cow<'a, [u8]>,
 }
 
+/// A single permission requested in a [`SecurityDeclaration`].
 #[derive(Debug, Clone)]
 pub struct Permission<'a> {
+    /// The name of the permission type.
     pub type_name: Cow<'a, str>,
+    /// The named arguments (fields or properties) set on the permission.
     pub fields: Vec<NamedArg<'a>>,
 }
 
 impl<'a> SecurityDeclaration<'a> {
-    pub fn requested_permissions(
-        &'a self,
-        resolver: &'a impl Resolver<'a>,
-    ) -> Result<Vec<Permission<'a>>> {
+    /// Decodes the binary blob of the security declaration into a list of [`Permission`]s.
+    pub fn requested_permissions(&'a self, resolver: &'a impl Resolver<'a>) -> Result<Vec<Permission<'a>>> {
         let offset = &mut 0;
 
         let value = self.value.as_ref();
@@ -317,7 +335,7 @@ impl<'a> SecurityDeclaration<'a> {
         buffer.gwrite(Unsigned(attrs.len() as u32), offset)?;
 
         for attr in attrs {
-            buffer.gwrite(SerString(Some(&attr.type_name)), offset)?;
+            buffer.gwrite(SerString(Some(attr.type_name.clone())), offset)?;
             for arg in attr.fields {
                 buffer.gwrite(arg, offset)?;
             }

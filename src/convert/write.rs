@@ -67,7 +67,7 @@ fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx:
     let Some(value_kind) = value_kind else {
         return Err(DLLError::CLI(scroll::Error::Custom(
             "attempted to use type of unknown value kind inside a signature".to_string(),
-        )))
+        )));
     };
     Ok(match t {
         TypeSource::User(u) => match value_kind {
@@ -107,7 +107,10 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
 }
 
 #[tracing::instrument]
-pub fn into_blob(sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug, ctx: &mut Context) -> Result<Blob> {
+pub fn into_blob(
+    sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug,
+    ctx: &mut Context,
+) -> Result<Blob> {
     ctx.blob_scratch.clear();
 
     ctx.blob_scratch.pwrite(sig, 0)?;
@@ -166,7 +169,10 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
 }
 
 #[tracing::instrument]
-fn maybe_unmanaged_method<T: TypeKind>(sig: &MaybeUnmanagedMethod<T>, ctx: &mut Context) -> Result<StandAloneMethodSig> {
+fn maybe_unmanaged_method<T: TypeKind>(
+    sig: &MaybeUnmanagedMethod<T>,
+    ctx: &mut Context,
+) -> Result<StandAloneMethodSig> {
     Ok(StandAloneMethodSig {
         has_this: sig.instance,
         explicit_this: sig.explicit_this,

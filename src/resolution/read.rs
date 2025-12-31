@@ -95,7 +95,9 @@ fn extract_method<'a>(
     methods: &mut [MethodIndex],
     tables: &metadata::table::Tables,
 ) -> members::Method<'a> {
-    let MethodMemberIndex::Method(internal_idx) = idx.member else { unreachable!() };
+    let MethodMemberIndex::Method(internal_idx) = idx.member else {
+        unreachable!()
+    };
 
     if let Ok(start_idx) = methods.binary_search_by_key(&idx.parent_type, |m| m.parent_type) {
         // first element is the index into methods, second element is the internal index
@@ -737,7 +739,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     internal_call: check_bitmask!(m.impl_flags, 0x1000),
                     synchronized: check_bitmask!(m.impl_flags, 0x20),
                     no_inlining: check_bitmask!(m.impl_flags, 0x8),
-                    no_optimization: check_bitmask!(m.impl_flags, 0x40)
+                    no_optimization: check_bitmask!(m.impl_flags, 0x40),
                 });
 
                 methods[m_idx].write(MethodIndex {
@@ -1191,7 +1193,9 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         use metadata::index::HasSemantics;
 
         let raw_idx = s.method.0 - 1;
-        let Some(&method_idx) = methods.get(raw_idx) else { throw!("invalid method index {} for method semantics", raw_idx) };
+        let Some(&method_idx) = methods.get(raw_idx) else {
+            throw!("invalid method index {} for method semantics", raw_idx)
+        };
 
         let parent = &mut types[method_idx.parent_type.0];
 

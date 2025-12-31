@@ -1,5 +1,7 @@
 # dotnetdll
 
+![Crates.io Version](https://img.shields.io/crates/v/dotnetdll)
+
 A Rust library for reading and writing .NET assembly metadata (DLL/EXE files).
 
 Implements the [ECMA-335](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/) (CLI) standard for .NET metadata manipulation.
@@ -19,7 +21,7 @@ Implements the [ECMA-335](https://www.ecma-international.org/publications-and-st
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-dotnetdll = "0.1"  # Check crates.io for latest version
+dotnetdll = "0.1"
 ```
 
 ### Reading a DLL

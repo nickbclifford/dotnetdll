@@ -105,6 +105,11 @@ pub struct Resolution<'a> {
 }
 
 impl<'a> Resolution<'a> {
+    /// Creates a new `Resolution` with a single module.
+    ///
+    /// Every .NET DLL contains exactly one module (ECMA-335, II.22.30).
+    ///
+    /// By default, a special `<Module>` type is created, as required by the ECMA-335 standard (II.22.37).
     pub fn new(module: Module<'a>) -> Self {
         Resolution {
             assembly: None,
@@ -122,23 +127,33 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Parses a .NET DLL from a byte slice.
+    ///
+    /// This method first parses the PE (Portable Executable) file structure, then resolves the CLI metadata into a high-level `Resolution` struct.
     pub fn parse(bytes: &'a [u8], opts: ReadOptions) -> crate::dll::Result<Self> {
         let dll = DLL::parse(bytes)?;
         dll.resolve(opts)
     }
 
+    /// Writes the `Resolution` to a byte vector in the .NET PE format.
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
         write::write_impl(self, opts)
     }
 
+    /// Sets the entry point for the DLL.
     pub fn set_entry_point(&mut self, entry_point: impl Into<EntryPoint>) {
         self.entry_point = Some(entry_point.into());
     }
 }
 
+/// The entry point of a .NET assembly, which can be either a method or a file.
+///
+/// See ECMA-335, II.15.4.1.2 (page 182) for more information.
 #[derive(Debug, Copy, Clone, From)]
 pub enum EntryPoint {
+    /// A method that serves as the entry point.
     Method(MethodIndex),
+    /// A file that contains the entry point (for multi-module assemblies).
     File(FileIndex),
 }
 
@@ -264,23 +279,39 @@ internal_index!(FieldIndex indexes field / fields as Field<'a>);
 internal_index!(PropertyIndex indexes property / properties as Property<'a>);
 internal_index!(EventIndex indexes event / events as Event<'a>);
 
+/// Specifies which member a [`MethodIndex`] refers to.
+///
+/// While regular methods are direct members of a type, getters and setters are owned by properties, and listeners are owned by events.
+/// This enum allows [`MethodIndex`] to point to any of these implementation methods.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum MethodMemberIndex {
+    /// A regular method defined directly on a type.
     Method(usize),
+    /// The getter method of a property.
     PropertyGetter(usize),
+    /// The setter method of a property.
     PropertySetter(usize),
+    /// An "other" method associated with a property.
     PropertyOther { property: usize, other: usize },
+    /// The add listener method of an event.
     EventAdd(usize),
+    /// The remove listener method of an event.
     EventRemove(usize),
+    /// The raise method of an event.
     EventRaise(usize),
+    /// An "other" method associated with an event.
     EventOther { event: usize, other: usize },
 }
+/// A typed index into a [`Method`] defined within a [`Resolution`].
+///
+/// Use `resolution[index]` to access the [`Method`].
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct MethodIndex {
     pub(crate) parent_type: TypeIndex,
     pub(crate) member: MethodMemberIndex,
 }
 impl MethodIndex {
+    /// Returns the [`TypeIndex`] of the type that defines this method.
     pub fn parent_type(self) -> TypeIndex {
         self.parent_type
     }
@@ -341,6 +372,7 @@ impl IndexMut<MethodIndex> for Resolution<'_> {
     }
 }
 impl<'a> Resolution<'a> {
+    /// Adds a new method to a type and returns its index.
     pub fn push_method(&mut self, parent: TypeIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[parent].methods;
         methods.push(method);
@@ -349,6 +381,7 @@ impl<'a> Resolution<'a> {
             member: MethodMemberIndex::Method(methods.len() - 1),
         }
     }
+    /// Returns the index corresponding to the raw index of a method in a type's `methods` list, if it exists.
     pub fn method_index(&self, parent: TypeIndex, index: usize) -> Option<MethodIndex> {
         if index < self[parent].methods.len() {
             Some(MethodIndex {
@@ -359,6 +392,7 @@ impl<'a> Resolution<'a> {
             None
         }
     }
+    /// Iterates through all methods defined directly on a type with their corresponding typed indices.
     pub fn enumerate_methods(&self, parent: TypeIndex) -> impl Iterator<Item = (MethodIndex, &Method<'a>)> {
         self[parent].methods.iter().enumerate().map(move |(i, f)| {
             (
@@ -371,6 +405,7 @@ impl<'a> Resolution<'a> {
         })
     }
 
+    /// Sets the getter method of a property.
     pub fn set_property_getter(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         self[property].getter = Some(method);
         MethodIndex {
@@ -378,6 +413,7 @@ impl<'a> Resolution<'a> {
             member: MethodMemberIndex::PropertyGetter(property.property),
         }
     }
+    /// Returns the index of a property's getter method, if it exists.
     pub fn property_getter_index(&self, property: PropertyIndex) -> Option<MethodIndex> {
         if self[property].getter.is_some() {
             Some(MethodIndex {
@@ -389,6 +425,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Sets the setter method of a property.
     pub fn set_property_setter(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         self[property].setter = Some(method);
         MethodIndex {
@@ -396,6 +433,7 @@ impl<'a> Resolution<'a> {
             member: MethodMemberIndex::PropertySetter(property.property),
         }
     }
+    /// Returns the index of a property's setter method, if it exists.
     pub fn property_setter_index(&self, property: PropertyIndex) -> Option<MethodIndex> {
         if self[property].setter.is_some() {
             Some(MethodIndex {
@@ -407,6 +445,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Adds an "other" method to a property and returns its index.
     pub fn push_property_other(&mut self, property: PropertyIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[property].other;
         methods.push(method);
@@ -418,6 +457,7 @@ impl<'a> Resolution<'a> {
             },
         }
     }
+    /// Returns the index of an "other" method of a property, if it exists.
     pub fn property_other_index(&self, property: PropertyIndex, index: usize) -> Option<MethodIndex> {
         if index < self[property].other.len() {
             Some(MethodIndex {
@@ -432,6 +472,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Returns the index of an event's `add` listener method.
     // technically since this can be derived all from `event`, self is unnecessary
     // however, it should match the rest of the indexing functions, especially if internal
     // representations change and self is later needed
@@ -443,6 +484,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Returns the index of an event's `remove` listener method.
     // ditto
     #[allow(clippy::unused_self)]
     pub fn event_remove_index(&self, event: EventIndex) -> MethodIndex {
@@ -452,6 +494,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Sets the raise method of an event.
     pub fn set_event_raise(&mut self, event: EventIndex, method: Method<'a>) -> MethodIndex {
         self[event].raise_event = Some(method);
         MethodIndex {
@@ -459,6 +502,7 @@ impl<'a> Resolution<'a> {
             member: MethodMemberIndex::EventRaise(event.event),
         }
     }
+    /// Returns the index of an event's raise method, if it exists.
     pub fn event_raise_index(&self, event: EventIndex) -> Option<MethodIndex> {
         if self[event].raise_event.is_some() {
             Some(MethodIndex {
@@ -470,6 +514,7 @@ impl<'a> Resolution<'a> {
         }
     }
 
+    /// Adds an "other" method to an event and returns its index.
     pub fn push_event_other(&mut self, event: EventIndex, method: Method<'a>) -> MethodIndex {
         let methods = &mut self[event].other;
         methods.push(method);
@@ -481,6 +526,7 @@ impl<'a> Resolution<'a> {
             },
         }
     }
+    /// Returns the index of an "other" method of an event, if it exists.
     pub fn event_other_index(&self, event: EventIndex, index: usize) -> Option<MethodIndex> {
         if index < self[event].other.len() {
             Some(MethodIndex {

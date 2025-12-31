@@ -71,10 +71,16 @@ use crate::{
     resolved::{types::CustomTypeModifier, ResolvedDebug},
 };
 
+/// Specifies the type of a parameter or return value in a method signature.
+///
+/// See ECMA-335, II.23.2.10 (page 264) for more information.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType<InnerType> {
+    /// A value of the specified type.
     Value(InnerType),
+    /// A managed reference to the specified type.
     Ref(InnerType),
+    /// A typed reference, which contains both a managed pointer and a runtime type handle.
     TypedReference,
 }
 impl<T: ResolvedDebug> ResolvedDebug for ParameterType<T> {
@@ -98,6 +104,7 @@ impl<A> ParameterType<A> {
     }
 }
 
+/// Metadata for a parameter in a method signature.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Parameter<InnerType>(pub Vec<CustomTypeModifier>, pub ParameterType<InnerType>);
 impl<T: ResolvedDebug> ResolvedDebug for Parameter<T> {
@@ -130,6 +137,7 @@ impl<T> Parameter<T> {
     }
 }
 
+/// Metadata for the return type of a method signature.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReturnType<InnerType>(pub Vec<CustomTypeModifier>, pub Option<ParameterType<InnerType>>);
 impl<T: ResolvedDebug> ResolvedDebug for ReturnType<T> {
@@ -148,6 +156,7 @@ impl<T: ResolvedDebug> ResolvedDebug for ReturnType<T> {
     }
 }
 impl<T> ReturnType<T> {
+    /// Returns the primitive `void` return type.
     pub const VOID: Self = ReturnType(vec![], None);
 
     pub const fn new(t: ParameterType<T>) -> Self {
@@ -167,15 +176,26 @@ impl<T> ReturnType<T> {
     }
 }
 
-// TODO: explain InnerType parameter
+/// A method signature, defining the calling convention, return type, and parameters.
+///
+/// The `InnerType` type parameter represents the types allowed in the return type and parameter list.
+/// See [`crate::resolved::types::BaseType`]'s documentation for more information.
+///
+/// See ECMA-335, II.23.2.1 (page 260) for more information.
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodSignature<CallConv, InnerType> {
+    /// If true, the method is an instance method (requires a `this` pointer).
     pub instance: bool,
+    /// If true, the `this` pointer is explicitly included in the signature.
     pub explicit_this: bool,
+    /// Calling convention of the method.
     pub calling_convention: CallConv,
+    /// Parameters of the method.
     pub parameters: Vec<Parameter<InnerType>>,
+    /// Return type of the method.
     pub return_type: ReturnType<InnerType>,
+    /// Additional variable arguments (for vararg calling conventions).
     pub varargs: Option<Vec<Parameter<InnerType>>>,
 }
 impl<C: Debug, T: ResolvedDebug> ResolvedDebug for MethodSignature<C, T> {
@@ -184,6 +204,7 @@ impl<C: Debug, T: ResolvedDebug> ResolvedDebug for MethodSignature<C, T> {
     }
 }
 impl<C: Debug, T: ResolvedDebug> MethodSignature<C, T> {
+    /// Returns a human-readable representation of the signature with the specified method name.
     pub fn show_with_name(&self, res: &Resolution, name: impl Display) -> String {
         let mut buf = format!("[{:?}] ", self.calling_convention);
         // ignore default convention for managed method signatures (will keep for maybe unmanaged signatures)
@@ -208,6 +229,7 @@ impl<C: Debug, T: ResolvedDebug> MethodSignature<C, T> {
     }
 }
 impl<C, T: ResolvedDebug> MethodSignature<C, T> {
+    /// Returns a human-readable representation of the method's parameters.
     pub fn show_parameters(&self, res: &Resolution) -> String {
         self.parameters
             .iter()
@@ -225,13 +247,16 @@ impl<C, T> MethodSignature<C, T> {
             parameters: self.parameters.into_iter().map(|p| p.map(&mut f)).collect(),
             return_type: self.return_type.map(&mut f),
             varargs: self.varargs.map(|p| p.into_iter().map(|p| p.map(&mut f)).collect()),
-        }   
+        }
     }
 }
 
+/// A method signature for a managed method.
 pub type ManagedMethod<T> = MethodSignature<CallingConvention, T>;
+/// A method signature for a method that may be unmanaged (e.g. for a function pointer).
 pub type MaybeUnmanagedMethod<T> = MethodSignature<StandAloneCallingConvention, T>;
 impl<T> ManagedMethod<T> {
+    /// Creates a new managed method signature.
     pub const fn new(instance: bool, return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self {
             instance,
@@ -243,10 +268,12 @@ impl<T> ManagedMethod<T> {
         }
     }
 
+    /// Creates a new managed instance method signature.
     pub const fn instance(return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self::new(true, return_type, parameters)
     }
 
+    /// Creates a new managed static method signature.
     pub const fn static_member(return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {
         Self::new(false, return_type, parameters)
     }

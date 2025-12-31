@@ -232,7 +232,7 @@ pub fn write_generic_class() {
                 .push_method_reference(method_ref! { static string string::Join<1>(string, #ienum_inst) });
             let string_join_inst = GenericMethodInstantiation::new(string_join, vec![ctype! { T0 }]);
 
-            let to_string = ctx.resolution.push_method(
+            let _to_string = ctx.resolution.push_method(
                 container,
                 Method::new(
                     Accessibility::Public,

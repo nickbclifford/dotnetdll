@@ -1,12 +1,14 @@
 [package]
 name = "dotnetdll"
-version = "0.0.6"
+version = "0.1.0"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
 edition = "2024"
 rust-version = "1.85.1"
 license = "GPL-3.0+"
 repository = "https://github.com/nickbclifford/dotnetdll"
+readme = "README.md"
 keywords = ["c-sharp", "dotnet", "dll", "compiler", "parser"]
+categories = ["parser-implementations", "development-tools::ffi"]
 description = "A framework for reading and writing .NET metadata files, such as C# library DLLs."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,7 +23,7 @@ members = [
 [dependencies]
 bitfield = "0.19"
 bitvec = "1"
-dotnetdll-macros = { path = "dotnetdll-macros", version = "0.0.1" }
+dotnetdll-macros = { path = "dotnetdll-macros", version = "0.1.0" }
 num-traits = "0.2"
 num-derive = "0.4"
 object = { version = "0.36", features = ['write'] }

@@ -49,6 +49,10 @@ pub enum DLLError {
 pub type Result<T> = std::result::Result<T, DLLError>;
 
 impl<'a> DLL<'a> {
+    /// Parses a binary DLL from a byte slice.
+    ///
+    /// This method only parses the PE (Portable Executable) file structure and the CLI header.
+    /// To resolve the metadata into a high-level representation, use [`DLL::resolve`].
     pub fn parse(bytes: &'a [u8]) -> Result<DLL<'a>> {
         let (sections, dir) = match FileKind::parse(bytes)? {
             FileKind::Pe32 => {
@@ -94,7 +98,9 @@ impl<'a> DLL<'a> {
 
     fn get_stream(&self, name: &'static str) -> Result<Option<&'a [u8]>> {
         let meta = self.get_cli_metadata()?;
-        let Some(header) = meta.stream_headers.iter().find(|h| h.name == name) else { return Ok(None) };
+        let Some(header) = meta.stream_headers.iter().find(|h| h.name == name) else {
+            return Ok(None);
+        };
         let data = self.raw_rva(self.cli.metadata.rva + header.offset)?;
         Ok(Some(&data[..header.size as usize]))
     }
@@ -127,6 +133,7 @@ impl<'a> DLL<'a> {
         bytes.pread(offset).map_err(CLI)
     }
 
+    /// Resolves the CLI metadata within the DLL into a high-level [`Resolution`] struct.
     pub fn resolve(&self, opts: read::Options) -> Result<Resolution<'a>> {
         read::read_impl(self, opts)
     }

@@ -1,3 +1,4 @@
+use dotnetdll::binary::signature::attribute::FieldOrPropType;
 use dotnetdll::prelude::*;
 
 mod common;
@@ -24,7 +25,7 @@ pub fn read() {
 
             let data = attribute.instantiation_data(&AlwaysFailsResolver, &res).unwrap();
             assert!(data.named_args.is_empty());
-            assert!(matches!(data.constructor_args[0], FixedArg::String(Some("String"))));
+            assert!(matches!(data.constructor_args[0], FixedArg::String(Some(ref s)) if s == "String"));
         },
     )
     .unwrap();
@@ -115,16 +116,16 @@ pub fn write() {
                 Attribute::new(
                     test_ctor.into(),
                     CustomAttributeData {
-                        constructor_args: vec![FixedArg::String(Some("a"))],
+                        constructor_args: vec![FixedArg::String(Some("a".into()))],
                         named_args: vec![],
                     },
                 ),
                 Attribute::new(
                     test_ctor.into(),
                     CustomAttributeData {
-                        constructor_args: vec![FixedArg::String(Some("b"))],
+                        constructor_args: vec![FixedArg::String(Some("b".into()))],
                         named_args: vec![NamedArg::Field(
-                            "OptionalField",
+                            "OptionalField".into(),
                             FixedArg::Integral(IntegralParam::Int32(1)),
                         )],
                     },
@@ -132,10 +133,10 @@ pub fn write() {
                 Attribute::new(
                     test_ctor.into(),
                     CustomAttributeData {
-                        constructor_args: vec![FixedArg::String(Some("c"))],
+                        constructor_args: vec![FixedArg::String(Some("c".into()))],
                         named_args: vec![NamedArg::Property(
-                            "OptionalProperty",
-                            FixedArg::Array(Some(vec![FixedArg::Float32(3.14), FixedArg::Float32(6.28)])),
+                            "OptionalProperty".into(),
+                            FixedArg::Array(FieldOrPropType::Float32, Some(vec![FixedArg::Float32(3.14), FixedArg::Float32(6.28)])),
                         )],
                     },
                 ),

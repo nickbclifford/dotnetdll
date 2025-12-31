@@ -1,11 +1,13 @@
 [package]
 name = "dotnetdll-macros"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
 edition = "2024"
 rust-version = "1.85.1"
 repository = "https://github.com/nickbclifford/dotnetdll"
 license = "GPL-3.0+"
+keywords = ["c-sharp", "dotnet", "dll", "compiler", "parser"]
+categories = ["development-tools::ffi"]
 description = "Support crate for dotnetdll."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

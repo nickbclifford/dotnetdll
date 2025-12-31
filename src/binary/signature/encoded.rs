@@ -125,8 +125,17 @@ try_into_ctx!(TypeDefOrRefOrSpec, |self, into| {
     Ok(*offset)
 });
 
-// TODO: explain sizes vs rank, specifics of lower bounds
 /// Defines the shape of an array that is potentially multi-dimensional and may have size bounds.
+///
+/// An array's shape is defined by its rank (number of dimensions), the sizes of each dimension,
+/// and the lower bounds for each dimension.
+///
+/// Note that according to the standard (ECMA-335, II.23.2.13):
+/// - `rank` is the total number of dimensions.
+/// - `sizes` may contain fewer than `rank` elements, in which case only the first `sizes.len()` dimensions
+///   have an explicit size.
+/// - `lower_bounds` may contain fewer than `rank` elements, in which case only the first `lower_bounds.len()`
+///   dimensions have an explicit lower bound. Dimensions without an explicit lower bound default to 0.
 ///
 /// See ECMA-335, II.23.2.13 (page 265) for more information.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -1,10 +1,12 @@
+use std::borrow::Cow;
+
 use super::encoded::*;
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
 
-pub struct SerString<'a>(pub Option<&'a str>);
+pub struct SerString<'a>(pub Option<Cow<'a, str>>);
 impl<'a> TryFromCtx<'a> for SerString<'a> {
     type Error = scroll::Error;
 
@@ -12,8 +14,11 @@ impl<'a> TryFromCtx<'a> for SerString<'a> {
         let offset = &mut 0;
         let val = match from.gread_with(offset, scroll::LE)? {
             0xFF_u8 => None,
-            0x00_u8 => Some(""),
-            len => Some(from.gread_with(offset, scroll::ctx::StrCtx::Length(len as usize))?),
+            0x00_u8 => Some("".into()),
+            len => Some(
+                from.gread_with::<&str>(offset, scroll::ctx::StrCtx::Length(len as usize))?
+                    .into(),
+            ),
         };
 
         Ok((SerString(val), *offset))
@@ -22,7 +27,7 @@ impl<'a> TryFromCtx<'a> for SerString<'a> {
 try_into_ctx!(SerString<'_>, |self, into| {
     let offset = &mut 0;
 
-    match self.0 {
+    match &self.0 {
         Some(str) => {
             into.gwrite_with(str.len() as u8, offset, scroll::LE)?;
             into.gwrite(str.as_bytes(), offset)?;
@@ -53,7 +58,7 @@ pub enum FieldOrPropType<'a> {
     Type,
     Object,
     Vector(Box<FieldOrPropType<'a>>),
-    Enum(&'a str),
+    Enum(Cow<'a, str>),
 }
 
 impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
@@ -203,11 +208,11 @@ pub enum FixedArg<'a> {
     Char(char),
     Float32(f32),
     Float64(f64),
-    String(Option<&'a str>),
+    String(Option<Cow<'a, str>>),
     Integral(IntegralParam),
-    Enum(&'a str, IntegralParam),
-    Type(&'a str),
-    Array(Option<Vec<FixedArg<'a>>>),
+    Enum(Cow<'a, str>, IntegralParam),
+    Type(Cow<'a, str>),
+    Array(FieldOrPropType<'a>, Option<Vec<FixedArg<'a>>>),
     Object(Box<FixedArg<'a>>),
 }
 impl FixedArg<'_> {
@@ -220,13 +225,9 @@ impl FixedArg<'_> {
             Float64(_) => FieldOrPropType::Float64,
             String(_) => FieldOrPropType::String,
             Integral(i) => i.argument_type(),
-            Enum(name, _) => FieldOrPropType::Enum(name),
-            Type(_) => FieldOrPropType::Type,
-            // TODO: are these semantics correct?
-            Array(t) => match t {
-                Some(v) => FieldOrPropType::Vector(Box::new(v[0].argument_type())),
-                None => panic!("null array attribute argument invalid in this context"),
-            },
+            Enum(name, _) => FieldOrPropType::Enum(name.clone()),
+            Type(_name) => FieldOrPropType::Type,
+            Array(t, _) => FieldOrPropType::Vector(Box::new(t.clone())),
             Object(_) => FieldOrPropType::Object,
         }
     }
@@ -261,7 +262,7 @@ try_into_ctx!(FixedArg<'_>, |self, into| {
         Type(t) => {
             into.gwrite(SerString(Some(t)), offset)?;
         }
-        Array(v) => match v {
+        Array(_, v) => match v {
             Some(vector) => {
                 into.gwrite_with(vector.len() as u32, offset, scroll::LE)?;
                 for value in vector {
@@ -283,8 +284,8 @@ try_into_ctx!(FixedArg<'_>, |self, into| {
 
 #[derive(Debug, Clone)]
 pub enum NamedArg<'a> {
-    Field(&'a str, FixedArg<'a>),
-    Property(&'a str, FixedArg<'a>),
+    Field(Cow<'a, str>, FixedArg<'a>),
+    Property(Cow<'a, str>, FixedArg<'a>),
 }
 try_into_ctx!(NamedArg<'_>, |self, into| {
     let offset = &mut 0;
@@ -297,7 +298,7 @@ try_into_ctx!(NamedArg<'_>, |self, into| {
 
     into.gwrite_with(tag, offset, scroll::LE)?;
     into.gwrite(arg.argument_type(), offset)?;
-    into.gwrite(SerString(Some(name)), offset)?;
+    into.gwrite(SerString(Some(name.clone())), offset)?;
     into.gwrite(arg, offset)?;
 
     Ok(*offset)
@@ -357,27 +358,39 @@ mod tests {
                     Boolean(true),
                     Char('a'),
                     Integral(UInt16(4)),
-                    Array(None),
-                    Array(Some(vec![Integral(Int32(2)), Integral(Int32(4)), Integral(Int32(5))])),
+                    Array(FieldOrPropType::Int32, None),
+                    Array(
+                        FieldOrPropType::Int32,
+                        Some(vec![Integral(Int32(2)), Integral(Int32(4)), Integral(Int32(5))]),
+                    ),
                     Object(Integral(Int32(9)).into()),
                     Object(
-                        Array(Some(vec![
-                            Object(Integral(Int32(2)).into()),
-                            Object(Integral(Int32(5)).into()),
-                            Object(Array(Some(vec![Object(Integral(Int32(2)).into())])).into()),
-                            Object(String(None).into()),
-                        ]))
+                        Array(
+                            FieldOrPropType::Object,
+                            Some(vec![
+                                Object(Integral(Int32(2)).into()),
+                                Object(Integral(Int32(5)).into()),
+                                Object(
+                                    Array(FieldOrPropType::Object, Some(vec![Object(Integral(Int32(2)).into())]))
+                                        .into(),
+                                ),
+                                Object(String(None).into()),
+                            ]),
+                        )
                         .into(),
                     ),
-                    Array(Some(vec![
-                        Object(Integral(Int32(3)).into()),
-                        Object(Enum("test.Asdf", UInt16(4)).into()),
-                        Object(String(Some("oops")).into()),
-                    ])),
+                    Array(
+                        FieldOrPropType::Object,
+                        Some(vec![
+                            Object(Integral(Int32(3)).into()),
+                            Object(Enum("test.Asdf".into(), UInt16(4)).into()),
+                            Object(String(Some("oops".into())).into()),
+                        ]),
+                    ),
                 ],
                 named_args: vec![
-                    Field("Yes", Integral(Int32(3))),
-                    Field("No", Object(Enum("test.Asdf", UInt16(4)).into())),
+                    Field("Yes".into(), Integral(Int32(3))),
+                    Field("No".into(), Object(Enum("test.Asdf".into(), UInt16(4)).into())),
                 ],
             },
             0,

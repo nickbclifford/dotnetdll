@@ -155,12 +155,7 @@ pub use dotnetdll_macros::type_name;
 pub use dotnetdll_macros::type_ref;
 use dotnetdll_macros::From;
 
-use crate::{
-    binary::signature::{encoded::ArrayShape, kinds::StandAloneCallingConvention},
-    convert::TypeKind,
-    prelude::MaybeUnmanagedMethod,
-    resolution::*,
-};
+use crate::{binary::signature::encoded::ArrayShape, convert::TypeKind, prelude::MaybeUnmanagedMethod, resolution::*};
 
 use super::{
     attribute::{Attribute, SecurityDeclaration},
@@ -168,63 +163,98 @@ use super::{
     members, ResolvedDebug,
 };
 
+/// Specifies whether a type is a class or an interface.
 #[derive(Debug, Copy, Clone)]
 pub enum Kind {
+    /// A regular class or value type.
     Class,
+    /// An interface.
     Interface,
 }
 
+/// Specifies the visibility of a type.
 #[derive(Debug, Copy, Clone)]
 pub enum Accessibility {
+    /// The type is only visible within its own assembly.
     NotPublic,
+    /// The type is visible outside its assembly.
     Public,
+    /// The type is nested within another type, with the specified accessibility.
     Nested(super::Accessibility),
 }
 
+/// Specifies the layout of a type's fields in memory.
 #[derive(Debug, Copy, Clone)]
 pub struct SequentialLayout {
     pub packing_size: usize,
     pub class_size: usize,
 }
 
+/// Specifies the explicit layout of a type's fields in memory.
 #[derive(Debug, Copy, Clone)]
 pub struct ExplicitLayout {
     pub class_size: usize,
 }
 
+/// Specifies how the fields of a type are laid out in memory.
 #[derive(Debug, Copy, Clone)]
 pub enum Layout {
+    /// The runtime automatically determines the layout.
     Automatic,
+    /// Fields are laid out sequentially.
     Sequential(Option<SequentialLayout>),
+    /// Fields are laid out at explicit offsets.
     Explicit(Option<ExplicitLayout>),
 }
 
+/// Specifies the string formatting for P/Invoke calls.
 #[derive(Debug, Copy, Clone)]
 pub enum StringFormatting {
+    /// ANSI string formatting.
     ANSI,
+    /// Unicode string formatting.
     Unicode,
+    /// The runtime automatically determines the formatting.
     Automatic,
+    /// Custom formatting with the specified flags.
     Custom(u32),
 }
 
+/// Represents a method implementation that overrides a virtual method in a base type or interface.
 #[derive(Debug, Copy, Clone)]
 pub struct MethodOverride {
+    /// The method implementation being provided.
     pub implementation: members::UserMethod,
+    /// The virtual method declaration being overridden.
     pub declaration: members::UserMethod,
 }
 
+/// Metadata flags associated with a [`TypeDefinition`].
+///
+/// These flags correspond to the `Flags` column of the `TypeDef` table (ECMA-335, II.22.37).
 #[derive(Debug, Copy, Clone)]
 pub struct TypeFlags {
+    /// Visibility of the type.
     pub accessibility: Accessibility,
+    /// Layout of the type's fields.
     pub layout: Layout,
+    /// Specifies if the type is a class or interface.
     pub kind: Kind,
+    /// If true, the type is abstract and cannot be instantiated.
     pub abstract_type: bool,
+    /// If true, the type is sealed and cannot be derived from.
     pub sealed: bool,
+    /// If true, the type name has special meaning for a compiler.
     pub special_name: bool,
+    /// If true, the type is imported from another module.
     pub imported: bool,
+    /// If true, the type can be serialized.
     pub serializable: bool,
+    /// Default string formatting for P/Invoke calls on this type's methods.
     pub string_formatting: StringFormatting,
+    /// If true, the runtime should initialize the type before any field is accessed.
     pub before_field_init: bool,
+    /// If true, the type name has special meaning for the runtime.
     pub runtime_special_name: bool,
 }
 impl Default for TypeFlags {
@@ -467,7 +497,10 @@ pub enum ResolutionScope {
     /// Indicates that the type is located in an external module within the same assembly as this [`ExternalTypeReference`]'s owning module.
     ExternalModule(ModuleRefIndex),
     /// Indicates that the type is located in the current module.
-    // TODO: explain how this is different from an index to a TypeDef
+    ///
+    /// While types defined in the current module are typically referenced directly via a [`TypeIndex`]
+    /// into [`Resolution::type_definitions`], the CLI standard also allows referencing them via a `TypeRef`
+    /// token with a null `ResolutionScope` (ECMA-335, II.22.38). This variant represents such a reference.
     CurrentModule,
     /// Indicates that the type is located in an external assembly.
     Assembly(AssemblyRefIndex),
@@ -745,7 +778,12 @@ impl<T> TypeSource<T> {
 pub enum BaseType<EnclosingType> {
     /// A type definition, type reference, or generic instantiation.
     Type {
-        // TODO: explain ValueKind and when it can be omitted
+        /// Specifies whether the type is a class or a value type.
+        ///
+        /// This can be `None` when the type is referenced via a metadata table (like `TypeDef` or `TypeRef`)
+        /// where the kind is not explicitly stored in the reference.
+        ///
+        /// When encoded in a signature blob, this must be explicitly specified (ECMA-335, II.23.2.12).
         value_kind: Option<ValueKind>,
         source: TypeSource<EnclosingType>,
     },
@@ -805,7 +843,7 @@ pub enum BaseType<EnclosingType> {
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     fn show(&self, res: &Resolution) -> String {
         use BaseType::*;
-        use StandAloneCallingConvention::*;
+        use super::signature::StandAloneCallingConvention::*;
         match self {
             Type {
                 value_kind: value_type,
@@ -1015,11 +1053,10 @@ impl_typekind!(MethodType);
 
 impl From<MemberType> for MethodType {
     fn from(m: MemberType) -> Self {
-        // SAFETY: since both types are tagged repr(u8), they have a defined layout
-        // since MethodType is a superset of MemberType, these layouts intersect
-        // thus, every MemberType is a valid MethodType, and this transmutation is valid
-        // TODO: does this need a ManuallyDrop?
-        unsafe { std::mem::transmute(m) }
+        match m {
+            MemberType::Base(b) => MethodType::Base(Box::new((*b).map(MethodType::from))),
+            MemberType::TypeGeneric(i) => MethodType::TypeGeneric(i),
+        }
     }
 }
 
