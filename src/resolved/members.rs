@@ -786,7 +786,7 @@ impl<'a> ExternalMethodReference<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone, From, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, From, Eq, PartialEq, Hash)]
 pub enum UserMethod {
     Definition(MethodIndex),
     Reference(MethodRefIndex),
