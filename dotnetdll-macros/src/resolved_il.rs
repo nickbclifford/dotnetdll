@@ -195,6 +195,37 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
             },
         );
 
+    let name_arms = is.iter().map(|Instruction { flags, name, fields, .. }| {
+        if flags.is_empty() {
+            if fields.is_empty() {
+                quote! { Instruction::#name => stringify!(#name) }
+            } else {
+                quote! { Instruction::#name(..) => stringify!(#name) }
+            }
+        } else {
+            quote! { Instruction::#name { .. } => stringify!(#name) }
+        }
+    });
+
+    let opcode_arms = is.iter().enumerate().map(|(i, Instruction { flags, name, fields, .. })| {
+        if flags.is_empty() {
+            if fields.is_empty() {
+                quote! { Instruction::#name => #i }
+            } else {
+                quote! { Instruction::#name(..) => #i }
+            }
+        } else {
+            quote! { Instruction::#name { .. } => #i }
+        }
+    });
+
+    let from_name_arms = is.iter().enumerate().map(|(i, Instruction { name, .. })| {
+        let name_str = name.to_string();
+        quote! { #name_str => Some(#i) }
+    });
+
+    let variant_count = is.len();
+
     quote! {
         #[derive(Debug, Clone, PartialEq)]
         pub enum Instruction {
@@ -210,6 +241,27 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
         }
 
         impl Instruction {
+            pub const VARIANT_COUNT: usize = #variant_count;
+
+            pub fn name(&self) -> &'static str {
+                match self {
+                    #(#name_arms),*
+                }
+            }
+
+            pub fn opcode(&self) -> usize {
+                match self {
+                    #(#opcode_arms),*
+                }
+            }
+
+            pub fn opcode_from_name(name: &str) -> Option<usize> {
+                match name {
+                    #(#from_name_arms),*,
+                    _ => None,
+                }
+            }
+
             #(#constructors)*
         }
     }
