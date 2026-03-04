@@ -69,7 +69,7 @@
 //! };
 //! ```
 
-use super::{members::*, signature, types::*, ResolvedDebug};
+use super::{ResolvedDebug, members::*, signature, types::*};
 use crate::resolution::Resolution;
 
 use dotnetdll_macros::r_instructions;
@@ -146,11 +146,7 @@ impl InstructionFlag for Option<Alignment> {
 }
 impl InstructionFlag for (&'static str, bool) {
     fn show(self) -> Flag {
-        if self.1 {
-            Some(self.0.to_string())
-        } else {
-            None
-        }
+        if self.1 { Some(self.0.to_string()) } else { None }
     }
 }
 fn show_flags(flags: impl IntoIterator<Item = Flag>) -> String {
@@ -346,19 +342,22 @@ macro_rules! asm {
     ($ins:ident $($param:expr),+) => {
         Instruction::$ins($($param),+)
     };
-    ($($(@ $label:ident)? $(+ $label_export:ident)? $ins:ident $($param:expr),*;)*) => {{
+    ($($(@ $label:ident)? $(+ $label_export:ident)? $($ins:ident)? $(# $splice:expr, )? $($param:expr),*;)*) => {{
         let mut _counter = 0;
+        let mut _ins = vec![];
+        $(
+            $(let $label = 0;)?
+            $(let $label_export = 0;)?
+        )*
         $(
             $(let $label = _counter;)?
             $(let $label_export = _counter;)?
-            _counter += 1;
+            let asm = $crate::spliced_asm! { $($ins)? $(# $splice ,)? $($param),* };
+            _counter += asm.len();
         )*
-
-        let _ins = vec![
-            $(
-                $crate::asm! { $ins $($param),* }
-            ),*
-        ];
+        $(
+            _ins.extend($crate::spliced_asm! { $($ins)? $(# $splice ,)? $($param),* });
+        )*
 
         (_ins
             $(
@@ -367,5 +366,27 @@ macro_rules! asm {
                 )?
             )*
         )
+    }};
+}
+
+#[macro_export]
+macro_rules! spliced_asm {
+    ($ins:ident) => {
+        vec![Instruction::$ins]
+    };
+    ($ins:ident $($param:expr),+) => {
+        vec![Instruction::$ins($($param),+)]
+    };
+    (# $expr:expr) => {
+        $expr.collect::<Vec<_>>()
+    };
+    ($($(@ $label:ident)? $(+ $label_export:ident)? $($ins:ident)? $(# $splice:expr ,)? $($param:expr),*;)*) => {$crate::asm! {
+        $(
+            $(@ $label)?
+            $(
+                + $label_export
+            )?
+            $($ins)? $(# $splice ,)? $($param),*;
+        )*
     }};
 }
