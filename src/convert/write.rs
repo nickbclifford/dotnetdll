@@ -39,7 +39,7 @@ pub struct Context<'a> {
     pub blob_scratch: &'a mut DynamicBuffer,
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
     let hash = crate::utils::hash(t);
 
@@ -54,7 +54,7 @@ pub fn index(t: &impl TypeKind, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(result)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn user_index(t: UserType) -> TypeDefOrRef {
     match t {
         UserType::Definition(d) => TypeDefOrRef::TypeDef(d.0 + 1),
@@ -62,7 +62,7 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     let Some(value_kind) = value_kind else {
         return Err(ResolveError::LazyLookupFailed(
@@ -89,7 +89,7 @@ fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx:
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn source_index(
     value_kind: Option<ValueKind>,
     t: &TypeSource<impl TypeKind>,
@@ -102,7 +102,7 @@ pub fn source_index(
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<TypeDefOrRef> {
     Ok(match base {
         BaseType::Type { value_kind, source } => source_index(*value_kind, source, ctx)?,
@@ -110,7 +110,7 @@ pub fn base_index(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<T
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn into_blob(
     sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug,
     ctx: &mut Context,
@@ -122,7 +122,7 @@ pub fn into_blob(
     ctx.blobs.write(ctx.blob_scratch.get())
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub(super) fn into_index(
     sig: impl TryIntoCtx<(), DynamicBuffer, Error = scroll::Error> + Debug,
     ctx: &mut Context,
@@ -137,7 +137,7 @@ pub(super) fn into_index(
     Ok(TypeDefOrRef::TypeSpec(len + 1))
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     use BaseType::*;
 
@@ -172,7 +172,7 @@ pub(super) fn base_sig(base: &BaseType<impl TypeKind>, ctx: &mut Context) -> Res
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn maybe_unmanaged_method<T: TypeKind>(
     sig: &MaybeUnmanagedMethod<T>,
     ctx: &mut Context,
@@ -196,7 +196,7 @@ fn maybe_unmanaged_method<T: TypeKind>(
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn custom_modifiers(mods: &[CustomTypeModifier]) -> Vec<CustomMod> {
     mods.iter()
         .map(|m| match m {
@@ -206,7 +206,7 @@ pub fn custom_modifiers(mods: &[CustomTypeModifier]) -> Vec<CustomMod> {
         .collect()
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn parameter_sig<T: TypeKind>(p: &Parameter<T>, ctx: &mut Context) -> Result<Param> {
     Ok(Param(
         custom_modifiers(&p.0),
@@ -222,7 +222,7 @@ fn parameter_sig<T: TypeKind>(p: &Parameter<T>, ctx: &mut Context) -> Result<Par
 //     into_blob(parameter_sig(p, ctx)?, ctx)
 // }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn ret_type_sig<T: TypeKind>(r: &ReturnType<T>, ctx: &mut Context) -> Result<RetType> {
     Ok(RetType(
         custom_modifiers(&r.0),
@@ -235,7 +235,7 @@ fn ret_type_sig<T: TypeKind>(r: &ReturnType<T>, ctx: &mut Context) -> Result<Ret
     ))
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn method_def_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<MethodDefSig> {
     Ok(MethodDefSig {
         has_this: sig.instance,
@@ -250,12 +250,12 @@ fn method_def_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Res
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn method_def<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_def_sig(sig, ctx)?, ctx)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn method_ref_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<MethodRefSig> {
     Ok(MethodRefSig {
         method_def: method_def_sig(sig, ctx)?,
@@ -268,12 +268,12 @@ fn method_ref_sig<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Res
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn method_ref<T: TypeKind>(sig: &ManagedMethod<T>, ctx: &mut Context) -> Result<Blob> {
     into_blob(method_ref_sig(sig, ctx)?, ctx)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.type_modifiers),
@@ -282,12 +282,12 @@ fn field_sig(f: &Field, ctx: &mut Context) -> Result<FieldSig> {
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn field_def(f: &Field, ctx: &mut Context) -> Result<Blob> {
     into_blob(field_sig(f, ctx)?, ctx)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldSig> {
     Ok(FieldSig {
         custom_modifiers: custom_modifiers(&f.custom_modifiers),
@@ -296,12 +296,12 @@ fn field_ref_sig(f: &ExternalFieldReference, ctx: &mut Context) -> Result<FieldS
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn field_ref(f: &ExternalFieldReference, ctx: &mut Context) -> Result<Blob> {
     into_blob(field_ref_sig(f, ctx)?, ctx)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn property_sig(p: &Property, ctx: &mut Context) -> Result<PropertySig> {
     Ok(PropertySig {
         has_this: !p.static_member,
@@ -314,12 +314,12 @@ fn property_sig(p: &Property, ctx: &mut Context) -> Result<PropertySig> {
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn property(p: &Property, ctx: &mut Context) -> Result<Blob> {
     into_blob(property_sig(p, ctx)?, ctx)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &mut Context) -> Result<TypeDefOrRef> {
     if let Some(BaseType::Type {
         source: TypeSource::User(u),
@@ -352,7 +352,7 @@ pub fn idx_with_modifiers(t: &impl TypeKind, mods: &[CustomTypeModifier], ctx: &
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSig> {
     Ok(LocalVarSig(
         vars.iter()
@@ -376,7 +376,7 @@ fn local_var_sig(vars: &[LocalVariable], ctx: &mut Context) -> Result<LocalVarSi
     ))
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn local_vars(vars: &[LocalVariable], ctx: &mut Context) -> Result<Blob> {
     into_blob(local_var_sig(vars, ctx)?, ctx)
 }
@@ -389,7 +389,7 @@ pub struct MethodContext<'a, T, U> {
     pub field_source: &'a U,
 }
 
-#[tracing::instrument(skip(m_ctx))]
+#[tracing::instrument(level = "trace", skip_all)]
 #[allow(clippy::too_many_lines)]
 pub fn instruction(
     instruction: &Instruction,
