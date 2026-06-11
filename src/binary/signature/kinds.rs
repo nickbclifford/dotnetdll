@@ -108,7 +108,11 @@ impl TryFromCtx<'_> for MethodDefSig {
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         build_method_def(from, |len, offset| {
-            (0..len).map(|_| from.gread(offset)).collect::<Result<_, _>>()
+            let mut params = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                params.push(from.gread(offset)?);
+            }
+            Ok(params)
         })
     }
 }
@@ -160,9 +164,10 @@ impl TryFromCtx<'_> for MethodRefSig {
             Ok(params)
         })?;
 
-        let varargs = (0..remaining_params)
-            .map(|_| from.gread(&mut offset))
-            .collect::<Result<_, _>>()?;
+        let mut varargs = Vec::with_capacity(remaining_params as usize);
+        for _ in 0..remaining_params {
+            varargs.push(from.gread(&mut offset)?);
+        }
 
         Ok((MethodRefSig { method_def, varargs }, offset))
     }
@@ -266,7 +271,10 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         let ret_type = from.gread(offset)?;
 
         let params = build_params_with_varargs(&mut param_count, from, offset)?;
-        let varargs = (0..param_count).map(|_| from.gread(offset)).collect::<Result<_, _>>()?;
+        let mut varargs = Vec::with_capacity(param_count as usize);
+        for _ in 0..param_count {
+            varargs.push(from.gread(offset)?);
+        }
 
         Ok((
             StandAloneMethodSig {
@@ -407,9 +415,10 @@ impl TryFromCtx<'_> for PropertySig {
 
         let property_type = from.gread(offset)?;
 
-        let params = (0..param_count)
-            .map(|_| from.gread(offset))
-            .collect::<scroll::Result<_>>()?;
+        let mut params = Vec::with_capacity(param_count as usize);
+        for _ in 0..param_count {
+            params.push(from.gread(offset)?);
+        }
 
         Ok((
             PropertySig {
@@ -466,35 +475,34 @@ impl TryFromCtx<'_> for LocalVarSig {
 
         let compressed::Unsigned(var_count) = from.gread(offset)?;
 
-        let vars = (0..var_count)
-            .map(|_| {
-                Ok(if from[*offset] == ELEMENT_TYPE_TYPEDBYREF {
+        let mut vars = Vec::with_capacity(var_count as usize);
+        for _ in 0..var_count {
+            vars.push(if from[*offset] == ELEMENT_TYPE_TYPEDBYREF {
+                *offset += 1;
+                LocalVar::TypedByRef
+            } else {
+                // the syntax diagram for mods and these flags in the spec is very confusing
+
+                let mods = all_custom_mods(from, offset);
+
+                let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
+                if pinned {
                     *offset += 1;
-                    LocalVar::TypedByRef
-                } else {
-                    // the syntax diagram for mods and these flags in the spec is very confusing
+                }
 
-                    let mods = all_custom_mods(from, offset);
+                let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
+                if by_ref {
+                    *offset += 1;
+                }
 
-                    let pinned = from[*offset] == ELEMENT_TYPE_PINNED;
-                    if pinned {
-                        *offset += 1;
-                    }
-
-                    let by_ref = from[*offset] == ELEMENT_TYPE_BYREF;
-                    if by_ref {
-                        *offset += 1;
-                    }
-
-                    LocalVar::Variable {
-                        custom_modifiers: mods,
-                        pinned,
-                        by_ref,
-                        var_type: from.gread(offset)?,
-                    }
-                })
-            })
-            .collect::<scroll::Result<_>>()?;
+                LocalVar::Variable {
+                    custom_modifiers: mods,
+                    pinned,
+                    by_ref,
+                    var_type: from.gread(offset)?,
+                }
+            });
+        }
 
         Ok((LocalVarSig(vars), *offset))
     }
@@ -557,9 +565,10 @@ impl TryFromCtx<'_> for MethodSpec {
 
         let compressed::Unsigned(type_count) = from.gread(offset)?;
 
-        let types = (0..type_count)
-            .map(|_| from.gread(offset))
-            .collect::<scroll::Result<_>>()?;
+        let mut types = Vec::with_capacity(type_count as usize);
+        for _ in 0..type_count {
+            types.push(from.gread(offset)?);
+        }
 
         Ok((MethodSpec(types), *offset))
     }

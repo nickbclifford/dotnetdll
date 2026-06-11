@@ -217,13 +217,18 @@ impl TryFromCtx<'_> for CustomMod {
         let offset = &mut 0;
 
         let compressed::Unsigned(tag) = from.gread(offset)?;
+        let tag_u8 = tag as u8;
+        if tag_u8 != ELEMENT_TYPE_CMOD_OPT && tag_u8 != ELEMENT_TYPE_CMOD_REQD {
+            return Err(FailUnit);
+        }
+
         let token = from.gread(offset)?;
 
         Ok((
-            match tag as u8 {
+            match tag_u8 {
                 ELEMENT_TYPE_CMOD_OPT => CustomMod::Optional(token),
                 ELEMENT_TYPE_CMOD_REQD => CustomMod::Required(token),
-                _ => return Err(FailUnit),
+                _ => unreachable!(),
             },
             *offset,
         ))
@@ -244,8 +249,14 @@ try_into_ctx!(CustomMod, |self, into| {
 });
 
 pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> Vec<CustomMod> {
-    let mut mods = vec![];
+    // CMOD_REQD (0x1f) and CMOD_OPT (0x20) are both < 128, so they encode as single bytes.
+    // Peek the first byte to avoid a full gread when there are no custom mods (the common case).
+    match from.get(*offset) {
+        Some(&b) if b == ELEMENT_TYPE_CMOD_REQD || b == ELEMENT_TYPE_CMOD_OPT => {}
+        _ => return Vec::new(),
+    }
 
+    let mut mods = Vec::new();
     loop {
         match from.gread::<CustomMod>(offset) {
             Ok(m) => mods.push(m),
@@ -321,7 +332,10 @@ impl TryFromCtx<'_> for Type {
                 let token = from.gread(offset)?;
 
                 let compressed::Unsigned(arg_count) = from.gread(offset)?;
-                let types = (0..arg_count).map(|_| from.gread(offset)).collect::<Result<_, _>>()?;
+                let mut types = Vec::with_capacity(arg_count as usize);
+                for _ in 0..arg_count {
+                    types.push(from.gread(offset)?);
+                }
 
                 match next_tag {
                     ELEMENT_TYPE_CLASS => GenericInstClass(token, types),

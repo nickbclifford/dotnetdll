@@ -12,7 +12,7 @@ use crate::resolved::{
 };
 use scroll::Pread;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
 /// A dictionary of options for [`Resolution::parse`] and [`DLL::resolve`].
@@ -866,7 +866,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("generic parameters");
 
-    let mut constraint_map = HashMap::with_capacity(tables.generic_param_constraint.len());
+    let mut constraint_map = HashMap::with_capacity_and_hasher(tables.generic_param_constraint.len(), Default::default());
 
     // this table is supposed to be sorted by owner and number (ECMA-335, II.22, page 210)
     // thus no need to sort the generics by sequence after the fact
@@ -1113,8 +1113,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     // sorts in preparation for the binary search in extract_method
     methods.sort_unstable_by_key(|m| m.parent_type);
 
-    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::new();
-    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::new();
+    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::default();
+    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::default();
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
@@ -1206,8 +1206,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         association: SemanticsAssociation,
     }
 
-    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::new();
-    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::new();
+    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::default();
+    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::default();
 
     for (&event_idx, entries) in &sem_by_event {
         for &(semantics, raw_method_idx) in entries {
@@ -1221,7 +1221,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::new();
+    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::default();
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
@@ -1391,7 +1391,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     let member_ref_len = tables.member_ref.len();
     let mut field_refs = Vec::with_capacity(member_ref_len);
-    let mut field_map = HashMap::with_capacity(member_ref_len);
+    let mut field_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
 
     for (orig_idx, r) in tables.member_ref.iter().enumerate() {
         use crate::binary::signature::kinds::FieldSig;
@@ -1443,7 +1443,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     debug!("method refs");
 
     let mut method_refs = Vec::with_capacity(member_ref_len);
-    let mut method_map = HashMap::with_capacity(member_ref_len);
+    let mut method_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
 
     for (orig_idx, r) in tables.member_ref.iter().enumerate() {
         use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
@@ -1918,28 +1918,32 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             let vars: LocalVarSig =
                                 heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature).pread(0)?;
 
-                            vars.0
-                                .into_iter()
-                                .map(|v| {
-                                    Ok(match v {
+                            {
+                                let mut lv = Vec::with_capacity(vars.0.len());
+                                for v in vars.0 {
+                                    lv.push(match v {
                                         LocalVar::TypedByRef => LocalVariable::TypedReference,
                                         LocalVar::Variable {
                                             custom_modifiers,
                                             pinned,
                                             by_ref,
                                             var_type,
-                                        } => LocalVariable::Variable {
-                                            custom_modifiers: custom_modifiers
-                                                .into_iter()
-                                                .map(|c| convert::read::custom_modifier(c, &ctx))
-                                                .collect::<Result<_>>()?,
-                                            pinned,
-                                            by_ref,
-                                            var_type: MethodType::from_sig(var_type, &ctx)?,
-                                        },
-                                    })
-                                })
-                                .collect::<Result<Vec<_>>>()?
+                                        } => {
+                                            let mut cmods = Vec::with_capacity(custom_modifiers.len());
+                                            for c in custom_modifiers {
+                                                cmods.push(convert::read::custom_modifier(c, &ctx)?);
+                                            }
+                                            LocalVariable::Variable {
+                                                custom_modifiers: cmods,
+                                                pinned,
+                                                by_ref,
+                                                var_type: MethodType::from_sig(var_type, &ctx)?,
+                                            }
+                                        }
+                                    });
+                                }
+                                lv
+                            }
                         } else {
                             throw!("invalid local variable signature token {:?} for method {}", tok, name);
                         }
@@ -1964,75 +1968,71 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 })
                 .collect();
 
-            let data_sections = raw_body
-                .data_sections
-                .into_iter()
-                .map(|d| {
-                    use crate::binary::method::SectionKind;
-                    Ok(match d.section {
-                        SectionKind::Exceptions(e) => DataSection::ExceptionHandlers(
-                            e.into_iter()
-                                .map(|h| {
-                                    macro_rules! get_offset {
-                                        ($byte:expr, $name:literal) => {{
-                                            let max = instr_offsets.iter().max().unwrap();
+            macro_rules! get_offset {
+                ($byte:expr, $name:literal) => {{
+                    let max = instr_offsets.iter().max().unwrap();
 
-                                            if $byte as usize == max + 1 {
-                                                instr_offsets.len()
-                                            } else {
-                                                instr_offsets
-                                                    .iter()
-                                                    .position(|&i| i == $byte as usize)
-                                                    .ok_or_else(|| {
-                                                        scroll::Error::Custom(format!(
-                                                            "could not find corresponding instruction for {} offset {}",
-                                                            $name, $byte
-                                                        ))
-                                                    })?
-                                            }
-                                        }};
-                                    }
+                    if $byte as usize == max + 1 {
+                        instr_offsets.len()
+                    } else {
+                        instr_offsets
+                            .iter()
+                            .position(|&i| i == $byte as usize)
+                            .ok_or_else(|| {
+                                scroll::Error::Custom(format!(
+                                    "could not find corresponding instruction for {} offset {}",
+                                    $name, $byte
+                                ))
+                            })?
+                    }
+                }};
+            }
 
-                                    let kind = match h.flags {
-                                        0 => ExceptionKind::TypedException(convert::read::type_token(
-                                            h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
-                                            &ctx,
-                                        )?),
-                                        1 => ExceptionKind::Filter {
-                                            offset: get_offset!(h.class_token_or_filter, "filter"),
-                                        },
-                                        2 => ExceptionKind::Finally,
-                                        4 => ExceptionKind::Fault,
-                                        bad => throw!("invalid exception clause type {:#06x}", bad),
-                                    };
+            let mut data_sections = Vec::with_capacity(raw_body.data_sections.len());
+            for d in raw_body.data_sections {
+                use crate::binary::method::SectionKind;
+                data_sections.push(match d.section {
+                    SectionKind::Exceptions(e) => {
+                        let mut exceptions = Vec::with_capacity(e.len());
+                        for h in e {
+                            let kind = match h.flags {
+                                0 => ExceptionKind::TypedException(convert::read::type_token(
+                                    h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
+                                    &ctx,
+                                )?),
+                                1 => ExceptionKind::Filter {
+                                    offset: get_offset!(h.class_token_or_filter, "filter"),
+                                },
+                                2 => ExceptionKind::Finally,
+                                4 => ExceptionKind::Fault,
+                                bad => throw!("invalid exception clause type {:#06x}", bad),
+                            };
 
-                                    let try_offset = get_offset!(h.try_offset, "try");
-                                    let handler_offset = get_offset!(h.handler_offset, "handler");
+                            let try_offset = get_offset!(h.try_offset, "try");
+                            let handler_offset = get_offset!(h.handler_offset, "handler");
 
-                                    Ok(Exception {
-                                        kind,
-                                        try_offset,
-                                        try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
-                                        handler_offset,
-                                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
-                                            - handler_offset,
-                                    })
-                                })
-                                .collect::<Result<_>>()?,
-                        ),
-                        SectionKind::Unrecognized { is_fat, length } => DataSection::Unrecognized {
-                            fat: is_fat,
-                            size: length,
-                        },
-                    })
-                })
-                .collect::<Result<_>>()?;
+                            exceptions.push(Exception {
+                                kind,
+                                try_offset,
+                                try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
+                                handler_offset,
+                                handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
+                                    - handler_offset,
+                            });
+                        }
+                        DataSection::ExceptionHandlers(exceptions)
+                    }
+                    SectionKind::Unrecognized { is_fat, length } => DataSection::Unrecognized {
+                        fat: is_fat,
+                        size: length,
+                    },
+                });
+            }
 
-            let instrs = raw_instrs
-                .into_iter()
-                .enumerate()
-                .map(|(idx, i)| convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx))
-                .collect::<Result<_>>()?;
+            let mut instrs = Vec::with_capacity(raw_instrs.len());
+            for (idx, i) in raw_instrs.into_iter().enumerate() {
+                instrs.push(convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx)?);
+            }
 
             res[methods[idx]].body = Some(Method {
                 header,

@@ -17,7 +17,7 @@ use crate::{
     resolved::{self, members::*, signature, types::*},
 };
 use scroll::Pread;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 macro_rules! throw {
     ($($arg:tt)*) => {
@@ -72,11 +72,15 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
     use Type::*;
 
     let generic_inst = |tok, types: Vec<Type>, kind| -> Result<BaseType<T>> {
+        let mut parameters = Vec::with_capacity(types.len());
+        for t in types {
+            parameters.push(T::from_sig(t, ctx)?);
+        }
         Ok(BaseType::Type {
             value_kind: Some(kind),
             source: TypeSource::Generic {
                 base: user_type(tok, ctx)?,
-                parameters: types.into_iter().map(|t| T::from_sig(t, ctx)).collect::<Result<_>>()?,
+                parameters,
             },
         })
     };
@@ -202,10 +206,12 @@ pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<Type
 pub fn parameter<T: TypeKind>(p: Param, ctx: &Context) -> Result<signature::Parameter<T>> {
     use signature::ParameterType::*;
 
+    let mut cmods = Vec::with_capacity(p.0.len());
+    for c in p.0 {
+        cmods.push(custom_modifier(c, ctx)?);
+    }
     Ok(signature::Parameter(
-        p.0.into_iter()
-            .map(|c| custom_modifier(c, ctx))
-            .collect::<Result<_>>()?,
+        cmods,
         match p.1 {
             ParamType::Type(t) => Value(T::from_sig(t, ctx)?),
             ParamType::ByRef(t) => Ref(T::from_sig(t, ctx)?),
@@ -219,30 +225,32 @@ macro_rules! def_method_sig {
         #[tracing::instrument]
         pub fn $name<T: TypeKind>(sig: $type, ctx: &Context) -> Result<signature::$sig<T>> {
             use signature::*;
-            Ok($sig {
-                instance: sig.has_this,
-                explicit_this: sig.explicit_this,
-                calling_convention: sig.calling_convention,
-                parameters: sig
-                    .params
-                    .into_iter()
-                    .map(|p| parameter(p, ctx))
-                    .collect::<Result<_>>()?,
-                return_type: ReturnType(
-                    sig.ret_type
-                        .0
-                        .into_iter()
-                        .map(|c| custom_modifier(c, ctx))
-                        .collect::<Result<_>>()?,
-                    match sig.ret_type.1 {
-                        RetTypeType::Type(t) => Some(ParameterType::Value(T::from_sig(t, ctx)?)),
-                        RetTypeType::ByRef(t) => Some(ParameterType::Ref(T::from_sig(t, ctx)?)),
-                        RetTypeType::TypedByRef => Some(ParameterType::TypedReference),
-                        RetTypeType::Void => None,
-                    },
-                ),
-                varargs: None,
-            })
+            {
+                let mut parameters = Vec::with_capacity(sig.params.len());
+                for p in sig.params {
+                    parameters.push(parameter(p, ctx)?);
+                }
+                let mut ret_cmods = Vec::with_capacity(sig.ret_type.0.len());
+                for c in sig.ret_type.0 {
+                    ret_cmods.push(custom_modifier(c, ctx)?);
+                }
+                Ok($sig {
+                    instance: sig.has_this,
+                    explicit_this: sig.explicit_this,
+                    calling_convention: sig.calling_convention,
+                    parameters,
+                    return_type: ReturnType(
+                        ret_cmods,
+                        match sig.ret_type.1 {
+                            RetTypeType::Type(t) => Some(ParameterType::Value(T::from_sig(t, ctx)?)),
+                            RetTypeType::ByRef(t) => Some(ParameterType::Ref(T::from_sig(t, ctx)?)),
+                            RetTypeType::TypedByRef => Some(ParameterType::TypedReference),
+                            RetTypeType::Void => None,
+                        },
+                    ),
+                    varargs: None,
+                })
+            }
         }
     };
 }
@@ -309,17 +317,17 @@ fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r
         Table(Kind::MethodSpec) => {
             let idx = tok.index - 1;
             match m_ctx.method_specs.get(idx) {
-                Some(m) => MethodSource::Generic(GenericMethodInstantiation {
-                    base: user_method(m.method, m_ctx)?,
-                    parameters: ctx
-                        .blobs
-                        .at_index(m.instantiation)?
-                        .pread::<MethodSpecSig>(0)?
-                        .0
-                        .into_iter()
-                        .map(|t| MethodType::from_sig(t, ctx))
-                        .collect::<Result<_>>()?,
-                }),
+                Some(m) => {
+                    let spec_types = ctx.blobs.at_index(m.instantiation)?.pread::<MethodSpecSig>(0)?.0;
+                    let mut parameters = Vec::with_capacity(spec_types.len());
+                    for t in spec_types {
+                        parameters.push(MethodType::from_sig(t, ctx)?);
+                    }
+                    MethodSource::Generic(GenericMethodInstantiation {
+                        base: user_method(m.method, m_ctx)?,
+                        parameters,
+                    })
+                }
                 None => throw!("invalid method spec index {} for method source", idx),
             }
         }
@@ -857,7 +865,13 @@ pub fn instruction<'r>(
         Sub => Instruction::Subtract,
         SubOvf => Instruction::SubtractOverflow(NumberSign::Signed),
         SubOvfUn => Instruction::SubtractOverflow(NumberSign::Unsigned),
-        Switch(v) => Instruction::Switch(v.into_iter().map(convert_offset).collect::<Result<_>>()?),
+        Switch(v) => {
+            let mut targets = Vec::with_capacity(v.len());
+            for offset in v {
+                targets.push(convert_offset(offset)?);
+            }
+            Instruction::Switch(targets)
+        }
         Throw => Instruction::Throw,
         Unbox(t) => unbox!(t | typecheck false),
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),
