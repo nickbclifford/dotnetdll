@@ -292,7 +292,8 @@ impl TryFromCtx<'_> for Method {
         };
 
         let body_bytes: &[u8] = from.gread_with(offset, body_size)?;
-        let mut body = vec![];
+        // body_size is an upper bound on instruction count (each IL instruction is ≥1 byte)
+        let mut body = Vec::with_capacity(body_size);
         let mut body_offset = 0;
         while body_offset < body_size {
             body.push(body_bytes.gread(&mut body_offset)?);

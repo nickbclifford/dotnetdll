@@ -119,6 +119,16 @@ macro_rules! tables {
                 }
             }
 
+            macro_rules! tables_kind_reserve {
+                ($tables:ident, $kind:ident, $n:expr) => {
+                    match $kind {
+                        $(
+                            Kind::$name => $tables.[<$name:snake>].reserve($n),
+                        )*
+                    }
+                }
+            }
+
             macro_rules! tables_kind_push {
                 ($tables:ident, $kind:ident, $add:expr) => {
                     match $kind {

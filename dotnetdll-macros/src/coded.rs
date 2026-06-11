@@ -69,9 +69,9 @@ pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::Toke
             fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
                 let offset = &mut 0;
 
-                let max_size = [#(Kind::#variants),*].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
+                let max_size = [#(sizes.tables[Kind::#variants as usize]),*].into_iter().max().unwrap();
 
-                let coded = if *max_size < (1 << (16 - #log)) {
+                let coded = if max_size < (1 << (16 - #log)) {
                     from.gread_with::<u16>(offset, scroll::LE)? as u32
                 } else {
                     from.gread_with::<u32>(offset, scroll::LE)?
@@ -100,11 +100,11 @@ pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::Toke
             fn try_into_ctx(self, into: &mut [u8], sizes: Sizes<'a>) -> Result<usize, Self::Error> {
                 let offset = &mut 0;
 
-                let max_size = [#(Kind::#variants),*].iter().map(|t| sizes.tables.get(t).unwrap_or(&0)).max().unwrap();
+                let max_size = [#(sizes.tables[Kind::#variants as usize]),*].into_iter().max().unwrap();
 
                 let (index, tag) = self.build_indices();
 
-                if *max_size < (1 << (16 - #log)) {
+                if max_size < (1 << (16 - #log)) {
                     into.gwrite_with(((index as u16) << #log) | tag as u16, offset, scroll::LE)?;
                 } else {
                     into.gwrite_with(((index as u32) << #log) | tag as u32, offset, scroll::LE)?;

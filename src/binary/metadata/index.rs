@@ -6,7 +6,7 @@ use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
 };
-use std::{cmp::Ordering, collections::HashMap, marker::PhantomData};
+use std::{cmp::Ordering, marker::PhantomData};
 
 use dotnetdll_macros::coded_index;
 
@@ -60,10 +60,12 @@ try_into_ctx!(Token, |self, into| {
     Ok(*offset)
 });
 
+// Kind discriminants span 0x00..=0x2C (44); index by `kind as usize`.
+// Absent tables have row count 0, matching the previous `unwrap_or(&0)` behaviour.
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes<'a> {
     pub heap: &'a BitSlice<BitSafeU8>,
-    pub tables: &'a HashMap<Kind, u32>,
+    pub tables: &'a [u32; 45],
 }
 
 macro_rules! uint_impl {
@@ -150,7 +152,7 @@ impl<'a, T: 'a + HasKind> TryFromCtx<'a, Sizes<'a>> for Simple<T> {
     fn try_from_ctx(from: &'a [u8], sizes: Sizes<'a>) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
-        let idx = if *sizes.tables.get(&T::kind()).unwrap_or(&0) < (1 << 16) {
+        let idx = if sizes.tables[T::kind() as usize] < (1 << 16) {
             from.gread_with::<u16>(offset, scroll::LE)? as usize
         } else {
             from.gread_with::<u32>(offset, scroll::LE)? as usize
@@ -165,7 +167,7 @@ impl<'a, T: 'a + HasKind> TryIntoCtx<Sizes<'a>> for Simple<T> {
     fn try_into_ctx(self, into: &mut [u8], sizes: Sizes<'a>) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        if *sizes.tables.get(&T::kind()).unwrap_or(&0) < (1 << 16) {
+        if sizes.tables[T::kind() as usize] < (1 << 16) {
             into.gwrite_with(self.0 as u16, offset, scroll::LE)?;
         } else {
             into.gwrite_with(self.0 as u32, offset, scroll::LE)?;

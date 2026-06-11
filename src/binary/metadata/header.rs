@@ -46,19 +46,24 @@ impl TryFromCtx<'_> for Header {
                 kinds.push(Kind::from_usize(num).unwrap());
             }
         }
-        let iter = kinds.into_iter().zip(rows);
-        let sizes_map: HashMap<_, _> = iter.clone().collect();
+        let pairs: Vec<(Kind, u32)> = kinds.into_iter().zip(rows).collect();
+
+        let mut sizes_arr = [0u32; 45];
+        for &(kind, size) in &pairs {
+            sizes_arr[kind as usize] = size;
+        }
 
         let heap_bits = BitSafeU8::new(heap);
         let ctx = Sizes {
             heap: heap_bits.view_bits::<Lsb0>(),
-            tables: &sizes_map,
+            tables: &sizes_arr,
         };
 
         let mut tables = Tables::new();
 
         // NOTE: this would be easy to parallelize and is the main read bottleneck
-        for (kind, size) in iter {
+        for (kind, size) in pairs {
+            tables_kind_reserve!(tables, kind, size as usize);
             for _ in 0..size {
                 tables_kind_push!(tables, kind, from.gread_with(offset, ctx)?);
             }
@@ -93,16 +98,15 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
         into.gwrite_with(self.valid, offset, scroll::LE)?;
         into.gwrite_with(self.sorted, offset, scroll::LE)?;
 
-        let mut sizes_map = HashMap::new();
-
+        let mut sizes_arr = [0u32; 45];
         for_each_table!(self.tables, |t, k| {
-            sizes_map.insert(k, t.len() as u32);
+            sizes_arr[k as usize] = t.len() as u32;
         });
 
         let heap_bits = BitSafeU8::new(self.heap_sizes);
         let ctx = Sizes {
             heap: heap_bits.view_bits::<Lsb0>(),
-            tables: &sizes_map,
+            tables: &sizes_arr,
         };
 
         let mut tables_map = HashMap::new();
@@ -123,9 +127,8 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
                 .extend_from_slice(&buf[..offset]);
         });
 
-        let mut sizes: Vec<_> = sizes_map.into_iter().collect();
-        sizes.sort_by_key(|&(k, _)| k.to_u8());
-        for (_, size) in sizes {
+        // sizes_arr is indexed by discriminant value, so iterating 0..45 is already sorted
+        for &size in sizes_arr.iter() {
             if size != 0 {
                 into.gwrite_with(size, offset, scroll::LE)?;
             }
