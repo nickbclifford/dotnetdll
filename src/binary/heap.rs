@@ -18,6 +18,7 @@ pub trait Reader<'a> {
 
 macro_rules! heap_reader {
     ($name:ident, $heap:literal, $index:ty, $value:ty, |$s:ident, $val:ident| $e:expr) => {
+        #[derive(Copy, Clone)]
         pub struct $name<'a> {
             bytes: &'a [u8],
         }

@@ -63,14 +63,18 @@
 //! std::fs::write("Example.dll", bytes).unwrap();
 //! ```
 
+pub(crate) mod lazy;
 pub mod read;
 pub mod utils;
 pub mod write;
 
-use crate::prelude::*;
+use crate::{dll::Result, prelude::*};
 use dotnetdll_macros::From;
 use paste::paste;
-use std::ops::{Index, IndexMut};
+use std::{
+    ops::{Index, IndexMut},
+    sync::Arc,
+};
 
 /// A structured representation of a .NET DLL file's metadata, according to the ECMA-335 standard.
 ///
@@ -102,6 +106,10 @@ pub struct Resolution<'a> {
     pub type_definitions: Vec<TypeDefinition<'a>>,
     /// References to types defined in external assemblies.
     pub type_references: Vec<ExternalTypeReference<'a>>,
+    /// Retained parse state for lazy method body decoding.
+    /// `None` in eager mode or when `skip_method_bodies` is set.
+    /// Shared across clones via `Arc` so a body decoded by one clone is visible to all.
+    pub(crate) lazy_state: Option<Arc<lazy::LazyParseState<'a>>>,
 }
 
 impl<'a> Resolution<'a> {
@@ -124,6 +132,7 @@ impl<'a> Resolution<'a> {
             module_references: vec![],
             type_definitions: vec![TypeDefinition::new(None, "<Module>")],
             type_references: vec![],
+            lazy_state: None,
         }
     }
 
@@ -133,6 +142,37 @@ impl<'a> Resolution<'a> {
     pub fn parse(bytes: &'a [u8], opts: ReadOptions) -> crate::dll::Result<Self> {
         let dll = DLL::parse(bytes)?;
         dll.resolve(opts)
+    }
+
+    /// Returns the decoded body for the method at `idx`.
+    ///
+    /// **Eager mode** (`lazy_method_bodies: false`, the default): delegates to
+    /// `self[idx].body.as_ref()`. Returns an error if the body is `None` (abstract method or
+    /// `skip_method_bodies` was set at parse time).
+    ///
+    /// **Lazy mode** (`lazy_method_bodies: true`): decodes and caches the body on first call.
+    /// The cache is shared across all clones of this `Resolution`, so a body decoded by one clone
+    /// is visible to all. Errors from decoding a bad body are *not* cached — the next call will
+    /// retry. Unlike eager mode, a bad body does not fail the initial parse.
+    ///
+    /// # Notes on `body: None`
+    ///
+    /// In lazy mode `Method::body` is always `None` regardless of whether the method is abstract.
+    /// Use `method_body` to access the decoded body; check the method's `abstract_member` flag to
+    /// determine whether a body exists at all.
+    pub fn method_body(&self, idx: MethodIndex) -> Result<&body::Method> {
+        match &self.lazy_state {
+            None => self[idx]
+                .body
+                .as_ref()
+                .ok_or_else(|| crate::dll::DLLError::Other("method has no decoded body")),
+            Some(state) => {
+                let def_idx = state.method_idx_to_def.get(&idx).ok_or_else(|| {
+                    crate::dll::DLLError::Other("method has no body (abstract or rva == 0)")
+                })?;
+                state.decode_body(*def_idx)
+            }
+        }
     }
 
     /// Writes the `Resolution` to a byte vector in the .NET PE format.

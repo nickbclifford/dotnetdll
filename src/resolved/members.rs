@@ -526,8 +526,16 @@ pub struct Method<'a> {
     pub attributes: Vec<Attribute<'a>>,
     /// Name of the method.
     pub name: Cow<'a, str>,
-    /// The IL implementation of the method. Not present for abstract methods,
-    /// or if [`ReadOptions::skip_method_bodies`](read::Options::skip_method_bodies) is true at the time of resolution.
+    /// The IL implementation of the method.
+    ///
+    /// This field is `None` when:
+    /// - the method is abstract or has no IL body (RVA == 0), **or**
+    /// - [`ReadOptions::skip_method_bodies`](read::Options::skip_method_bodies) was set, **or**
+    /// - [`ReadOptions::lazy_method_bodies`](read::Options::lazy_method_bodies) was set
+    ///   (bodies are decoded on demand via [`Resolution::method_body`]).
+    ///
+    /// In lazy mode use [`Resolution::method_body`] and check
+    /// [`abstract_member`](Self::abstract_member) to distinguish "abstract" from "not yet decoded".
     pub body: Option<body::Method>,
     /// Signature of the method, including return type and parameters.
     pub signature: signature::ManagedMethod<MethodType>,

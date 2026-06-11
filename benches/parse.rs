@@ -8,13 +8,31 @@ fn parse_system_private_corelib(c: &mut Criterion) {
     let bytes = std::fs::read(env::LIBRARIES.join("System.Private.CoreLib.dll"))
         .expect("failed to read System.Private.CoreLib.dll");
 
-    c.bench_function("parse/System.Private.CoreLib", |b| {
+    let mut group = c.benchmark_group("parse");
+
+    group.bench_function("System.Private.CoreLib/eager", |b| {
         b.iter(|| {
             let parsed = Resolution::parse(black_box(&bytes), ReadOptions::default())
                 .expect("failed to parse System.Private.CoreLib.dll");
             black_box(parsed);
         })
     });
+
+    group.bench_function("System.Private.CoreLib/lazy", |b| {
+        b.iter(|| {
+            let parsed = Resolution::parse(
+                black_box(&bytes),
+                ReadOptions {
+                    lazy_method_bodies: true,
+                    ..ReadOptions::default()
+                },
+            )
+            .expect("failed to parse System.Private.CoreLib.dll");
+            black_box(parsed);
+        })
+    });
+
+    group.finish();
 }
 
 criterion_group!(parse_benches, parse_system_private_corelib);

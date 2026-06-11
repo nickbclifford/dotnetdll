@@ -133,6 +133,18 @@ impl<'a> DLL<'a> {
         bytes.pread(offset).map_err(CLI)
     }
 
+    /// Returns the raw bytes and alignment offset for a method body without parsing.
+    /// Used by the lazy-decode path to defer `binary::method::Method` parsing until first access.
+    pub(crate) fn method_bytes(&self, def: &metadata::table::MethodDef) -> Result<(&'a [u8], usize)> {
+        let bytes = self.raw_rva(def.rva)?;
+        let offset = if !check_bitmask!(bytes[0], 0x2) {
+            4 - (def.rva as usize % 4)
+        } else {
+            0
+        };
+        Ok((bytes, offset))
+    }
+
     /// Resolves the CLI metadata within the DLL into a high-level [`Resolution`] struct.
     pub fn resolve(&self, opts: read::Options) -> Result<Resolution<'a>> {
         read::read_impl(self, opts)

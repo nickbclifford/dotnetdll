@@ -1,6 +1,6 @@
 use super::{
-    AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex, MethodMemberIndex,
-    MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex,
+    lazy, AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex,
+    MethodMemberIndex, MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex,
 };
 use crate::binary::{heap::*, metadata, method};
 use crate::convert::{self, TypeKind};
@@ -10,9 +10,9 @@ use crate::resolved::{
     types::{MemberType, MethodType},
     *,
 };
-use scroll::Pread;
-use std::borrow::Cow;
 use rustc_hash::FxHashMap as HashMap;
+use scroll::Pread;
+use std::{borrow::Cow, sync::Arc};
 use tracing::{debug, warn};
 
 /// A dictionary of options for [`Resolution::parse`] and [`DLL::resolve`].
@@ -23,6 +23,20 @@ pub struct Options {
     ///
     /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,
+
+    /// If this flag is set, method bodies are decoded on first access via
+    /// [`Resolution::method_body`] rather than eagerly during parsing.
+    ///
+    /// In lazy mode [`Method::body`](members::Method::body) is always `None` regardless of
+    /// whether the method is abstract. Use [`Resolution::method_body`] to retrieve a body;
+    /// check [`Method::abstract_member`](members::Method::abstract_member) to determine whether
+    /// a body exists at all.
+    ///
+    /// Decoding errors (malformed IL) are deferred to the first call of
+    /// [`Resolution::method_body`] rather than failing the initial parse.
+    ///
+    /// [`Default`] value of `false`.
+    pub lazy_method_bodies: bool,
 }
 
 macro_rules! throw {
@@ -188,9 +202,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     let userstrings: UserStringReader = dll.get_heap()?;
     let tables = dll.get_logical_metadata()?.tables;
 
+    let def_len = tables.type_def.len();
+    let ref_len = tables.type_ref.len();
     let ctx = convert::read::Context {
-        def_len: tables.type_def.len(),
-        ref_len: tables.type_ref.len(),
+        def_len,
+        ref_len,
         specs: &tables.type_spec,
         sigs: &tables.stand_alone_sig,
         blobs: &blobs,
@@ -1563,6 +1579,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         module_references: module_refs,
         type_definitions: types,
         type_references: type_refs,
+        lazy_state: None,
     };
 
     debug!("custom attributes");
@@ -1880,7 +1897,42 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    if !opts.skip_method_bodies {
+    if opts.lazy_method_bodies {
+        debug!("building lazy method body state");
+
+        let n = tables.method_def.len();
+        let mut pending = Vec::with_capacity(n);
+        let mut method_idx_to_def: HashMap<MethodIndex, usize> = HashMap::default();
+        let mut body_cache = Vec::with_capacity(n);
+
+        for (def_idx, m) in tables.method_def.iter().enumerate() {
+            if m.rva != 0 {
+                let (bytes, offset) = dll.method_bytes(m)?;
+                pending.push(Some(lazy::MethodPendingRaw { bytes, offset }));
+                method_idx_to_def.insert(methods[def_idx], def_idx);
+            } else {
+                pending.push(None);
+            }
+            body_cache.push(std::sync::OnceLock::new());
+        }
+
+        res.lazy_state = Some(Arc::new(lazy::LazyParseState {
+            def_len,
+            ref_len,
+            specs: tables.type_spec.clone(),
+            sigs: tables.stand_alone_sig.clone(),
+            method_spec_table: tables.method_spec.clone(),
+            blobs,
+            userstrings,
+            field_map: field_map.clone(),
+            field_indices: fields.clone(),
+            method_indices: methods.clone(),
+            method_map: method_map.clone(),
+            pending,
+            method_idx_to_def,
+            body_cache,
+        }));
+    } else if !opts.skip_method_bodies {
         debug!("method bodies");
 
         for (idx, m) in tables.method_def.iter().enumerate() {
@@ -2040,7 +2092,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 data_sections,
             });
         }
-    }
+    } // end else if !opts.skip_method_bodies
 
     debug!("resolved module {}", res.module.name);
 
