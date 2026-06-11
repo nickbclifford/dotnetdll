@@ -383,13 +383,31 @@ pub fn instruction<'r>(
                     match ctx.sigs.get(idx) {
                         Some(s) => {
                             let sig: StandAloneMethodSig = ctx.blobs.at_index(s.signature)?.pread(0)?;
-                            let mut parsed = maybe_unmanaged_method(sig.clone(), ctx)?;
+                            let StandAloneMethodSig {
+                                has_this,
+                                explicit_this,
+                                calling_convention,
+                                ret_type,
+                                params,
+                                varargs,
+                            } = sig;
+                            let mut parsed = maybe_unmanaged_method(
+                                StandAloneMethodSig {
+                                    has_this,
+                                    explicit_this,
+                                    calling_convention,
+                                    ret_type,
+                                    params,
+                                    varargs: Vec::new(),
+                                },
+                                ctx,
+                            )?;
                             if matches!(
-                                sig.calling_convention,
+                                calling_convention,
                                 StandAloneCallingConvention::Vararg | StandAloneCallingConvention::Cdecl
                             ) {
                                 parsed.varargs = Some(
-                                    sig.varargs
+                                    varargs
                                         .into_iter()
                                         .map(|p| parameter(p, ctx))
                                         .collect::<Result<_>>()?,

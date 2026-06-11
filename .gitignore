@@ -8,3 +8,4 @@ Cargo.lock
 # AI guidelines
 .junie
 TESTING.md
+.refactor-orchestrator/

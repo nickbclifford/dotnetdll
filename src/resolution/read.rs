@@ -47,19 +47,6 @@ macro_rules! optional_idx {
     };
 }
 
-// we use filter_maps for the member refs because we distinguish between the two
-// kinds by testing if they parse successfully or not, and filter_map makes it really
-// easy to implement that inside an iterator. however, we need to propagate the Results
-// through the final iterator so that they don't get turned into None and swallowed on failure
-macro_rules! filter_map_try {
-    ($e:expr) => {
-        match $e {
-            Ok(n) => n,
-            Err(e) => return Some(Err(e)),
-        }
-    };
-}
-
 macro_rules! build_version {
     ($src:ident) => {
         Version {
@@ -163,33 +150,33 @@ fn make_generic<'a, T: TypeKind>(
             value_type: check_bitmask!(p.flags, 0x08),
             has_default_constructor: check_bitmask!(p.flags, 0x10),
         },
-        type_constraints: tables
-            .generic_param_constraint
-            .iter()
-            .enumerate()
-            .filter_map(|(c_idx, c)| {
-                if c.owner.0 - 1 == param_idx {
-                    let (cmod, ty) = filter_map_try!(convert::read::idx_with_mod(c.constraint, ctx));
-                    Some(Ok((
-                        c_idx,
-                        Constraint {
-                            attributes: vec![],
-                            custom_modifiers: cmod,
-                            constraint_type: ty,
-                        },
-                    )))
-                } else {
-                    None
+        type_constraints: {
+            let constraints = &tables.generic_param_constraint;
+            let owner = param_idx + 1;
+            let start = constraints.partition_point(|c| c.owner.0 < owner);
+
+            let mut type_constraints = Vec::new();
+            let mut c_idx = start;
+
+            while let Some(c) = constraints.get(c_idx) {
+                if c.owner.0 != owner {
+                    break;
                 }
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .enumerate()
-            .map(|(internal, (original, c))| {
-                constraint_map.insert(original, (param_idx, internal));
-                c
-            })
-            .collect(),
+
+                let (cmod, ty) = convert::read::idx_with_mod(c.constraint, ctx)?;
+                let internal = type_constraints.len();
+                constraint_map.insert(c_idx, (param_idx, internal));
+                type_constraints.push(Constraint {
+                    attributes: vec![],
+                    custom_modifiers: cmod,
+                    constraint_type: ty,
+                });
+
+                c_idx += 1;
+            }
+
+            type_constraints
+        },
     })
 }
 
@@ -199,7 +186,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     let blobs: BlobReader = dll.get_heap()?;
     let guids: GUIDReader = dll.get_heap()?;
     let userstrings: UserStringReader = dll.get_heap()?;
-    let mut tables = dll.get_logical_metadata()?.tables;
+    let tables = dll.get_logical_metadata()?.tables;
 
     let ctx = convert::read::Context {
         def_len: tables.type_def.len(),
@@ -291,7 +278,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     if layout_flags == 0x00 {
                         Layout::Automatic
                     } else {
-                        let layout = tables.class_layout.iter().find(|c| c.parent.0 - 1 == idx);
+                        let layout = {
+                            let pos = tables.class_layout.partition_point(|c| c.parent.0 - 1 < idx);
+                            tables.class_layout.get(pos).filter(|c| c.parent.0 - 1 == idx)
+                        };
 
                         match layout_flags {
                             0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
@@ -876,7 +866,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("generic parameters");
 
-    let mut constraint_map = HashMap::new();
+    let mut constraint_map = HashMap::with_capacity(tables.generic_param_constraint.len());
 
     // this table is supposed to be sorted by owner and number (ECMA-335, II.22, page 210)
     // thus no need to sort the generics by sequence after the fact
@@ -1123,6 +1113,20 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     // sorts in preparation for the binary search in extract_method
     methods.sort_unstable_by_key(|m| m.parent_type);
 
+    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::new();
+    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::new();
+
+    for s in &tables.method_semantics {
+        use metadata::index::HasSemantics;
+
+        let method_idx = s.method.0 - 1;
+        match s.association {
+            HasSemantics::Event(e) => sem_by_event.entry(e - 1).or_default().push((s.semantics, method_idx)),
+            HasSemantics::Property(p) => sem_by_property.entry(p - 1).or_default().push((s.semantics, method_idx)),
+            HasSemantics::Null => {}
+        }
+    }
+
     build_vec!(events = (usize, usize)[tables.event.len()], {
         debug!("events");
 
@@ -1148,13 +1152,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 macro_rules! get_listener {
                     ($l_name:literal, $flag:literal, $variant:ident) => {{
-                        let Some(position) = tables.method_semantics.iter().position(|s| {
-                            use metadata::index::HasSemantics;
-                            check_bitmask!(s.semantics, $flag)
-                                && matches!(s.association, HasSemantics::Event(e) if e_idx == e - 1)
-                        }) else { throw!("could not find {} listener for event {}", $l_name, name) };
-                        let sem = tables.method_semantics.remove(position);
-                        let m_idx = sem.method.0 - 1;
+                        let Some(entries) = sem_by_event.get_mut(&e_idx) else {
+                            throw!("could not find {} listener for event {}", $l_name, name)
+                        };
+                        let Some(position) = entries.iter().position(|(semantics, _)| check_bitmask!(*semantics, $flag)) else {
+                            throw!("could not find {} listener for event {}", $l_name, name)
+                        };
+                        let (_, m_idx) = entries.swap_remove(position);
                         if m_idx < tables.method_def.len() {
                             let method = extract_method(parent, methods[m_idx], &mut methods, &tables);
                             methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
@@ -1186,218 +1190,317 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("method semantics");
 
-    // NOTE: seems to be the longest resolution step for large assemblies (i.e. System.Private.CoreLib)
-    // may be worth investigating possible speedups
+    // Batch semantics extraction by parent type so each type's method-index map is built once.
+    // Within a type, extract in descending internal-index order so swap_remove does not
+    // invalidate any method positions that are still waiting to be removed.
+    #[derive(Copy, Clone)]
+    enum SemanticsAssociation {
+        Event(usize),
+        Property(usize),
+    }
+
+    #[derive(Copy, Clone)]
+    struct SemanticsAction {
+        raw_method_idx: usize,
+        semantics: u16,
+        association: SemanticsAssociation,
+    }
+
+    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::new();
+    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::new();
+
+    for (&event_idx, entries) in &sem_by_event {
+        for &(semantics, raw_method_idx) in entries {
+            *remaining_event_counts.entry((event_idx, semantics, raw_method_idx)).or_insert(0) += 1;
+        }
+    }
+
+    for (&property_idx, entries) in &sem_by_property {
+        for &(semantics, raw_method_idx) in entries {
+            *remaining_property_counts.entry((property_idx, semantics, raw_method_idx)).or_insert(0) += 1;
+        }
+    }
+
+    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::new();
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
 
-        let raw_idx = s.method.0 - 1;
-        let Some(&method_idx) = methods.get(raw_idx) else {
-            throw!("invalid method index {} for method semantics", raw_idx)
-        };
+        let raw_method_idx = s.method.0 - 1;
 
-        let parent = &mut types[method_idx.parent_type.0];
-
-        let new_meth = extract_method(parent, method_idx, &mut methods, &tables);
-
-        let member_idx = &mut methods[raw_idx].member;
-
-        match s.association {
+        let (association, include) = match s.association {
             HasSemantics::Event(i) => {
                 let idx = i - 1;
-                let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
-                    scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
-                })?;
-                let event = &mut parent.events[internal_idx];
-
-                if check_bitmask!(s.semantics, 0x20) {
-                    event.raise_event = Some(new_meth);
-                    *member_idx = MethodMemberIndex::EventRaise(internal_idx);
-                } else if check_bitmask!(s.semantics, 0x4) {
-                    event.other.push(new_meth);
-                    *member_idx = MethodMemberIndex::EventOther {
-                        event: internal_idx,
-                        other: event.other.len() - 1,
-                    };
-                }
+                let key = (idx, s.semantics, raw_method_idx);
+                let include = match remaining_event_counts.get_mut(&key) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                };
+                (SemanticsAssociation::Event(idx), include)
             }
             HasSemantics::Property(i) => {
                 let idx = i - 1;
-                let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
-                    scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
-                })?;
-                let property = &mut parent.properties[internal_idx];
-
-                if check_bitmask!(s.semantics, 0x1) {
-                    property.setter = Some(new_meth);
-                    *member_idx = MethodMemberIndex::PropertySetter(internal_idx);
-                } else if check_bitmask!(s.semantics, 0x2) {
-                    property.getter = Some(new_meth);
-                    *member_idx = MethodMemberIndex::PropertyGetter(internal_idx);
-                } else if check_bitmask!(s.semantics, 0x4) {
-                    property.other.push(new_meth);
-                    *member_idx = MethodMemberIndex::PropertyOther {
-                        property: internal_idx,
-                        other: property.other.len() - 1,
-                    };
-                }
+                let key = (idx, s.semantics, raw_method_idx);
+                let include = match remaining_property_counts.get_mut(&key) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                };
+                (SemanticsAssociation::Property(idx), include)
             }
             HasSemantics::Null => throw!("invalid null index for method semantics",),
+        };
+
+        if !include {
+            continue;
+        }
+
+        let Some(&method_idx) = methods.get(raw_method_idx) else {
+            throw!("invalid method index {} for method semantics", raw_method_idx)
+        };
+
+        semantics_by_type.entry(method_idx.parent_type.0).or_default().push(SemanticsAction {
+            raw_method_idx,
+            semantics: s.semantics,
+            association,
+        });
+    }
+
+    let mut semantics_by_type = semantics_by_type.into_iter().collect::<Vec<_>>();
+    semantics_by_type.sort_unstable_by_key(|(parent_type, _)| *parent_type);
+
+    for (parent_type, actions) in semantics_by_type {
+        let type_idx = TypeIndex(parent_type);
+        let start = methods.partition_point(|m| m.parent_type < type_idx);
+        let end = methods.partition_point(|m| m.parent_type <= type_idx);
+
+        let parent = &mut types[parent_type];
+
+        let mut raw_by_internal = vec![usize::MAX; parent.methods.len()];
+        for (raw_idx, method_idx) in methods.iter().enumerate().take(end).skip(start) {
+            if let MethodMemberIndex::Method(internal_idx) = method_idx.member {
+                let Some(slot) = raw_by_internal.get_mut(internal_idx) else {
+                    throw!(
+                        "invalid method internal index {} for type {} in method semantics",
+                        internal_idx,
+                        parent_type
+                    )
+                };
+                *slot = raw_idx;
+            }
+        }
+
+        if raw_by_internal.contains(&usize::MAX) {
+            throw!("incomplete method index map for type {} in method semantics", parent_type)
+        }
+
+        let mut extraction_order = Vec::with_capacity(actions.len());
+        for (action_idx, action) in actions.iter().enumerate() {
+            let MethodMemberIndex::Method(internal_idx) = methods[action.raw_method_idx].member else {
+                throw!("invalid method index {} for method semantics", action.raw_method_idx)
+            };
+            extraction_order.push((internal_idx, action_idx));
+        }
+        extraction_order.sort_unstable_by_key(|(internal_idx, _)| std::cmp::Reverse(*internal_idx));
+
+        let mut extracted = Vec::with_capacity(actions.len());
+
+        for (internal_idx, action_idx) in extraction_order {
+            let Some(&removed_raw_idx) = raw_by_internal.get(internal_idx) else {
+                throw!(
+                    "invalid method internal index {} for type {} in method semantics",
+                    internal_idx,
+                    parent_type
+                )
+            };
+
+            if removed_raw_idx != actions[action_idx].raw_method_idx {
+                throw!(
+                    "method semantics extraction mismatch for method {}",
+                    actions[action_idx].raw_method_idx
+                )
+            }
+
+            let moved_raw_idx = raw_by_internal[raw_by_internal.len() - 1];
+
+            raw_by_internal.swap_remove(internal_idx);
+            let method = parent.methods.swap_remove(internal_idx);
+
+            if internal_idx < raw_by_internal.len() {
+                methods[moved_raw_idx].member = MethodMemberIndex::Method(internal_idx);
+            }
+
+            extracted.push((action_idx, method));
+        }
+
+        extracted.sort_unstable_by_key(|(action_idx, _)| *action_idx);
+
+        for ((expected_action_idx, action), (action_idx, new_meth)) in actions.into_iter().enumerate().zip(extracted) {
+            debug_assert_eq!(expected_action_idx, action_idx);
+
+            let member_idx = &mut methods[action.raw_method_idx].member;
+
+            match action.association {
+                SemanticsAssociation::Event(idx) => {
+                    let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
+                        scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
+                    })?;
+                    let event = &mut parent.events[internal_idx];
+
+                    if check_bitmask!(action.semantics, 0x20) {
+                        event.raise_event = Some(new_meth);
+                        *member_idx = MethodMemberIndex::EventRaise(internal_idx);
+                    } else if check_bitmask!(action.semantics, 0x4) {
+                        event.other.push(new_meth);
+                        *member_idx = MethodMemberIndex::EventOther {
+                            event: internal_idx,
+                            other: event.other.len() - 1,
+                        };
+                    }
+                }
+                SemanticsAssociation::Property(idx) => {
+                    let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
+                        scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
+                    })?;
+                    let property = &mut parent.properties[internal_idx];
+
+                    if check_bitmask!(action.semantics, 0x1) {
+                        property.setter = Some(new_meth);
+                        *member_idx = MethodMemberIndex::PropertySetter(internal_idx);
+                    } else if check_bitmask!(action.semantics, 0x2) {
+                        property.getter = Some(new_meth);
+                        *member_idx = MethodMemberIndex::PropertyGetter(internal_idx);
+                    } else if check_bitmask!(action.semantics, 0x4) {
+                        property.other.push(new_meth);
+                        *member_idx = MethodMemberIndex::PropertyOther {
+                            property: internal_idx,
+                            other: property.other.len() - 1,
+                        };
+                    }
+                }
+            }
         }
     }
 
     debug!("field refs");
 
-    let (field_refs, field_map): (Vec<_>, HashMap<_, _>) = tables
-        .member_ref
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, r)| {
-            use crate::binary::signature::kinds::FieldSig;
-            use members::*;
-            use metadata::index::{MemberRefParent, TypeDefOrRef};
+    let member_ref_len = tables.member_ref.len();
+    let mut field_refs = Vec::with_capacity(member_ref_len);
+    let mut field_map = HashMap::with_capacity(member_ref_len);
 
-            let name = filter_map_try!(strings.at_index(r.name).map_err(CLI)).into();
-            let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
+        use crate::binary::signature::kinds::FieldSig;
+        use members::*;
+        use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-            // NOTE: discarding errors means wasted allocation of formatted messages
-            let field_sig: FieldSig = match sig_blob.pread(0) {
-                Ok(s) => s,
-                Err(_) => return None,
-            };
+        let name = strings.at_index(r.name).map_err(CLI)?.into();
+        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
 
-            let parent = match r.class {
-                MemberRefParent::TypeDef(i) => {
-                    FieldReferenceParent::Type(filter_map_try!(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)))
+        // NOTE: discarding errors means wasted allocation of formatted messages
+        let field_sig: FieldSig = match sig_blob.pread(0) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let parent = match r.class {
+            MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)?),
+            MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)?),
+            MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)?),
+            MemberRefParent::ModuleRef(i) => {
+                let idx = i - 1;
+                if idx < module_refs.len() {
+                    FieldReferenceParent::Module(ModuleRefIndex(idx))
+                } else {
+                    throw!("invalid module reference index {} for field reference {}", idx, name);
                 }
-                MemberRefParent::TypeRef(i) => {
-                    FieldReferenceParent::Type(filter_map_try!(convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)))
-                }
-                MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(filter_map_try!(convert::read::type_idx(
-                    TypeDefOrRef::TypeSpec(i),
-                    &ctx
-                ))),
-                MemberRefParent::ModuleRef(i) => {
-                    let idx = i - 1;
-                    if idx < module_refs.len() {
-                        FieldReferenceParent::Module(ModuleRefIndex(idx))
-                    } else {
-                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                            "invalid module reference index {} for field reference {}",
-                            idx, name
-                        )))));
-                    }
-                }
-                _ => return None,
-            };
+            }
+            _ => continue,
+        };
 
-            Some(Ok((
-                idx,
-                ExternalFieldReference {
-                    attributes: vec![],
-                    parent,
-                    name,
-                    custom_modifiers: filter_map_try!(field_sig
-                        .custom_modifiers
-                        .into_iter()
-                        .map(|c| convert::read::custom_modifier(c, &ctx))
-                        .collect::<Result<_>>()),
-                    field_type: filter_map_try!(MemberType::from_sig(field_sig.field_type, &ctx)),
-                },
-            )))
-        })
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .enumerate()
-        .map(|(current_idx, (orig_idx, r))| (r, (orig_idx, current_idx)))
-        .unzip();
+        let field_type = MemberType::from_sig(field_sig.field_type, &ctx)?;
+        let custom_modifiers = field_sig
+            .custom_modifiers
+            .into_iter()
+            .map(|c| convert::read::custom_modifier(c, &ctx))
+            .collect::<Result<_>>()?;
+
+        let current_idx = field_refs.len();
+        field_map.insert(orig_idx, current_idx);
+        field_refs.push(ExternalFieldReference {
+            attributes: vec![],
+            parent,
+            name,
+            custom_modifiers,
+            field_type,
+        });
+    }
 
     debug!("method refs");
 
-    let (method_refs, method_map): (Vec<_>, HashMap<_, _>) = tables
-        .member_ref
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, r)| {
-            use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
-            use members::*;
-            use metadata::index::{MemberRefParent, TypeDefOrRef};
+    let mut method_refs = Vec::with_capacity(member_ref_len);
+    let mut method_map = HashMap::with_capacity(member_ref_len);
 
-            let name = filter_map_try!(strings.at_index(r.name).map_err(CLI)).into();
-            let sig_blob = filter_map_try!(blobs.at_index(r.signature).map_err(CLI));
+    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
+        use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
+        use members::*;
+        use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-            let ref_sig: MethodRefSig = match sig_blob.pread(0) {
-                Ok(s) => s,
-                Err(_) => return None,
-            };
+        let name = strings.at_index(r.name).map_err(CLI)?.into();
+        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
 
-            let mut signature = filter_map_try!(convert::read::managed_method(ref_sig.method_def, &ctx));
-            if signature.calling_convention == CallingConvention::Vararg {
-                signature.varargs = Some(filter_map_try!(ref_sig
+        // NOTE: discarding errors means wasted allocation of formatted messages
+        let ref_sig: MethodRefSig = match sig_blob.pread(0) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let mut signature = convert::read::managed_method(ref_sig.method_def, &ctx)?;
+        if signature.calling_convention == CallingConvention::Vararg {
+            signature.varargs = Some(
+                ref_sig
                     .varargs
                     .into_iter()
                     .map(|p| convert::read::parameter(p, &ctx))
-                    .collect::<Result<_>>()));
+                    .collect::<Result<_>>()?,
+            );
+        }
+
+        let parent = match r.class {
+            MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)?),
+            MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)?),
+            MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)?),
+            MemberRefParent::ModuleRef(i) => {
+                let idx = i - 1;
+                if idx < module_refs.len() {
+                    MethodReferenceParent::Module(ModuleRefIndex(idx))
+                } else {
+                    throw!("invalid module reference index {} for method reference {}", idx, name);
+                }
             }
+            MemberRefParent::MethodDef(i) => {
+                let idx = i - 1;
+                match methods.get(idx) {
+                    Some(&m) => MethodReferenceParent::VarargMethod(m),
+                    None => throw!("bad method def index {} for method reference {}", idx, name),
+                }
+            }
+            MemberRefParent::Null => throw!("invalid null parent index for method reference {}", name),
+        };
 
-            let parent =
-                match r.class {
-                    MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)
-                    )),
-                    MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)
-                    )),
-                    MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(filter_map_try!(
-                        convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)
-                    )),
-                    MemberRefParent::ModuleRef(i) => {
-                        let idx = i - 1;
-                        if idx < module_refs.len() {
-                            MethodReferenceParent::Module(ModuleRefIndex(idx))
-                        } else {
-                            return Some(Err(CLI(scroll::Error::Custom(format!(
-                                "invalid module reference index {} for method reference {}",
-                                idx, name
-                            )))));
-                        }
-                    }
-                    MemberRefParent::MethodDef(i) => {
-                        let idx = i - 1;
-                        match methods.get(idx) {
-                            Some(&m) => MethodReferenceParent::VarargMethod(m),
-                            None => {
-                                return Some(Err(CLI(scroll::Error::Custom(format!(
-                                    "bad method def index {} for method reference {}",
-                                    idx, name
-                                )))))
-                            }
-                        }
-                    }
-                    MemberRefParent::Null => {
-                        return Some(Err(CLI(scroll::Error::Custom(format!(
-                            "invalid null parent index for method reference {}",
-                            name
-                        )))))
-                    }
-                };
-
-            Some(Ok((
-                idx,
-                ExternalMethodReference {
-                    attributes: vec![],
-                    parent,
-                    name,
-                    signature,
-                },
-            )))
-        })
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .enumerate()
-        .map(|(current_idx, (orig_idx, r))| (r, (orig_idx, current_idx)))
-        .unzip();
+        let current_idx = method_refs.len();
+        method_map.insert(orig_idx, current_idx);
+        method_refs.push(ExternalMethodReference {
+            attributes: vec![],
+            parent,
+            name,
+            signature,
+        });
+    }
 
     let m_ctx = convert::read::MethodContext {
         field_map: &field_map,
