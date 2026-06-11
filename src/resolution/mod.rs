@@ -161,18 +161,67 @@ impl<'a> Resolution<'a> {
     /// Use `method_body` to access the decoded body; check the method's `abstract_member` flag to
     /// determine whether a body exists at all.
     pub fn method_body(&self, idx: MethodIndex) -> Result<&body::Method> {
-        match &self.lazy_state {
-            None => self[idx]
-                .body
-                .as_ref()
-                .ok_or_else(|| crate::dll::DLLError::Other("method has no decoded body")),
-            Some(state) => {
-                let def_idx = state.method_idx_to_def.get(&idx).ok_or_else(|| {
-                    crate::dll::DLLError::Other("method has no body (abstract or rva == 0)")
-                })?;
-                state.decode_body(*def_idx)
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_bodies {
+                let def_idx = state.method_idx_to_def.get(&idx).ok_or(
+                    crate::dll::DLLError::Other("method has no body (abstract or rva == 0)"),
+                )?;
+                return state.decode_body(*def_idx);
             }
         }
+        self[idx]
+            .body
+            .as_ref()
+            .ok_or(crate::dll::DLLError::Other("method has no decoded body"))
+    }
+
+    /// Returns the decoded signature for the method definition at `idx`.
+    ///
+    /// **Eager mode** (`lazy_method_signatures: false`, the default): returns
+    /// `&self[idx].signature` directly.
+    ///
+    /// **Lazy mode** (`lazy_method_signatures: true`): decodes and caches the signature on first
+    /// call using the raw blob captured at parse time. The cache is shared across all clones of
+    /// this `Resolution`. Decode errors are *not* cached — the next call retries.
+    ///
+    /// Use this accessor (rather than accessing `Method::signature` directly) whenever
+    /// `lazy_method_signatures` may be set.
+    pub fn method_signature(
+        &self,
+        idx: MethodIndex,
+    ) -> Result<&crate::resolved::signature::ManagedMethod<crate::resolved::types::MethodType>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_signatures {
+                let def_idx = state.sig_method_idx_to_def.get(&idx).ok_or(
+                    crate::dll::DLLError::Other("method index not found in signature map"),
+                )?;
+                return state.decode_method_def_sig(*def_idx);
+            }
+        }
+        Ok(&self[idx].signature)
+    }
+
+    /// Returns the decoded signature for the method reference at `idx`.
+    ///
+    /// **Eager mode** (`lazy_method_signatures: false`, the default): returns
+    /// `&self[idx].signature` directly.
+    ///
+    /// **Lazy mode** (`lazy_method_signatures: true`): decodes and caches the signature on first
+    /// call. The cache is shared across all clones of this `Resolution`. Decode errors are *not*
+    /// cached — the next call retries.
+    ///
+    /// Use this accessor (rather than accessing `ExternalMethodReference::signature` directly)
+    /// whenever `lazy_method_signatures` may be set.
+    pub fn method_ref_signature(
+        &self,
+        idx: MethodRefIndex,
+    ) -> Result<&crate::resolved::signature::ManagedMethod<crate::resolved::types::MethodType>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_signatures {
+                return state.decode_method_ref_sig(idx.0);
+            }
+        }
+        Ok(&self[idx].signature)
     }
 
     /// Writes the `Resolution` to a byte vector in the .NET PE format.

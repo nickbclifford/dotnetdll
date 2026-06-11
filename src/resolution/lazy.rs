@@ -7,16 +7,17 @@ use crate::{
     binary::{
         heap::{BlobReader, Reader, UserStringReader},
         metadata::{
-            index::{Token, TokenTarget},
+            index::{Blob as BlobIndex, Token, TokenTarget},
             table::{Kind, MethodSpec, StandAloneSig, TypeSpec},
         },
         method,
-        signature::kinds::{LocalVar, LocalVarSig},
+        signature::kinds::{CallingConvention, LocalVar, LocalVarSig, MethodRefSig},
     },
     convert::{self, TypeKind},
     dll::{DLLError::*, Result},
     resolved::{
         body,
+        signature::ManagedMethod,
         types::{LocalVariable, MethodType},
     },
 };
@@ -29,8 +30,14 @@ pub(crate) struct MethodPendingRaw<'a> {
     pub offset: usize,
 }
 
-/// All context needed to decode method bodies on demand, shared across `Resolution` clones.
+/// All context needed to decode method bodies and/or signatures on demand, shared across
+/// `Resolution` clones.
 pub(crate) struct LazyParseState<'a> {
+    /// Whether method bodies are decoded lazily (mirrors `ReadOptions::lazy_method_bodies`).
+    pub lazy_bodies: bool,
+    /// Whether method signatures are decoded lazily (mirrors `ReadOptions::lazy_method_signatures`).
+    pub lazy_signatures: bool,
+
     pub def_len: usize,
     pub ref_len: usize,
     // Owned copies of the table rows needed by Context/MethodContext
@@ -45,12 +52,27 @@ pub(crate) struct LazyParseState<'a> {
     pub field_indices: Vec<FieldIndex>,
     pub method_indices: Vec<MethodIndex>,
     pub method_map: FxHashMap<usize, usize>,
+
+    // ── Lazy body fields (populated only when lazy_bodies is true) ──────────
     // Per-method: [method_def_idx] -> raw bytes (None for abstract/rva==0)
     pub pending: Vec<Option<MethodPendingRaw<'a>>>,
-    /// MethodIndex -> method_def_idx (inverse of method_indices for non-abstract methods)
+    /// MethodIndex -> method_def_idx (for methods with bodies; used by method_body)
     pub method_idx_to_def: FxHashMap<MethodIndex, usize>,
     /// [method_def_idx] -> decoded body; shared across all Resolution clones via Arc
     pub body_cache: Vec<OnceLock<body::Method>>,
+
+    // ── Lazy signature fields (populated only when lazy_signatures is true) ──
+    /// MethodIndex -> method_def_idx for ALL methods (including abstract); used by
+    /// method_signature.
+    pub sig_method_idx_to_def: FxHashMap<MethodIndex, usize>,
+    /// [method_def_idx] -> (blob index, is_static flag) captured from the MethodDef row.
+    pub sig_pending_def: Vec<(BlobIndex, bool)>,
+    /// [method_def_idx] -> decoded signature cache; shared across all Resolution clones via Arc.
+    pub sig_cache_def: Vec<OnceLock<ManagedMethod<MethodType>>>,
+    /// [method_ref_idx] -> blob index captured from the MemberRef row.
+    pub sig_pending_ref: Vec<BlobIndex>,
+    /// [method_ref_idx] -> decoded signature cache; shared across all Resolution clones via Arc.
+    pub sig_cache_ref: Vec<OnceLock<ManagedMethod<MethodType>>>,
 }
 
 impl<'a> std::fmt::Debug for LazyParseState<'a> {
@@ -58,8 +80,12 @@ impl<'a> std::fmt::Debug for LazyParseState<'a> {
         f.debug_struct("LazyParseState")
             .field("def_len", &self.def_len)
             .field("ref_len", &self.ref_len)
+            .field("lazy_bodies", &self.lazy_bodies)
+            .field("lazy_signatures", &self.lazy_signatures)
             .field("pending_count", &self.pending.iter().filter(|p| p.is_some()).count())
-            .field("cached_count", &self.body_cache.iter().filter(|c| c.get().is_some()).count())
+            .field("body_cached_count", &self.body_cache.iter().filter(|c| c.get().is_some()).count())
+            .field("sig_def_cached_count", &self.sig_cache_def.iter().filter(|c| c.get().is_some()).count())
+            .field("sig_ref_cached_count", &self.sig_cache_ref.iter().filter(|c| c.get().is_some()).count())
             .finish_non_exhaustive()
     }
 }
@@ -80,6 +106,68 @@ impl<'a> LazyParseState<'a> {
         Ok(self.body_cache[def_idx].get().unwrap())
     }
 
+    /// Decode the signature for method def at `def_idx`, or return a cached result.
+    ///
+    /// On decode failure the `OnceLock` cell is left empty so the next call retries.
+    pub fn decode_method_def_sig(&self, def_idx: usize) -> Result<&ManagedMethod<MethodType>> {
+        if let Some(cached) = self.sig_cache_def[def_idx].get() {
+            return Ok(cached);
+        }
+        let sig = self.decode_method_def_sig_inner(def_idx)?;
+        let _ = self.sig_cache_def[def_idx].set(sig);
+        Ok(self.sig_cache_def[def_idx].get().unwrap())
+    }
+
+    fn decode_method_def_sig_inner(&self, def_idx: usize) -> Result<ManagedMethod<MethodType>> {
+        let (blob_idx, is_static) = self.sig_pending_def[def_idx];
+        let ctx = self.make_ctx();
+        let mut sig =
+            convert::read::managed_method(self.blobs.at_index(blob_idx)?.pread(0).map_err(CLI)?, &ctx)?;
+        if is_static {
+            sig.instance = false;
+        }
+        Ok(sig)
+    }
+
+    /// Decode the signature for method ref at `ref_idx`, or return a cached result.
+    ///
+    /// On decode failure the `OnceLock` cell is left empty so the next call retries.
+    pub fn decode_method_ref_sig(&self, ref_idx: usize) -> Result<&ManagedMethod<MethodType>> {
+        if let Some(cached) = self.sig_cache_ref[ref_idx].get() {
+            return Ok(cached);
+        }
+        let sig = self.decode_method_ref_sig_inner(ref_idx)?;
+        let _ = self.sig_cache_ref[ref_idx].set(sig);
+        Ok(self.sig_cache_ref[ref_idx].get().unwrap())
+    }
+
+    fn decode_method_ref_sig_inner(&self, ref_idx: usize) -> Result<ManagedMethod<MethodType>> {
+        let blob_idx = self.sig_pending_ref[ref_idx];
+        let sig_blob = self.blobs.at_index(blob_idx)?;
+        let ref_sig: MethodRefSig = sig_blob.pread(0).map_err(CLI)?;
+        let ctx = self.make_ctx();
+        let mut signature = convert::read::managed_method(ref_sig.method_def, &ctx)?;
+        if signature.calling_convention == CallingConvention::Vararg {
+            let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
+            for p in ref_sig.varargs {
+                varargs.push(convert::read::parameter(p, &ctx)?);
+            }
+            signature.varargs = Some(varargs);
+        }
+        Ok(signature)
+    }
+
+    fn make_ctx(&self) -> convert::read::Context<'_, 'a> {
+        convert::read::Context {
+            def_len: self.def_len,
+            ref_len: self.ref_len,
+            specs: &self.specs,
+            sigs: &self.sigs,
+            blobs: &self.blobs,
+            userstrings: &self.userstrings,
+        }
+    }
+
     fn decode_body_inner(&self, def_idx: usize) -> Result<body::Method> {
         let pending = self.pending[def_idx].as_ref().ok_or_else(|| {
             CLI(scroll::Error::Custom(format!(
@@ -90,14 +178,7 @@ impl<'a> LazyParseState<'a> {
 
         let raw_body: method::Method = pending.bytes.pread(pending.offset).map_err(CLI)?;
 
-        let ctx = convert::read::Context {
-            def_len: self.def_len,
-            ref_len: self.ref_len,
-            specs: &self.specs,
-            sigs: &self.sigs,
-            blobs: &self.blobs,
-            userstrings: &self.userstrings,
-        };
+        let ctx = self.make_ctx();
         let m_ctx = convert::read::MethodContext {
             field_map: &self.field_map,
             field_indices: &self.field_indices,

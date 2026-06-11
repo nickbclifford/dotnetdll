@@ -37,6 +37,23 @@ pub struct Options {
     ///
     /// [`Default`] value of `false`.
     pub lazy_method_bodies: bool,
+
+    /// If this flag is set, method signatures are decoded on first access via
+    /// [`Resolution::method_signature`] / [`Resolution::method_ref_signature`] rather than
+    /// eagerly during parsing.
+    ///
+    /// In lazy mode [`Method::signature`](members::Method::signature) and
+    /// [`ExternalMethodReference::signature`](members::ExternalMethodReference::signature) hold a
+    /// placeholder value (`ManagedMethod::default()`). Use [`Resolution::method_signature`] and
+    /// [`Resolution::method_ref_signature`] to retrieve the real decoded signature.
+    ///
+    /// Decoding errors are deferred to the first accessor call for that method and are not cached
+    /// — retried on the next call.
+    ///
+    /// This option is independent of `lazy_method_bodies` and can be combined with it.
+    ///
+    /// [`Default`] value of `false`.
+    pub lazy_method_signatures: bool,
 }
 
 macro_rules! throw {
@@ -654,6 +671,15 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     let mut owned_params = Vec::with_capacity(tables.param.len());
 
+    // Pre-sized storage for lazy signature pending data; only populated when
+    // opts.lazy_method_signatures is set.  Indexed by method_def row index.
+    let mut sig_pending_def: Vec<(crate::binary::metadata::index::Blob, bool)> =
+        if opts.lazy_method_signatures {
+            vec![(crate::binary::metadata::index::Blob(0), false); tables.method_def.len()]
+        } else {
+            vec![]
+        };
+
     build_vec!(methods = MethodIndex[tables.method_def.len()], {
         debug!("methods");
 
@@ -666,11 +692,17 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 let name = heap_idx!(strings, m.name);
 
-                let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
-
-                if check_bitmask!(m.flags, 0x10) {
-                    sig.instance = false;
-                }
+                let sig = if opts.lazy_method_signatures {
+                    sig_pending_def[m_idx] = (m.signature, check_bitmask!(m.flags, 0x10));
+                    Default::default()
+                } else {
+                    let mut sig =
+                        convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+                    if check_bitmask!(m.flags, 0x10) {
+                        sig.instance = false;
+                    }
+                    sig
+                };
 
                 parent_methods.push(Method {
                     attributes: vec![],
@@ -716,10 +748,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     no_optimization: check_bitmask!(m.impl_flags, 0x40),
                 });
 
-                methods[m_idx].write(MethodIndex {
+                let method_idx = MethodIndex {
                     parent_type: TypeIndex(type_idx),
                     member: MethodMemberIndex::Method(parent_methods.len() - 1),
-                });
+                };
+                methods[m_idx].write(method_idx);
 
                 owned_params.push((
                     m_idx,
@@ -1429,6 +1462,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     let mut method_refs = Vec::with_capacity(member_ref_len);
     let mut method_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
+    let mut sig_pending_ref: Vec<crate::binary::metadata::index::Blob> =
+        if opts.lazy_method_signatures { Vec::with_capacity(member_ref_len) } else { vec![] };
 
     for (orig_idx, r) in tables.member_ref.iter().enumerate() {
         use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
@@ -1444,14 +1479,20 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             Err(_) => continue,
         };
 
-        let mut signature = convert::read::managed_method(ref_sig.method_def, &ctx)?;
-        if signature.calling_convention == CallingConvention::Vararg {
-            let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
-            for p in ref_sig.varargs {
-                varargs.push(convert::read::parameter(p, &ctx)?);
+        let signature = if opts.lazy_method_signatures {
+            sig_pending_ref.push(r.signature);
+            Default::default()
+        } else {
+            let mut sig = convert::read::managed_method(ref_sig.method_def, &ctx)?;
+            if sig.calling_convention == CallingConvention::Vararg {
+                let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
+                for p in ref_sig.varargs {
+                    varargs.push(convert::read::parameter(p, &ctx)?);
+                }
+                sig.varargs = Some(varargs);
             }
-            signature.varargs = Some(varargs);
-        }
+            sig
+        };
 
         let parent = match r.class {
             MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)?),
@@ -1514,6 +1555,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     };
 
     let entry_token = dll.cli.entry_point_token.to_le_bytes().pread::<Token>(0)?;
+    let method_ref_count = method_refs.len();
 
     let mut res = Resolution {
         assembly,
@@ -1864,26 +1906,58 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    if opts.lazy_method_bodies {
-        debug!("building lazy method body state");
+    if opts.lazy_method_bodies || opts.lazy_method_signatures {
+        debug!("building lazy parse state");
 
         let n = tables.method_def.len();
-        let mut pending = Vec::with_capacity(n);
-        let mut method_idx_to_def: HashMap<MethodIndex, usize> = HashMap::with_capacity_and_hasher(tables.method_def.len(), Default::default());
-        let mut body_cache = Vec::with_capacity(n);
+        let (pending, method_idx_to_def, body_cache) = if opts.lazy_method_bodies {
+            debug!("  lazy method bodies");
+            let mut pending = Vec::with_capacity(n);
+            let mut method_idx_to_def: HashMap<MethodIndex, usize> =
+                HashMap::with_capacity_and_hasher(n, Default::default());
+            let mut body_cache = Vec::with_capacity(n);
 
-        for (def_idx, m) in tables.method_def.iter().enumerate() {
-            if m.rva != 0 {
-                let (bytes, offset) = dll.method_bytes(m)?;
-                pending.push(Some(lazy::MethodPendingRaw { bytes, offset }));
-                method_idx_to_def.insert(methods[def_idx], def_idx);
-            } else {
-                pending.push(None);
+            for (def_idx, m) in tables.method_def.iter().enumerate() {
+                if m.rva != 0 {
+                    let (bytes, offset) = dll.method_bytes(m)?;
+                    pending.push(Some(lazy::MethodPendingRaw { bytes, offset }));
+                    method_idx_to_def.insert(methods[def_idx], def_idx);
+                } else {
+                    pending.push(None);
+                }
+                body_cache.push(std::sync::OnceLock::new());
             }
-            body_cache.push(std::sync::OnceLock::new());
-        }
+            (pending, method_idx_to_def, body_cache)
+        } else {
+            (vec![], HashMap::with_capacity_and_hasher(0, Default::default()), vec![])
+        };
+
+        // sig_method_idx_to_def must be built AFTER the event/property semantics phase, which
+        // may reassign MethodIndex::member values. methods[def_idx] here holds the final values.
+        let sig_method_idx_to_def: HashMap<MethodIndex, usize> = if opts.lazy_method_signatures {
+            methods
+                .iter()
+                .enumerate()
+                .map(|(def_idx, &m_idx)| (m_idx, def_idx))
+                .collect()
+        } else {
+            HashMap::with_capacity_and_hasher(0, Default::default())
+        };
+
+        let sig_cache_def: Vec<std::sync::OnceLock<_>> = if opts.lazy_method_signatures {
+            (0..n).map(|_| std::sync::OnceLock::new()).collect()
+        } else {
+            vec![]
+        };
+        let sig_cache_ref: Vec<std::sync::OnceLock<_>> = if opts.lazy_method_signatures {
+            (0..method_ref_count).map(|_| std::sync::OnceLock::new()).collect()
+        } else {
+            vec![]
+        };
 
         res.lazy_state = Some(Arc::new(lazy::LazyParseState {
+            lazy_bodies: opts.lazy_method_bodies,
+            lazy_signatures: opts.lazy_method_signatures,
             def_len,
             ref_len,
             specs: tables.type_spec.clone(),
@@ -1898,6 +1972,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             pending,
             method_idx_to_def,
             body_cache,
+            sig_method_idx_to_def,
+            sig_pending_def,
+            sig_cache_def,
+            sig_pending_ref,
+            sig_cache_ref,
         }));
     } else if !opts.skip_method_bodies {
         debug!("method bodies");

@@ -3,6 +3,55 @@ use dotnetdll::prelude::*;
 #[macro_use]
 mod common;
 
+/// Verify that `lazy_method_signatures` produces the same decoded signatures as eager mode.
+#[test]
+fn lazy_signatures_match_eager() -> Result<(), Box<dyn std::error::Error>> {
+    let file = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;
+
+    let eager = Resolution::parse(&file, ReadOptions::default())?;
+    let lazy = Resolution::parse(
+        &file,
+        ReadOptions {
+            lazy_method_signatures: true,
+            ..ReadOptions::default()
+        },
+    )?;
+
+    // Spot-check the first 500 method defs across all types.
+    let mut checked = 0;
+    'outer: for (type_idx, typedef) in eager.enumerate_type_definitions() {
+        for (method_idx, eager_method) in eager.enumerate_methods(type_idx) {
+            let eager_sig = &eager_method.signature;
+            let lazy_sig = lazy.method_signature(method_idx)?;
+            assert_eq!(
+                eager_sig, lazy_sig,
+                "signature mismatch for method {}::{}",
+                typedef.name, eager_method.name
+            );
+            checked += 1;
+            if checked >= 500 {
+                break 'outer;
+            }
+        }
+    }
+
+    // Also spot-check method refs.
+    let mut ref_checked = 0;
+    for (ref_idx, eager_ref) in eager.enumerate_method_references() {
+        let eager_sig = &eager_ref.signature;
+        let lazy_sig = lazy.method_ref_signature(ref_idx)?;
+        assert_eq!(eager_sig, lazy_sig, "method ref signature mismatch for {}", eager_ref.name);
+        ref_checked += 1;
+        if ref_checked >= 200 {
+            break;
+        }
+    }
+
+    assert!(checked > 0, "no method defs checked");
+    assert!(ref_checked > 0, "no method refs checked");
+    Ok(())
+}
+
 #[test]
 fn parse() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;

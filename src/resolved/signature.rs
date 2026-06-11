@@ -255,6 +255,24 @@ impl<C, T> MethodSignature<C, T> {
 pub type ManagedMethod<T> = MethodSignature<CallingConvention, T>;
 /// A method signature for a method that may be unmanaged (e.g. for a function pointer).
 pub type MaybeUnmanagedMethod<T> = MethodSignature<StandAloneCallingConvention, T>;
+impl<T> Default for ManagedMethod<T> {
+    /// Returns a placeholder instance-method signature with no parameters and a void return type.
+    ///
+    /// Used as a sentinel value in lazy-signature mode; always access the real signature via
+    /// [`Resolution::method_signature`](crate::resolution::Resolution::method_signature) when
+    /// `ReadOptions::lazy_method_signatures` is set.
+    fn default() -> Self {
+        Self {
+            instance: true,
+            explicit_this: false,
+            calling_convention: CallingConvention::Default,
+            parameters: vec![],
+            return_type: ReturnType::VOID,
+            varargs: None,
+        }
+    }
+}
+
 impl<T> ManagedMethod<T> {
     /// Creates a new managed method signature.
     pub const fn new(instance: bool, return_type: ReturnType<T>, parameters: Vec<Parameter<T>>) -> Self {

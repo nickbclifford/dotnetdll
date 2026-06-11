@@ -18,12 +18,41 @@ fn parse_system_private_corelib(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("System.Private.CoreLib/lazy", |b| {
+    group.bench_function("System.Private.CoreLib/lazy_bodies", |b| {
         b.iter(|| {
             let parsed = Resolution::parse(
                 black_box(&bytes),
                 ReadOptions {
                     lazy_method_bodies: true,
+                    ..ReadOptions::default()
+                },
+            )
+            .expect("failed to parse System.Private.CoreLib.dll");
+            black_box(parsed);
+        })
+    });
+
+    group.bench_function("System.Private.CoreLib/lazy_signatures", |b| {
+        b.iter(|| {
+            let parsed = Resolution::parse(
+                black_box(&bytes),
+                ReadOptions {
+                    lazy_method_signatures: true,
+                    ..ReadOptions::default()
+                },
+            )
+            .expect("failed to parse System.Private.CoreLib.dll");
+            black_box(parsed);
+        })
+    });
+
+    group.bench_function("System.Private.CoreLib/lazy_all", |b| {
+        b.iter(|| {
+            let parsed = Resolution::parse(
+                black_box(&bytes),
+                ReadOptions {
+                    lazy_method_bodies: true,
+                    lazy_method_signatures: true,
                     ..ReadOptions::default()
                 },
             )

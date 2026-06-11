@@ -538,6 +538,11 @@ pub struct Method<'a> {
     /// [`abstract_member`](Self::abstract_member) to distinguish "abstract" from "not yet decoded".
     pub body: Option<body::Method>,
     /// Signature of the method, including return type and parameters.
+    ///
+    /// In [`ReadOptions::lazy_method_signatures`](read::Options::lazy_method_signatures) mode this
+    /// field holds a placeholder (`ManagedMethod::default()`). Use
+    /// [`Resolution::method_signature`](crate::resolution::Resolution::method_signature) to
+    /// retrieve the real decoded signature when that option may be set.
     pub signature: signature::ManagedMethod<MethodType>,
     /// Visibility scope of the method.
     pub accessibility: Accessibility,
@@ -775,6 +780,11 @@ pub struct ExternalMethodReference<'a> {
     /// Name of the method.
     pub name: Cow<'a, str>,
     /// Signature of the method.
+    ///
+    /// In [`ReadOptions::lazy_method_signatures`](read::Options::lazy_method_signatures) mode this
+    /// field holds a placeholder. Use
+    /// [`Resolution::method_ref_signature`](crate::resolution::Resolution::method_ref_signature)
+    /// to retrieve the real decoded signature when that option may be set.
     pub signature: signature::ManagedMethod<MethodType>,
 }
 
