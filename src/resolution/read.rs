@@ -2,12 +2,12 @@ use super::{
     lazy, AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex,
     MethodMemberIndex, MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex,
 };
-use crate::binary::{heap::*, metadata, method};
+use crate::binary::{heap::*, metadata};
 use crate::convert::{self, TypeKind};
 use crate::dll::{DLLError::*, Result, DLL};
 use crate::prelude::generic::{Constraint, Generic, SpecialConstraint, Variance};
 use crate::resolved::{
-    types::{MemberType, MethodType},
+    types::MemberType,
     *,
 };
 use rustc_hash::FxHashMap as HashMap;
@@ -257,79 +257,71 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("assembly refs");
 
-    let assembly_refs = tables
-        .assembly_ref
-        .iter()
-        .map(|a| {
-            use assembly::*;
-
-            Ok(ExternalAssemblyReference {
-                attributes: vec![],
-                version: build_version!(a),
-                has_full_public_key: check_bitmask!(a.flags, 0x0001),
-                public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
-                name: heap_idx!(strings, a.name),
-                culture: optional_idx!(strings, a.culture),
-                hash_value: optional_idx!(blobs, a.hash_value),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut assembly_refs = Vec::with_capacity(tables.assembly_ref.len());
+    for a in &tables.assembly_ref {
+        use assembly::*;
+        assembly_refs.push(ExternalAssemblyReference {
+            attributes: vec![],
+            version: build_version!(a),
+            has_full_public_key: check_bitmask!(a.flags, 0x0001),
+            public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
+            name: heap_idx!(strings, a.name),
+            culture: optional_idx!(strings, a.culture),
+            hash_value: optional_idx!(blobs, a.hash_value),
+        });
+    }
 
     debug!("type definitions");
 
-    let mut types = tables
-        .type_def
-        .iter()
-        .enumerate()
-        .map(|(idx, t)| {
-            use types::*;
+    let mut types = Vec::with_capacity(tables.type_def.len());
+    for (idx, t) in tables.type_def.iter().enumerate() {
+        use types::*;
 
-            let layout_flags = t.flags & 0x18;
-            let name = heap_idx!(strings, t.type_name);
+        let layout_flags = t.flags & 0x18;
+        let name = heap_idx!(strings, t.type_name);
 
-            Ok(TypeDefinition {
-                attributes: vec![],
-                flags: TypeFlags::from_mask(
-                    t.flags,
-                    if layout_flags == 0x00 {
-                        Layout::Automatic
-                    } else {
-                        let layout = {
-                            let pos = tables.class_layout.partition_point(|c| c.parent.0 - 1 < idx);
-                            tables.class_layout.get(pos).filter(|c| c.parent.0 - 1 == idx)
-                        };
-
-                        match layout_flags {
-                            0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
-                                packing_size: l.packing_size as usize,
-                                class_size: l.class_size as usize,
-                            })),
-                            0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
-                                class_size: l.class_size as usize,
-                            })),
-                            _ => unreachable!(),
-                        }
-                    },
-                ),
-                name,
-                namespace: optional_idx!(strings, t.type_namespace),
-                fields: vec![],
-                properties: vec![],
-                methods: vec![],
-                events: vec![],
-                encloser: None,
-                overrides: vec![],
-                extends: if t.extends.is_null() {
-                    None
+        types.push(TypeDefinition {
+            attributes: vec![],
+            flags: TypeFlags::from_mask(
+                t.flags,
+                if layout_flags == 0x00 {
+                    Layout::Automatic
                 } else {
-                    Some(convert::read::type_source(t.extends, &ctx)?)
+                    let layout = {
+                        let pos = tables.class_layout.partition_point(|c| c.parent.0 - 1 < idx);
+                        tables.class_layout.get(pos).filter(|c| c.parent.0 - 1 == idx)
+                    };
+
+                    match layout_flags {
+                        0x08 => Layout::Sequential(layout.map(|l| SequentialLayout {
+                            packing_size: l.packing_size as usize,
+                            class_size: l.class_size as usize,
+                        })),
+                        0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
+                            class_size: l.class_size as usize,
+                        })),
+                        _ => unreachable!(),
+                    }
                 },
-                implements: vec![],
-                generic_parameters: vec![],
-                security: None,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+            ),
+            name,
+            namespace: optional_idx!(strings, t.type_namespace),
+            fields: vec![],
+            properties: vec![],
+            methods: vec![],
+            events: vec![],
+            encloser: None,
+            overrides: vec![],
+            extends: if t.extends.is_null() {
+                None
+            } else {
+                Some(convert::read::type_source(t.extends, &ctx)?)
+            },
+            implements: vec![],
+            generic_parameters: vec![],
+            security: None,
+        });
+    }
 
     debug!("nested types");
 
@@ -352,153 +344,139 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    let owned_fields = tables
-        .type_def
-        .iter()
-        .enumerate()
-        .map(|e| Ok(range_index!(enumerated e => range field_list in type_def indexes field)))
-        .collect::<Result<Vec<_>>>()?;
+    let mut owned_fields = Vec::with_capacity(tables.type_def.len());
+    for e in tables.type_def.iter().enumerate() {
+        owned_fields.push(range_index!(enumerated e => range field_list in type_def indexes field));
+    }
 
-    let owned_methods = tables
-        .type_def
-        .iter()
-        .enumerate()
-        .map(|e| Ok(range_index!(enumerated e => range method_list in type_def indexes method_def)))
-        .collect::<Result<Vec<_>>>()?;
+    let mut owned_methods = Vec::with_capacity(tables.type_def.len());
+    for e in tables.type_def.iter().enumerate() {
+        owned_methods.push(range_index!(enumerated e => range method_list in type_def indexes method_def));
+    }
 
     debug!("files");
 
-    let files: Vec<_> = tables
-        .file
-        .iter()
-        .map(|f| {
-            Ok(module::File {
-                attributes: vec![],
-                has_metadata: !check_bitmask!(f.flags, 0x0001),
-                name: heap_idx!(strings, f.name),
-                hash_value: heap_idx!(blobs, f.hash_value),
-            })
-        })
-        .collect::<Result<_>>()?;
+    let mut files = Vec::with_capacity(tables.file.len());
+    for f in &tables.file {
+        files.push(module::File {
+            attributes: vec![],
+            has_metadata: !check_bitmask!(f.flags, 0x0001),
+            name: heap_idx!(strings, f.name),
+            hash_value: heap_idx!(blobs, f.hash_value),
+        });
+    }
 
     debug!("resources");
 
-    let resources: Vec<_> = tables
-        .manifest_resource
-        .iter()
-        .map(|r| {
-            use metadata::index::Implementation as BinImpl;
-            use resource::*;
+    let mut resources = Vec::with_capacity(tables.manifest_resource.len());
+    for r in &tables.manifest_resource {
+        use metadata::index::Implementation as BinImpl;
+        use resource::*;
 
-            let name = heap_idx!(strings, r.name);
+        let name = heap_idx!(strings, r.name);
+        let mut offset = r.offset as usize;
 
-            let mut offset = r.offset as usize;
-
-            Ok(ManifestResource {
-                attributes: vec![],
-                visibility: match r.flags & 0x7 {
-                    0x1 => Visibility::Public,
-                    0x2 => Visibility::Private,
-                    bad => throw!("invalid visibility {:#03x} for manifest resource {}", bad, name),
-                },
-                implementation: match r.implementation {
-                    BinImpl::File(f) => {
-                        let idx = f - 1;
-                        if idx < files.len() {
-                            Implementation::File {
-                                location: FileIndex(idx),
-                                offset,
-                            }
-                        } else {
-                            throw!("invalid file index {} for manifest resource {}", idx, name)
+        resources.push(ManifestResource {
+            attributes: vec![],
+            visibility: match r.flags & 0x7 {
+                0x1 => Visibility::Public,
+                0x2 => Visibility::Private,
+                bad => throw!("invalid visibility {:#03x} for manifest resource {}", bad, name),
+            },
+            implementation: match r.implementation {
+                BinImpl::File(f) => {
+                    let idx = f - 1;
+                    if idx < files.len() {
+                        Implementation::File {
+                            location: FileIndex(idx),
+                            offset,
                         }
+                    } else {
+                        throw!("invalid file index {} for manifest resource {}", idx, name)
                     }
-                    BinImpl::AssemblyRef(a) => {
-                        let idx = a - 1;
+                }
+                BinImpl::AssemblyRef(a) => {
+                    let idx = a - 1;
 
-                        if idx < assembly_refs.len() {
-                            Implementation::Assembly {
-                                location: AssemblyRefIndex(idx),
-                                offset,
-                            }
-                        } else {
-                            throw!(
-                                "invalid assembly reference index {} for manifest resource {}",
-                                idx,
-                                name
-                            )
+                    if idx < assembly_refs.len() {
+                        Implementation::Assembly {
+                            location: AssemblyRefIndex(idx),
+                            offset,
                         }
+                    } else {
+                        throw!(
+                            "invalid assembly reference index {} for manifest resource {}",
+                            idx,
+                            name
+                        )
                     }
-                    BinImpl::ExportedType(_) => throw!(
-                        "exported type indices are invalid in manifest resource implementations (found in resource {})",
-                        name
-                    ),
-                    BinImpl::Null => {
-                        let resources = dll.at_rva(&dll.cli.resources)?;
-                        let len: u32 = resources.gread_with(&mut offset, scroll::LE)?;
-                        Implementation::CurrentFile(resources[offset..offset + (len as usize)].into())
-                    }
-                },
-                name,
-            })
-        })
-        .collect::<Result<_>>()?;
+                }
+                BinImpl::ExportedType(_) => throw!(
+                    "exported type indices are invalid in manifest resource implementations (found in resource {})",
+                    name
+                ),
+                BinImpl::Null => {
+                    let rva_data = dll.at_rva(&dll.cli.resources)?;
+                    let len: u32 = rva_data.gread_with(&mut offset, scroll::LE)?;
+                    Implementation::CurrentFile(rva_data[offset..offset + (len as usize)].into())
+                }
+            },
+            name,
+        });
+    }
 
     debug!("exported types");
 
-    let exports: Vec<_> = tables
-        .exported_type
-        .iter()
-        .map(|e| {
-            use metadata::index::Implementation;
-            use types::*;
+    let mut exports = Vec::with_capacity(tables.exported_type.len());
+    for e in &tables.exported_type {
+        use metadata::index::Implementation;
+        use types::*;
 
-            let name = heap_idx!(strings, e.type_name);
-            Ok(ExportedType {
-                attributes: vec![],
-                flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
-                namespace: optional_idx!(strings, e.type_namespace),
-                implementation: match e.implementation {
-                    Implementation::File(f) => {
-                        let idx = f - 1;
-                        let t_idx = e.type_def_id as usize;
+        let name = heap_idx!(strings, e.type_name);
+        exports.push(ExportedType {
+            attributes: vec![],
+            flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
+            namespace: optional_idx!(strings, e.type_namespace),
+            implementation: match e.implementation {
+                Implementation::File(f) => {
+                    let idx = f - 1;
+                    let t_idx = e.type_def_id as usize;
 
-                        if idx < files.len() {
-                            TypeImplementation::ModuleFile {
-                                type_def: if t_idx < tables.type_def.len() {
-                                    TypeIndex(t_idx)
-                                } else {
-                                    throw!("invalid type definition index {} in exported type {}", t_idx, name)
-                                },
-                                file: FileIndex(idx),
-                            }
-                        } else {
-                            throw!("invalid file index {} in exported type {}", idx, name)
+                    if idx < files.len() {
+                        TypeImplementation::ModuleFile {
+                            type_def: if t_idx < tables.type_def.len() {
+                                TypeIndex(t_idx)
+                            } else {
+                                throw!("invalid type definition index {} in exported type {}", t_idx, name)
+                            },
+                            file: FileIndex(idx),
                         }
+                    } else {
+                        throw!("invalid file index {} in exported type {}", idx, name)
                     }
-                    Implementation::AssemblyRef(a) => {
-                        let idx = a - 1;
+                }
+                Implementation::AssemblyRef(a) => {
+                    let idx = a - 1;
 
-                        if idx < assembly_refs.len() {
-                            TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
-                        } else {
-                            throw!("invalid assembly reference index {} in exported type {}", idx, name)
-                        }
+                    if idx < assembly_refs.len() {
+                        TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
+                    } else {
+                        throw!("invalid assembly reference index {} in exported type {}", idx, name)
                     }
-                    Implementation::ExportedType(t) => {
-                        let idx = t - 1;
-                        if idx < tables.exported_type.len() {
-                            TypeImplementation::Nested(ExportedTypeIndex(idx))
-                        } else {
-                            throw!("invalid nested type index {} in exported type {}", idx, name);
-                        }
+                }
+                Implementation::ExportedType(t) => {
+                    let idx = t - 1;
+                    if idx < tables.exported_type.len() {
+                        TypeImplementation::Nested(ExportedTypeIndex(idx))
+                    } else {
+                        throw!("invalid nested type index {} in exported type {}", idx, name);
                     }
-                    Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
-                },
-                name,
-            })
-        })
-        .collect::<Result<_>>()?;
+                }
+                Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
+            },
+            name,
+        });
+    }
 
     let module_row = tables
         .module
@@ -512,84 +490,74 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("resolving module {}", module.name);
 
-    let module_refs = tables
-        .module_ref
-        .iter()
-        .map(|r| {
-            Ok(module::ExternalModuleReference {
-                attributes: vec![],
-                name: heap_idx!(strings, r.name),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut module_refs = Vec::with_capacity(tables.module_ref.len());
+    for r in &tables.module_ref {
+        module_refs.push(module::ExternalModuleReference {
+            attributes: vec![],
+            name: heap_idx!(strings, r.name),
+        });
+    }
 
     debug!("type refs");
 
-    let type_refs = tables
-        .type_ref
-        .iter()
-        .map(|r| {
-            use metadata::index::ResolutionScope as BinRS;
-            use types::*;
+    let mut type_refs = Vec::with_capacity(tables.type_ref.len());
+    for r in &tables.type_ref {
+        use metadata::index::ResolutionScope as BinRS;
+        use types::*;
 
-            let name = heap_idx!(strings, r.type_name);
-            let namespace = optional_idx!(strings, r.type_namespace);
+        let name = heap_idx!(strings, r.type_name);
+        let namespace = optional_idx!(strings, r.type_namespace);
 
-            Ok(ExternalTypeReference {
-                attributes: vec![],
-                namespace,
-                scope: match r.resolution_scope {
-                    BinRS::Module(_) => ResolutionScope::CurrentModule,
-                    BinRS::ModuleRef(m) => {
-                        let idx = m - 1;
-                        if idx < module_refs.len() {
-                            ResolutionScope::ExternalModule(ModuleRefIndex(idx))
-                        } else {
-                            throw!("invalid module reference index {} for type reference {}", idx, name)
-                        }
+        type_refs.push(ExternalTypeReference {
+            attributes: vec![],
+            namespace,
+            scope: match r.resolution_scope {
+                BinRS::Module(_) => ResolutionScope::CurrentModule,
+                BinRS::ModuleRef(m) => {
+                    let idx = m - 1;
+                    if idx < module_refs.len() {
+                        ResolutionScope::ExternalModule(ModuleRefIndex(idx))
+                    } else {
+                        throw!("invalid module reference index {} for type reference {}", idx, name)
                     }
-                    BinRS::AssemblyRef(a) => {
-                        let idx = a - 1;
+                }
+                BinRS::AssemblyRef(a) => {
+                    let idx = a - 1;
 
-                        if idx < assembly_refs.len() {
-                            ResolutionScope::Assembly(AssemblyRefIndex(idx))
-                        } else {
-                            throw!("invalid assembly reference index {} for type reference {}", idx, name)
-                        }
+                    if idx < assembly_refs.len() {
+                        ResolutionScope::Assembly(AssemblyRefIndex(idx))
+                    } else {
+                        throw!("invalid assembly reference index {} for type reference {}", idx, name)
                     }
-                    BinRS::TypeRef(t) => {
-                        let idx = t - 1;
-                        if idx < tables.type_ref.len() {
-                            ResolutionScope::Nested(TypeRefIndex(idx))
-                        } else {
-                            throw!("invalid nested type index {} for type reference {}", idx, name);
-                        }
+                }
+                BinRS::TypeRef(t) => {
+                    let idx = t - 1;
+                    if idx < tables.type_ref.len() {
+                        ResolutionScope::Nested(TypeRefIndex(idx))
+                    } else {
+                        throw!("invalid nested type index {} for type reference {}", idx, name);
                     }
-                    BinRS::Null => ResolutionScope::Exported,
-                },
-                name,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+                }
+                BinRS::Null => ResolutionScope::Exported,
+            },
+            name,
+        });
+    }
 
     debug!("interfaces");
 
-    let interface_idxs = tables
-        .interface_impl
-        .iter()
-        .map(|i| {
-            let idx = i.class.0 - 1;
-            match types.get_mut(idx) {
-                Some(t) => {
-                    t.implements
-                        .push((vec![], convert::read::type_source(i.interface, &ctx)?));
-
-                    Ok((idx, t.implements.len() - 1))
-                }
-                None => throw!("invalid type index {} for interface implementation", idx),
+    let mut interface_idxs = Vec::with_capacity(tables.interface_impl.len());
+    for i in &tables.interface_impl {
+        let idx = i.class.0 - 1;
+        match types.get_mut(idx) {
+            Some(t) => {
+                t.implements
+                    .push((vec![], convert::read::type_source(i.interface, &ctx)?));
+                interface_idxs.push((idx, t.implements.len() - 1));
             }
-        })
-        .collect::<Result<Vec<_>>>()?;
+            None => throw!("invalid type index {} for interface implementation", idx),
+        }
+    }
 
     fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
         use members::Accessibility::*;
@@ -1026,11 +994,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     other: vec![],
                     static_member: !sig.has_this,
                     property_type: convert::read::parameter(sig.property_type, &ctx)?,
-                    parameters: sig
-                        .params
-                        .into_iter()
-                        .map(|p| convert::read::parameter(p, &ctx))
-                        .collect::<Result<_>>()?,
+                    parameters: {
+                        let mut ps = Vec::with_capacity(sig.params.len());
+                        for p in sig.params {
+                            ps.push(convert::read::parameter(p, &ctx)?);
+                        }
+                        ps
+                    },
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                     default: None,
@@ -1129,8 +1099,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     // sorts in preparation for the binary search in extract_method
     methods.sort_unstable_by_key(|m| m.parent_type);
 
-    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::default();
-    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::default();
+    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::with_capacity_and_hasher(tables.event.len(), Default::default());
+    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::with_capacity_and_hasher(tables.property.len(), Default::default());
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
@@ -1222,8 +1192,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         association: SemanticsAssociation,
     }
 
-    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::default();
-    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::default();
+    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
+    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
 
     for (&event_idx, entries) in &sem_by_event {
         for &(semantics, raw_method_idx) in entries {
@@ -1237,7 +1207,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::default();
+    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::with_capacity_and_hasher(types.len(), Default::default());
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
@@ -1439,11 +1409,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         };
 
         let field_type = MemberType::from_sig(field_sig.field_type, &ctx)?;
-        let custom_modifiers = field_sig
-            .custom_modifiers
-            .into_iter()
-            .map(|c| convert::read::custom_modifier(c, &ctx))
-            .collect::<Result<_>>()?;
+        let mut custom_modifiers = Vec::with_capacity(field_sig.custom_modifiers.len());
+        for c in field_sig.custom_modifiers {
+            custom_modifiers.push(convert::read::custom_modifier(c, &ctx)?);
+        }
 
         let current_idx = field_refs.len();
         field_map.insert(orig_idx, current_idx);
@@ -1477,13 +1446,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
         let mut signature = convert::read::managed_method(ref_sig.method_def, &ctx)?;
         if signature.calling_convention == CallingConvention::Vararg {
-            signature.varargs = Some(
-                ref_sig
-                    .varargs
-                    .into_iter()
-                    .map(|p| convert::read::parameter(p, &ctx))
-                    .collect::<Result<_>>()?,
-            );
+            let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
+            for p in ref_sig.varargs {
+                varargs.push(convert::read::parameter(p, &ctx)?);
+            }
+            signature.varargs = Some(varargs);
         }
 
         let parent = match r.class {
@@ -1902,7 +1869,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
         let n = tables.method_def.len();
         let mut pending = Vec::with_capacity(n);
-        let mut method_idx_to_def: HashMap<MethodIndex, usize> = HashMap::default();
+        let mut method_idx_to_def: HashMap<MethodIndex, usize> = HashMap::with_capacity_and_hasher(tables.method_def.len(), Default::default());
         let mut body_cache = Vec::with_capacity(n);
 
         for (def_idx, m) in tables.method_def.iter().enumerate() {
@@ -1935,162 +1902,22 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     } else if !opts.skip_method_bodies {
         debug!("method bodies");
 
-        for (idx, m) in tables.method_def.iter().enumerate() {
-            use crate::binary::signature::kinds::{LocalVar, LocalVarSig};
-            use body::*;
-            use types::LocalVariable;
+        use rayon::prelude::*;
 
-            if m.rva == 0 {
-                continue;
-            }
+        let bodies: Vec<(MethodIndex, body::Method)> = tables
+            .method_def
+            .par_iter()
+            .enumerate()
+            .filter(|(_, m)| m.rva != 0)
+            .map(|(idx, m)| -> Result<(MethodIndex, body::Method)> {
+                let raw_body = dll.get_method(m)?;
+                let body = lazy::decode_body_with_ctx(raw_body, &ctx, &m_ctx)?;
+                Ok((methods[idx], body))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-            let name = &res[methods[idx]].name;
-
-            let raw_body = dll.get_method(m)?;
-
-            let header = match raw_body.header {
-                method::Header::Tiny { .. } => Header {
-                    initialize_locals: false,
-                    maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
-                    local_variables: vec![],
-                },
-                method::Header::Fat {
-                    init_locals,
-                    max_stack,
-                    local_var_sig_tok,
-                    ..
-                } => {
-                    let local_variables = if local_var_sig_tok == 0 {
-                        vec![]
-                    } else {
-                        let tok: Token = local_var_sig_tok.to_le_bytes().pread(0)?;
-                        if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
-                            && tok.index <= tables.stand_alone_sig.len()
-                        {
-                            let vars: LocalVarSig =
-                                heap_idx!(blobs, tables.stand_alone_sig[tok.index - 1].signature).pread(0)?;
-
-                            {
-                                let mut lv = Vec::with_capacity(vars.0.len());
-                                for v in vars.0 {
-                                    lv.push(match v {
-                                        LocalVar::TypedByRef => LocalVariable::TypedReference,
-                                        LocalVar::Variable {
-                                            custom_modifiers,
-                                            pinned,
-                                            by_ref,
-                                            var_type,
-                                        } => {
-                                            let mut cmods = Vec::with_capacity(custom_modifiers.len());
-                                            for c in custom_modifiers {
-                                                cmods.push(convert::read::custom_modifier(c, &ctx)?);
-                                            }
-                                            LocalVariable::Variable {
-                                                custom_modifiers: cmods,
-                                                pinned,
-                                                by_ref,
-                                                var_type: MethodType::from_sig(var_type, &ctx)?,
-                                            }
-                                        }
-                                    });
-                                }
-                                lv
-                            }
-                        } else {
-                            throw!("invalid local variable signature token {:?} for method {}", tok, name);
-                        }
-                    };
-                    Header {
-                        initialize_locals: init_locals,
-                        maximum_stack_size: max_stack as usize,
-                        local_variables,
-                    }
-                }
-            };
-
-            let raw_instrs = raw_body.body;
-
-            let mut init_offset = 0;
-            let instr_offsets: Vec<_> = raw_instrs
-                .iter()
-                .map(|i| {
-                    let offset = init_offset;
-                    init_offset += i.bytesize();
-                    offset
-                })
-                .collect();
-
-            macro_rules! get_offset {
-                ($byte:expr, $name:literal) => {{
-                    let max = instr_offsets.iter().max().unwrap();
-
-                    if $byte as usize == max + 1 {
-                        instr_offsets.len()
-                    } else {
-                        instr_offsets
-                            .iter()
-                            .position(|&i| i == $byte as usize)
-                            .ok_or_else(|| {
-                                scroll::Error::Custom(format!(
-                                    "could not find corresponding instruction for {} offset {}",
-                                    $name, $byte
-                                ))
-                            })?
-                    }
-                }};
-            }
-
-            let mut data_sections = Vec::with_capacity(raw_body.data_sections.len());
-            for d in raw_body.data_sections {
-                use crate::binary::method::SectionKind;
-                data_sections.push(match d.section {
-                    SectionKind::Exceptions(e) => {
-                        let mut exceptions = Vec::with_capacity(e.len());
-                        for h in e {
-                            let kind = match h.flags {
-                                0 => ExceptionKind::TypedException(convert::read::type_token(
-                                    h.class_token_or_filter.to_le_bytes().pread::<Token>(0)?,
-                                    &ctx,
-                                )?),
-                                1 => ExceptionKind::Filter {
-                                    offset: get_offset!(h.class_token_or_filter, "filter"),
-                                },
-                                2 => ExceptionKind::Finally,
-                                4 => ExceptionKind::Fault,
-                                bad => throw!("invalid exception clause type {:#06x}", bad),
-                            };
-
-                            let try_offset = get_offset!(h.try_offset, "try");
-                            let handler_offset = get_offset!(h.handler_offset, "handler");
-
-                            exceptions.push(Exception {
-                                kind,
-                                try_offset,
-                                try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
-                                handler_offset,
-                                handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
-                                    - handler_offset,
-                            });
-                        }
-                        DataSection::ExceptionHandlers(exceptions)
-                    }
-                    SectionKind::Unrecognized { is_fat, length } => DataSection::Unrecognized {
-                        fat: is_fat,
-                        size: length,
-                    },
-                });
-            }
-
-            let mut instrs = Vec::with_capacity(raw_instrs.len());
-            for (idx, i) in raw_instrs.into_iter().enumerate() {
-                instrs.push(convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx)?);
-            }
-
-            res[methods[idx]].body = Some(Method {
-                header,
-                instructions: instrs,
-                data_sections,
-            });
+        for (method_idx, body) in bodies {
+            res[method_idx].body = Some(body);
         }
     } // end else if !opts.skip_method_bodies
 

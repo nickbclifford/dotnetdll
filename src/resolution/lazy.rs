@@ -18,7 +18,6 @@ use crate::{
     resolved::{
         body,
         types::{LocalVariable, MethodType},
-        *,
     },
 };
 
@@ -31,7 +30,6 @@ pub(crate) struct MethodPendingRaw<'a> {
 }
 
 /// All context needed to decode method bodies on demand, shared across `Resolution` clones.
-#[allow(dead_code)]
 pub(crate) struct LazyParseState<'a> {
     pub def_len: usize,
     pub ref_len: usize,
@@ -108,162 +106,169 @@ impl<'a> LazyParseState<'a> {
             method_map: &self.method_map,
         };
 
-        let header = match raw_body.header {
-            method::Header::Tiny { .. } => body::Header {
-                initialize_locals: false,
-                maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
-                local_variables: vec![],
-            },
-            method::Header::Fat {
-                init_locals,
-                max_stack,
-                local_var_sig_tok,
-                ..
-            } => {
-                let local_variables = if local_var_sig_tok == 0 {
-                    vec![]
-                } else {
-                    let tok: Token = local_var_sig_tok.to_le_bytes().pread(0).map_err(CLI)?;
-                    if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
-                        && tok.index <= self.sigs.len()
-                    {
-                        let vars: LocalVarSig = self
-                            .blobs
-                            .at_index(self.sigs[tok.index - 1].signature)?
-                            .pread(0)
-                            .map_err(CLI)?;
+        decode_body_with_ctx(raw_body, &ctx, &m_ctx)
+    }
+}
 
-                        let mut lv = Vec::with_capacity(vars.0.len());
-                        for v in vars.0 {
-                            lv.push(match v {
-                                LocalVar::TypedByRef => LocalVariable::TypedReference,
-                                LocalVar::Variable {
-                                    custom_modifiers,
+/// Decode a pre-parsed method body using the given read contexts.
+/// Shared between the lazy decode path and the eager rayon parallel path.
+pub(crate) fn decode_body_with_ctx(
+    raw_body: method::Method,
+    ctx: &convert::read::Context<'_, '_>,
+    m_ctx: &convert::read::MethodContext<'_>,
+) -> Result<body::Method> {
+    let header = match raw_body.header {
+        method::Header::Tiny { .. } => body::Header {
+            initialize_locals: false,
+            maximum_stack_size: 8, // ECMA-335, II.25.4.2 (page 285)
+            local_variables: vec![],
+        },
+        method::Header::Fat {
+            init_locals,
+            max_stack,
+            local_var_sig_tok,
+            ..
+        } => {
+            let local_variables = if local_var_sig_tok == 0 {
+                vec![]
+            } else {
+                let tok: Token = local_var_sig_tok.to_le_bytes().pread(0).map_err(CLI)?;
+                if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
+                    && tok.index <= ctx.sigs.len()
+                {
+                    let vars: LocalVarSig = ctx
+                        .blobs
+                        .at_index(ctx.sigs[tok.index - 1].signature)?
+                        .pread(0)
+                        .map_err(CLI)?;
+
+                    let mut lv = Vec::with_capacity(vars.0.len());
+                    for v in vars.0 {
+                        lv.push(match v {
+                            LocalVar::TypedByRef => LocalVariable::TypedReference,
+                            LocalVar::Variable {
+                                custom_modifiers,
+                                pinned,
+                                by_ref,
+                                var_type,
+                            } => {
+                                let mut cmods = Vec::with_capacity(custom_modifiers.len());
+                                for c in custom_modifiers {
+                                    cmods.push(convert::read::custom_modifier(c, ctx)?);
+                                }
+                                LocalVariable::Variable {
+                                    custom_modifiers: cmods,
                                     pinned,
                                     by_ref,
-                                    var_type,
-                                } => {
-                                    let mut cmods = Vec::with_capacity(custom_modifiers.len());
-                                    for c in custom_modifiers {
-                                        cmods.push(convert::read::custom_modifier(c, &ctx)?);
-                                    }
-                                    LocalVariable::Variable {
-                                        custom_modifiers: cmods,
-                                        pinned,
-                                        by_ref,
-                                        var_type: MethodType::from_sig(var_type, &ctx)?,
-                                    }
+                                    var_type: MethodType::from_sig(var_type, ctx)?,
                                 }
-                            });
-                        }
-                        lv
-                    } else {
-                        return Err(CLI(scroll::Error::Custom(format!(
-                            "invalid local variable signature token {:?} for method_def[{}]",
-                            tok, def_idx
-                        ))));
-                    }
-                };
-                body::Header {
-                    initialize_locals: init_locals,
-                    maximum_stack_size: max_stack as usize,
-                    local_variables,
-                }
-            }
-        };
-
-        let raw_instrs = raw_body.body;
-
-        let mut init_offset = 0;
-        let instr_offsets: Vec<_> = raw_instrs
-            .iter()
-            .map(|i| {
-                let o = init_offset;
-                init_offset += i.bytesize();
-                o
-            })
-            .collect();
-
-        macro_rules! get_offset {
-            ($byte:expr, $name:literal) => {{
-                let max = instr_offsets.iter().max().unwrap();
-                if $byte as usize == max + 1 {
-                    instr_offsets.len()
-                } else {
-                    instr_offsets
-                        .iter()
-                        .position(|&i| i == $byte as usize)
-                        .ok_or_else(|| {
-                            CLI(scroll::Error::Custom(format!(
-                                "could not find corresponding instruction for {} offset {}",
-                                $name, $byte
-                            )))
-                        })?
-                }
-            }};
-        }
-
-        let mut data_sections = Vec::with_capacity(raw_body.data_sections.len());
-        for d in raw_body.data_sections {
-            use crate::binary::method::SectionKind;
-            data_sections.push(match d.section {
-                SectionKind::Exceptions(e) => {
-                    let mut exceptions = Vec::with_capacity(e.len());
-                    for h in e {
-                        let kind = match h.flags {
-                            0 => body::ExceptionKind::TypedException(convert::read::type_token(
-                                h.class_token_or_filter
-                                    .to_le_bytes()
-                                    .pread::<Token>(0)
-                                    .map_err(CLI)?,
-                                &ctx,
-                            )?),
-                            1 => body::ExceptionKind::Filter {
-                                offset: get_offset!(h.class_token_or_filter, "filter"),
-                            },
-                            2 => body::ExceptionKind::Finally,
-                            4 => body::ExceptionKind::Fault,
-                            bad => {
-                                return Err(CLI(scroll::Error::Custom(format!(
-                                    "invalid exception clause type {:#06x}",
-                                    bad
-                                ))))
                             }
-                        };
-
-                        let try_offset = get_offset!(h.try_offset, "try");
-                        let handler_offset = get_offset!(h.handler_offset, "handler");
-
-                        exceptions.push(body::Exception {
-                            kind,
-                            try_offset,
-                            try_length: get_offset!(h.try_offset + h.try_length, "try")
-                                - try_offset,
-                            handler_offset,
-                            handler_length: get_offset!(
-                                h.handler_offset + h.handler_length,
-                                "handler"
-                            ) - handler_offset,
                         });
                     }
-                    body::DataSection::ExceptionHandlers(exceptions)
+                    lv
+                } else {
+                    return Err(CLI(scroll::Error::Custom(format!(
+                        "invalid local variable signature token {:?}",
+                        tok
+                    ))));
                 }
-                SectionKind::Unrecognized { is_fat, length } => body::DataSection::Unrecognized {
-                    fat: is_fat,
-                    size: length,
-                },
-            });
+            };
+            body::Header {
+                initialize_locals: init_locals,
+                maximum_stack_size: max_stack as usize,
+                local_variables,
+            }
         }
+    };
 
-        let mut instrs = Vec::with_capacity(raw_instrs.len());
-        for (idx, i) in raw_instrs.into_iter().enumerate() {
-            instrs.push(convert::read::instruction(i, idx, &instr_offsets, &ctx, &m_ctx)?);
-        }
+    let raw_instrs = raw_body.body;
 
-        Ok(body::Method {
-            header,
-            instructions: instrs,
-            data_sections,
+    let mut init_offset = 0;
+    let instr_offsets: Vec<_> = raw_instrs
+        .iter()
+        .map(|i| {
+            let o = init_offset;
+            init_offset += i.bytesize();
+            o
         })
+        .collect();
+
+    macro_rules! get_offset {
+        ($byte:expr, $name:literal) => {{
+            let max = instr_offsets.iter().max().unwrap();
+            if $byte as usize == max + 1 {
+                instr_offsets.len()
+            } else {
+                instr_offsets
+                    .iter()
+                    .position(|&i| i == $byte as usize)
+                    .ok_or_else(|| {
+                        CLI(scroll::Error::Custom(format!(
+                            "could not find corresponding instruction for {} offset {}",
+                            $name, $byte
+                        )))
+                    })?
+            }
+        }};
     }
+
+    let mut data_sections = Vec::with_capacity(raw_body.data_sections.len());
+    for d in raw_body.data_sections {
+        use crate::binary::method::SectionKind;
+        data_sections.push(match d.section {
+            SectionKind::Exceptions(e) => {
+                let mut exceptions = Vec::with_capacity(e.len());
+                for h in e {
+                    let kind = match h.flags {
+                        0 => body::ExceptionKind::TypedException(convert::read::type_token(
+                            h.class_token_or_filter
+                                .to_le_bytes()
+                                .pread::<Token>(0)
+                                .map_err(CLI)?,
+                            ctx,
+                        )?),
+                        1 => body::ExceptionKind::Filter {
+                            offset: get_offset!(h.class_token_or_filter, "filter"),
+                        },
+                        2 => body::ExceptionKind::Finally,
+                        4 => body::ExceptionKind::Fault,
+                        bad => {
+                            return Err(CLI(scroll::Error::Custom(format!(
+                                "invalid exception clause type {:#06x}",
+                                bad
+                            ))))
+                        }
+                    };
+
+                    let try_offset = get_offset!(h.try_offset, "try");
+                    let handler_offset = get_offset!(h.handler_offset, "handler");
+
+                    exceptions.push(body::Exception {
+                        kind,
+                        try_offset,
+                        try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
+                        handler_offset,
+                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
+                            - handler_offset,
+                    });
+                }
+                body::DataSection::ExceptionHandlers(exceptions)
+            }
+            SectionKind::Unrecognized { is_fat, length } => body::DataSection::Unrecognized {
+                fat: is_fat,
+                size: length,
+            },
+        });
+    }
+
+    let mut instrs = Vec::with_capacity(raw_instrs.len());
+    for (idx, i) in raw_instrs.into_iter().enumerate() {
+        instrs.push(convert::read::instruction(i, idx, &instr_offsets, ctx, m_ctx)?);
+    }
+
+    Ok(body::Method {
+        header,
+        instructions: instrs,
+        data_sections,
+    })
 }
