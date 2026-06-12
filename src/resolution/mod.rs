@@ -261,11 +261,11 @@ impl<'a> Resolution<'a> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_attributes {
                 let def_idx = state
-                    .method_indices
-                    .iter()
-                    .position(|&m| m == idx)
+                    .attr_method_idx_to_def
+                    .get(&idx)
+                    .copied()
                     .ok_or(crate::dll::DLLError::Other(
-                        "method index not found in lazy state",
+                        "method index not found in attr map",
                     ))?;
                 return state.method_attributes(def_idx);
             }
@@ -287,11 +287,11 @@ impl<'a> Resolution<'a> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_attributes {
                 let def_idx = state
-                    .field_indices
-                    .iter()
-                    .position(|&f| f == idx)
+                    .attr_field_idx_to_def
+                    .get(&idx)
+                    .copied()
                     .ok_or(crate::dll::DLLError::Other(
-                        "field index not found in lazy state",
+                        "field index not found in attr map",
                     ))?;
                 return state.field_attributes(def_idx);
             }

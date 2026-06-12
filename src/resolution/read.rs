@@ -2036,6 +2036,16 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 vec![]
             },
             attr_cache_assembly: std::sync::OnceLock::new(),
+            attr_method_idx_to_def: if opts.lazy_attributes {
+                methods.iter().enumerate().map(|(i, &m)| (m, i)).collect()
+            } else {
+                rustc_hash::FxHashMap::default()
+            },
+            attr_field_idx_to_def: if opts.lazy_attributes {
+                fields.iter().enumerate().map(|(i, &f)| (f, i)).collect()
+            } else {
+                rustc_hash::FxHashMap::default()
+            },
         }));
     } else if !opts.skip_method_bodies {
         debug!("method bodies");

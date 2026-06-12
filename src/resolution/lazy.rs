@@ -91,6 +91,12 @@ pub(crate) struct LazyParseState<'a> {
     pub attr_cache_field: Vec<OnceLock<Vec<AttrRaw>>>,
     /// Assembly attribute cache (at most one assembly per module).
     pub attr_cache_assembly: OnceLock<Vec<AttrRaw>>,
+    /// O(1) reverse map: MethodIndex → method_def_idx. Populated when `lazy_attributes` is true
+    /// so `method_attributes` avoids a linear scan over `method_indices`.
+    pub attr_method_idx_to_def: FxHashMap<super::MethodIndex, usize>,
+    /// O(1) reverse map: FieldIndex → field_def_idx. Populated when `lazy_attributes` is true
+    /// so `field_attributes` avoids a linear scan over `field_indices`.
+    pub attr_field_idx_to_def: FxHashMap<super::FieldIndex, usize>,
 }
 
 /// Pre-resolved attribute row: (constructor method, optional blob index).
