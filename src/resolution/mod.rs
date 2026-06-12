@@ -224,6 +224,100 @@ impl<'a> Resolution<'a> {
         Ok(&self[idx].signature)
     }
 
+    /// Returns the custom attributes for the type definition at `idx`.
+    ///
+    /// Always returns an owned `Vec`. In **eager mode** (`lazy_attributes: false`, the default)
+    /// this clones `self[idx].attributes`; if you only need to borrow and are certain you are in
+    /// eager mode, prefer `&self[idx].attributes` directly to avoid the allocation.
+    ///
+    /// In **lazy mode** (`lazy_attributes: true`) the constructor/blob-index pairs are resolved and
+    /// cached on the first call for each type; the blob bytes are then re-read from the heap on
+    /// each call to reconstruct the `Attribute` values (cheap pointer arithmetic, no heap copy).
+    /// Calling this multiple times for the same index is correct but allocates a new `Vec` each
+    /// time — cache the result yourself if you need to avoid that.
+    pub fn type_attributes(
+        &self,
+        idx: TypeIndex,
+    ) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_attributes {
+                return state.type_attributes(idx.0);
+            }
+        }
+        Ok(self[idx].attributes.clone())
+    }
+
+    /// Returns the custom attributes for the method definition at `idx`.
+    ///
+    /// Always returns an owned `Vec`. In **eager mode** this clones `self[idx].attributes`; prefer
+    /// `&self[idx].attributes` for a borrow when you know the parse was not lazy.
+    ///
+    /// In **lazy mode** constructor/blob-index pairs are cached on the first call per method; blob
+    /// bytes are re-read on each call. See [`Resolution::type_attributes`] for the full contract.
+    pub fn method_attributes(
+        &self,
+        idx: MethodIndex,
+    ) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_attributes {
+                let def_idx = state
+                    .method_indices
+                    .iter()
+                    .position(|&m| m == idx)
+                    .ok_or(crate::dll::DLLError::Other(
+                        "method index not found in lazy state",
+                    ))?;
+                return state.method_attributes(def_idx);
+            }
+        }
+        Ok(self[idx].attributes.clone())
+    }
+
+    /// Returns the custom attributes for the field definition at `idx`.
+    ///
+    /// Always returns an owned `Vec`. In **eager mode** this clones `self[idx].attributes`; prefer
+    /// `&self[idx].attributes` for a borrow when you know the parse was not lazy.
+    ///
+    /// In **lazy mode** constructor/blob-index pairs are cached on the first call per field; blob
+    /// bytes are re-read on each call. See [`Resolution::type_attributes`] for the full contract.
+    pub fn field_attributes(
+        &self,
+        idx: FieldIndex,
+    ) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_attributes {
+                let def_idx = state
+                    .field_indices
+                    .iter()
+                    .position(|&f| f == idx)
+                    .ok_or(crate::dll::DLLError::Other(
+                        "field index not found in lazy state",
+                    ))?;
+                return state.field_attributes(def_idx);
+            }
+        }
+        Ok(self[idx].attributes.clone())
+    }
+
+    /// Returns the custom attributes on the assembly manifest entry, if this module defines one.
+    ///
+    /// Always returns an owned `Vec`. In **eager mode** this clones `assembly.attributes`; prefer
+    /// `self.assembly.as_ref()?.attributes` for a borrow when you know the parse was not lazy.
+    ///
+    /// In **lazy mode** constructor/blob-index pairs are cached on the first call; blob bytes are
+    /// re-read on each call. Returns an empty `Vec` when the module has no assembly entry.
+    /// See [`Resolution::type_attributes`] for the full contract.
+    pub fn assembly_attributes(
+        &self,
+    ) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_attributes {
+                return state.assembly_attributes();
+            }
+        }
+        Ok(self.assembly.as_ref().map(|a| a.attributes.clone()).unwrap_or_default())
+    }
+
     /// Writes the `Resolution` to a byte vector in the .NET PE format.
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
         write::write_impl(self, opts)
@@ -627,6 +721,73 @@ impl<'a> Resolution<'a> {
             })
         } else {
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod lazy_attribute_tests {
+    use super::*;
+    use crate::prelude::ReadOptions;
+
+    static OOP_DLL: &[u8] =
+        include_bytes!("../../examples/smolasm/oop.dll");
+
+    #[test]
+    fn lazy_attrs_match_eager_for_types() {
+        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let lazy = Resolution::parse(
+            OOP_DLL,
+            ReadOptions { lazy_attributes: true, ..Default::default() },
+        )
+        .unwrap();
+
+        for (idx, _typedef) in eager.enumerate_type_definitions() {
+            // In lazy mode, .attributes is always empty.
+            assert!(
+                lazy[idx].attributes.is_empty(),
+                "type_definitions[{}].attributes should be empty in lazy mode",
+                idx.0
+            );
+
+            let eager_attrs = eager.type_attributes(idx).unwrap();
+            let lazy_attrs = lazy.type_attributes(idx).unwrap();
+            assert_eq!(
+                eager_attrs.len(),
+                lazy_attrs.len(),
+                "attribute count mismatch for type {}",
+                eager[idx].name
+            );
+            for (e, l) in eager_attrs.iter().zip(lazy_attrs.iter()) {
+                assert_eq!(e.constructor, l.constructor);
+                assert_eq!(e.value, l.value);
+            }
+        }
+    }
+
+    #[test]
+    fn lazy_assembly_attrs_match_eager() {
+        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let lazy = Resolution::parse(
+            OOP_DLL,
+            ReadOptions { lazy_attributes: true, ..Default::default() },
+        )
+        .unwrap();
+
+        // In lazy mode, assembly.attributes is empty.
+        if let Some(a) = &lazy.assembly {
+            assert!(
+                a.attributes.is_empty(),
+                "assembly.attributes should be empty in lazy mode"
+            );
+        }
+
+        let eager_asm_attrs = eager.assembly_attributes().unwrap();
+        let lazy_asm_attrs = lazy.assembly_attributes().unwrap();
+        assert_eq!(eager_asm_attrs.len(), lazy_asm_attrs.len());
+        for (e, l) in eager_asm_attrs.iter().zip(lazy_asm_attrs.iter()) {
+            assert_eq!(e.constructor, l.constructor);
+            assert_eq!(e.value, l.value);
         }
     }
 }
