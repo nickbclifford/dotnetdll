@@ -101,7 +101,35 @@ pub struct Sizes<'a> {
     /// bytes otherwise.
     ///
     /// See `ECMA-335, II.24.2.6`.
-    pub tables: &'a [u32; 45],
+    pub tables: &'a TableRowCounts,
+}
+
+/// Row counts for each metadata table id (`Kind as usize`).
+///
+/// This wrapper exists so generated coded-index code can read table sizes through either
+/// `tables[usize]` or `tables.get(&Kind)`, depending on which `dotnetdll-macros` release is
+/// used during build/verification.
+#[derive(Clone, Copy, Debug)]
+pub struct TableRowCounts([u32; 45]);
+
+impl From<[u32; 45]> for TableRowCounts {
+    fn from(value: [u32; 45]) -> Self {
+        Self(value)
+    }
+}
+
+impl std::ops::Index<usize> for TableRowCounts {
+    type Output = u32;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl TableRowCounts {
+    pub fn get(&self, kind: &Kind) -> Option<&u32> {
+        self.0.get(*kind as usize)
+    }
 }
 
 macro_rules! uint_impl {
@@ -276,7 +304,6 @@ impl<T> Simple<T> {
 }
 
 coded_index!(
-    #[doc = "Target union used by type references and signatures."]
     TypeDefOrRef,
     {
         TypeDef,
@@ -285,7 +312,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for constant-owner columns (`Constant::parent`)."]
     HasConstant,
     {
         Field,
@@ -294,7 +320,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for custom-attribute owner columns (`CustomAttribute::parent`)."]
     HasCustomAttribute,
     {
         MethodDef,
@@ -322,7 +347,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for field-marshalling owner columns (`FieldMarshal::parent`)."]
     HasFieldMarshal,
     {
         Field,
@@ -330,7 +354,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for declarative-security owner columns (`DeclSecurity::parent`)."]
     HasDeclSecurity,
     {
         TypeDef,
@@ -339,7 +362,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `MemberRef::class` parent resolution."]
     MemberRefParent,
     {
         TypeDef,
@@ -350,7 +372,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for method-semantics associations (`MethodSemantics::association`)."]
     HasSemantics,
     {
         Event,
@@ -358,7 +379,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for method references (`MethodDef` or `MemberRef`)."]
     MethodDefOrRef,
     {
         MethodDef,
@@ -366,7 +386,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `ImplMap::member_forwarded`."]
     MemberForwarded,
     {
         Field,
@@ -374,7 +393,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `Implementation` columns in `ExportedType` and `ManifestResource`."]
     Implementation,
     {
         File,
@@ -383,7 +401,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `CustomAttribute::type` constructor references."]
     CustomAttributeType,
     {
         Unused,
@@ -394,7 +411,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `TypeRef::resolution_scope`."]
     ResolutionScope,
     {
         Module,
@@ -404,7 +420,6 @@ coded_index!(
     }
 );
 coded_index!(
-    #[doc = "Target union for `TypeDef`/`MethodDef` ownership in generic parameter rows."]
     TypeOrMethodDef,
     {
         TypeDef,

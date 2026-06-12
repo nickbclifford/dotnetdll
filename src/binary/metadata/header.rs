@@ -1,5 +1,5 @@
 use super::{
-    index::Sizes,
+    index::{Sizes, TableRowCounts},
     table::{Kind, Tables},
 };
 use bitvec::access::BitSafeU8;
@@ -75,11 +75,12 @@ impl TryFromCtx<'_> for Header {
         for &(kind, size) in &pairs {
             sizes_arr[kind as usize] = size;
         }
+        let table_sizes = TableRowCounts::from(sizes_arr);
 
         let heap_bits = BitSafeU8::new(heap);
         let ctx = Sizes {
             heap: heap_bits.view_bits::<Lsb0>(),
-            tables: &sizes_arr,
+            tables: &table_sizes,
         };
 
         let mut tables = Tables::new();
@@ -125,11 +126,12 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
         for_each_table!(self.tables, |t, k| {
             sizes_arr[k as usize] = t.len() as u32;
         });
+        let table_sizes = TableRowCounts::from(sizes_arr);
 
         let heap_bits = BitSafeU8::new(self.heap_sizes);
         let ctx = Sizes {
             heap: heap_bits.view_bits::<Lsb0>(),
-            tables: &sizes_arr,
+            tables: &table_sizes,
         };
 
         let mut tables_map = HashMap::new();
