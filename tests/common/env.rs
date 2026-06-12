@@ -35,6 +35,7 @@ lazy_paths! {
     LIBRARIES = first_child_dir(TESTHOST.join("shared/Microsoft.NETCore.App"));
 }
 
+#[allow(dead_code)]
 pub fn optional(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }

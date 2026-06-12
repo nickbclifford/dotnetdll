@@ -3,10 +3,19 @@ use scroll::{
     Pread, Pwrite,
 };
 
+/// One stream-header entry in the metadata root stream-header array.
+///
+/// Each entry declares a logical stream (for example `#~`, `#Strings`, `#US`,
+/// `#Blob`, or `#GUID`) by name, byte offset from the start of the metadata
+/// root, and stream size in bytes. Stream names are null-terminated and padded
+/// so the next header begins on a 4-byte boundary. See ECMA-335, II.24.2.2.
 #[derive(Debug)]
 pub struct Header<'a> {
+    /// Byte offset of the stream payload from the start of the metadata root.
     pub offset: u32,
+    /// Stream payload size in bytes.
     pub size: u32,
+    /// Stream name (`#~`, `#Strings`, `#US`, `#Blob`, `#GUID`, etc.).
     pub name: &'a str,
 }
 

@@ -231,7 +231,12 @@ pub struct MethodOverride {
 
 /// Metadata flags associated with a [`TypeDefinition`].
 ///
-/// These flags correspond to the `Flags` column of the `TypeDef` table (ECMA-335, II.22.37).
+/// Conceptually, the visibility-related bits follow the CTS type visibility/accessibility model
+/// (ECMA-335, I.8.5.3.1 and I.8.5.3.4), which aligns with C# access modifiers:
+/// <https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/access-modifiers>
+///
+/// For the physical metadata encoding, see the `Flags` column of the
+/// [`crate::binary::metadata::table::TypeDef`] row (`ECMA-335, II.22.37`).
 #[derive(Debug, Copy, Clone)]
 pub struct TypeFlags {
     /// Visibility of the type.
@@ -499,8 +504,11 @@ pub enum ResolutionScope {
     /// Indicates that the type is located in the current module.
     ///
     /// While types defined in the current module are typically referenced directly via a [`TypeIndex`]
-    /// into [`Resolution::type_definitions`], the CLI standard also allows referencing them via a `TypeRef`
-    /// token with a null `ResolutionScope` (ECMA-335, II.22.38). This variant represents such a reference.
+    /// into [`Resolution::type_definitions`], this variant represents a same-module type-name
+    /// reference in the CTS visibility model (ECMA-335, I.8.5.3.1).
+    ///
+    /// For the physical metadata encoding, see the `TypeRef` row's null `ResolutionScope`
+    /// form in [`crate::binary::metadata::table::TypeRef`] (`ECMA-335, II.22.38`).
     CurrentModule,
     /// Indicates that the type is located in an external assembly.
     Assembly(AssemblyRefIndex),
@@ -571,7 +579,11 @@ pub enum TypeImplementation {
     /// Indicates that this type is present within another module of this assembly.
     ///
     /// Note that the standard specifies that the `type_def` field is a *hint only*, and that resolution should be ultimately determined by
-    /// the [`ExportedType`] declaration's `name` and `namespace`. See ECMA-335, II.22.14 (page 222) for more information.
+    /// the [`ExportedType`] declaration's `name` and `namespace`.
+    /// Conceptually, exported type names participate in assembly-level type visibility (ECMA-335, I.8.5.3.1).
+    ///
+    /// For the physical metadata encoding, see [`crate::binary::metadata::table::ExportedType`]
+    /// (`ECMA-335, II.22.14 (page 222)`).
     ModuleFile {
         /// The module that the type's implementation resides in.
         file: FileIndex,
@@ -579,6 +591,10 @@ pub enum TypeImplementation {
         type_def: TypeIndex,
     },
     /// Indicates that this type was originally defined within the current assembly, but has since moved to an external assembly.
+    ///
+    /// This is the semantic type-forwarding mechanism used to preserve compatibility when a
+    /// type moves between assemblies:
+    /// <https://learn.microsoft.com/dotnet/standard/assembly/type-forwarding>
     TypeForwarder(AssemblyRefIndex),
 }
 
@@ -588,9 +604,13 @@ pub enum TypeImplementation {
 /// is made available by this assembly; i.e., external modules can reference this type by importing this assembly; however, the *implementation*
 /// resides in a module other than the assembly's main module.
 ///
-/// For more information, see the following sections of the standard:
+/// For more information, see the following references:
+/// - Type visibility model: ECMA-335, I.8.5.3.1
+/// - Type forwarding in .NET:
+///   <https://learn.microsoft.com/dotnet/standard/assembly/type-forwarding>
 /// - `ilasm` type export declarations: ECMA-335, II.6.7 (page 120)
-/// - `ExportedType` metadata records: ECMA-335, II.22.14 (page 222)
+/// - Physical metadata encoding: [`crate::binary::metadata::table::ExportedType`]
+///   (`ECMA-335, II.22.14 (page 222)`).
 #[derive(Debug, Clone)]
 pub struct ExportedType<'a> {
     /// All attributes present on the type export declaration.
@@ -680,9 +700,11 @@ impl ResolvedDebug for CustomTypeModifier {
     }
 }
 
-/// Specifies whether the user-defined type being referenced is a class or a value type. Used in the [`BaseType::Type`] variant.
+/// Specifies whether the user-defined type being referenced is a class or a value type.
 ///
-/// This is analogous to the `class` and `valuetype` keywords in ILAsm type syntax. See ECMA-335, II.7.1 (page 122) for more information.
+/// Used in the [`BaseType::Type`] variant to distinguish CTS reference types from
+/// user-defined value types (ECMA-335, I.8.2.1 and I.8.2.4). This is analogous to
+/// the `class` and `valuetype` keywords in ILAsm type syntax (ECMA-335, II.7.1).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ValueKind {
     Class,
@@ -698,8 +720,13 @@ pub enum ValueKind {
 ///
 /// This type defines free [`From`]/[`Into`] trait conversions with [`TypeIndex`] and [`TypeRefIndex`].
 ///
+/// Conceptually, this models ordinary CTS type references and constructed generic types
+/// (ECMA-335, I.8.2 and I.8.7). For .NET background, see:
+/// <https://learn.microsoft.com/dotnet/standard/generics/>
+///
 /// Note that a bare reference is distinct from generic instantiation with zero parameters.
-/// The two kinds of type reference are represented differently in metadata (ECMA-335, II.23.2.13, page 265), thus they are represented differently here.
+/// For the physical signature-blob encoding of this distinction, see
+/// [`crate::binary::signature::encoded::Type`] (`ECMA-335, II.23.2.13 (page 265)`).
 /// When constructing a `TypeSource`, keep this in mind.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, From)]
 pub enum TypeSource<EnclosingType> {
@@ -734,8 +761,13 @@ impl<T> TypeSource<T> {
 /// A sum type containing all fundamental types of .NET, including user type references, primitive value types, primitive reference types, and unmanaged pointers.
 ///
 /// ## Primitives versus `System.*` References
+/// Primitive variants represent CLI built-in types (ECMA-335, I.8.2.2) and map to
+/// the familiar C# built-in type aliases:
+/// <https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/built-in-types>
+///
 /// When encoding type signature information, primitive types should be represented with their corresponding primitive variants
-/// instead of with a reference to their location in the `System` namespace (ECMA-335, II.23.2.16, page 267).
+/// instead of with a reference to their location in the `System` namespace. For the physical signature-blob encoding,
+/// see [`crate::binary::signature::encoded::Type`] (`ECMA-335, II.23.2.16 (page 267)`).
 ///
 /// For example, when encoding a 32-bit signed integer, one should always use the `BaseType::Int32` variant
 /// and *not* a `BaseType::Type` with an [`ExternalTypeReference`] to `System.Int32`.
@@ -783,7 +815,9 @@ pub enum BaseType<EnclosingType> {
         /// This can be `None` when the type is referenced via a metadata table (like `TypeDef` or `TypeRef`)
         /// where the kind is not explicitly stored in the reference.
         ///
-        /// When encoded in a signature blob, this must be explicitly specified (ECMA-335, II.23.2.12).
+        /// Conceptually, this records the class-versus-value-type choice from [`ValueKind`].
+        /// For the physical signature-blob encoding, see
+        /// [`crate::binary::signature::encoded::Type`] (`ECMA-335, II.23.2.12`).
         value_kind: Option<ValueKind>,
         source: TypeSource<EnclosingType>,
     },
@@ -828,7 +862,8 @@ pub enum BaseType<EnclosingType> {
     /// A potentially multidimensional array with defined lower bounds and potentially fixed sizes, specified by [`ArrayShape`].
     /// Equivalent to C#'s `T[,]` and `T[M, N, ...]` types.
     ///
-    /// See ECMA-335, II.23.2.13 (page 265) for more information.
+    /// For the physical signature-blob encoding, see
+    /// [`crate::binary::signature::encoded::Type`] (`ECMA-335, II.23.2.13 (page 265)`).
     Array(EnclosingType, ArrayShape),
     /// A pointer, either to a typed value or to `void`. Equivalent to C#'s `void*` and `T*` types.
     ///
@@ -1114,15 +1149,36 @@ impl LocalVariable {
     }
 }
 
+/// Resolves type names used in attribute payloads to concrete type definitions.
+///
+/// [`crate::resolved::attribute::Attribute::instantiation_data`] and
+/// [`crate::resolved::attribute::SecurityDeclaration::requested_permissions`] call this trait
+/// when they need to interpret enum values encoded in blobs. Implementations map a fully
+/// qualified type name (for example, `"MyNamespace.MyEnum"`) to both the matching
+/// [`TypeDefinition`] and the [`Resolution`] that owns it.
+///
+/// If you know the payload being decoded cannot contain enum references, use
+/// [`AlwaysFailsResolver`] as a placeholder implementation.
+///
+/// See also the binary blob formats in `ECMA-335, II.23.3` and `ECMA-335, II.22.11`.
 pub trait Resolver<'a> {
+    /// Error returned when name resolution fails.
     type Error: std::error::Error;
+
+    /// Finds a type by fully qualified name.
     fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error>;
 }
 
+/// Error returned by [`AlwaysFailsResolver`].
 #[derive(Debug, Error)]
 #[error("AlwaysFailsResolver always fails (asked to find {0:?})")]
 pub struct AlwaysFails(String);
 
+/// [`Resolver`] implementation that always returns an error.
+///
+/// This is useful as a stand-in when decoding attribute data that is known not to contain
+/// enum values (which are the only custom-attribute payload values that require name-based
+/// type resolution).
 #[derive(Debug)]
 pub struct AlwaysFailsResolver;
 impl<'a> Resolver<'a> for AlwaysFailsResolver {

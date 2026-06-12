@@ -4,8 +4,26 @@ use scroll::{
     Pread, Pwrite,
 };
 
+/// A compressed unsigned integer used in signature and metadata blob encodings.
+///
+/// This is the ECMA-335 compressed-integer format with a length prefix encoded in
+/// the high bits of the first byte:
+///
+/// - `0xxxxxxx`: 1-byte payload (7-bit value)
+/// - `10xxxxxx`: 2-byte payload (14-bit value, big-endian)
+/// - `110xxxxx`: 4-byte payload (29-bit value, big-endian)
+///
+/// Valid values are in the range `0..=0x1FFF_FFFF`.
+///
+/// This encoding appears throughout signature blobs (for example, counts and
+/// coded references) and is not LEB128.
+///
+/// ECMA-335, II.23.2 (page 261).
 #[derive(Debug)]
-pub struct Unsigned(pub u32);
+pub struct Unsigned(
+    /// Decoded integer value.
+    pub u32,
+);
 
 impl TryFromCtx<'_> for Unsigned {
     type Error = scroll::Error;
@@ -51,8 +69,26 @@ try_into_ctx!(Unsigned, |self, into| {
     Ok(*offset)
 });
 
+/// A compressed signed integer used in signature and metadata blob encodings.
+///
+/// This uses the ECMA-335 signed compressed-integer scheme:
+///
+/// 1. Take the value in two's-complement form using 7, 14, or 29 bits.
+/// 2. Rotate the bit pattern left by one bit so the sign information is packed
+///    into the low bit.
+/// 3. Prefix the encoded length using the same lead-bit pattern as [`Unsigned`].
+///
+/// Valid values are in the range `-(1 << 28)..=((1 << 28) - 1)`.
+///
+/// This encoding is specific to CLI signature/blob compression and is not
+/// LEB128.
+///
+/// ECMA-335, II.23.2 (page 261).
 #[derive(Debug)]
-pub struct Signed(pub i32);
+pub struct Signed(
+    /// Decoded integer value.
+    pub i32,
+);
 
 fn from_twos_complement(bits: usize, source: u32) -> i32 {
     let slice = source.view_bits::<Lsb0>();

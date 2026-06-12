@@ -114,8 +114,7 @@ Most users only need `resolution` and `resolved`.
 ## Examples
 
 The repository includes example projects you can learn from:
-```
-bash
+```bash
 # Inspect a DLL
 cargo run -p dump-dll -- path/to/Some.dll
 

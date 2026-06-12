@@ -6,6 +6,13 @@ use scroll::{
     Pread, Pwrite,
 };
 
+/// `SerString` payload used inside custom-attribute blobs.
+///
+/// `SerString` is encoded as a one-byte length followed by UTF-8 bytes. The special byte
+/// value `0xFF` represents `null`; this maps to `None` in this type. An empty but non-null
+/// string is encoded with length `0x00` and maps to `Some("")`.
+///
+/// ECMA-335, II.23.3.
 pub struct SerString<'a>(pub Option<Cow<'a, str>>);
 impl<'a> TryFromCtx<'a> for SerString<'a> {
     type Error = scroll::Error;
@@ -40,24 +47,51 @@ try_into_ctx!(SerString<'_>, |self, into| {
     Ok(*offset)
 });
 
+/// Type discriminator used by custom-attribute fixed arguments and named arguments.
+///
+/// This is the `FieldOrPropType` grammar from custom-attribute blob encoding.
+///
+/// - Primitive variants map to their corresponding `ELEMENT_TYPE_*` tags.
+/// - [`FieldOrPropType::Type`] represents `System.Type` values, whose runtime value is encoded
+///   as a [`SerString`].
+/// - [`FieldOrPropType::Enum`] stores the enum's fully qualified type name.
+///
+/// ECMA-335, II.23.3.
 #[derive(Debug, Clone)]
 pub enum FieldOrPropType<'a> {
+    /// `bool` (`ELEMENT_TYPE_BOOLEAN`).
     Boolean,
+    /// UTF-16 code unit (`ELEMENT_TYPE_CHAR`).
     Char,
+    /// Signed 8-bit integer (`ELEMENT_TYPE_I1`).
     Int8,
+    /// Unsigned 8-bit integer (`ELEMENT_TYPE_U1`).
     UInt8,
+    /// Signed 16-bit integer (`ELEMENT_TYPE_I2`).
     Int16,
+    /// Unsigned 16-bit integer (`ELEMENT_TYPE_U2`).
     UInt16,
+    /// Signed 32-bit integer (`ELEMENT_TYPE_I4`).
     Int32,
+    /// Unsigned 32-bit integer (`ELEMENT_TYPE_U4`).
     UInt32,
+    /// Signed 64-bit integer (`ELEMENT_TYPE_I8`).
     Int64,
+    /// Unsigned 64-bit integer (`ELEMENT_TYPE_U8`).
     UInt64,
+    /// 32-bit floating-point number (`ELEMENT_TYPE_R4`).
     Float32,
+    /// 64-bit floating-point number (`ELEMENT_TYPE_R8`).
     Float64,
+    /// `string` (`ELEMENT_TYPE_STRING`), stored as a [`SerString`] value.
     String,
+    /// `System.Type` (`0x50`), stored as a [`SerString`] value naming the type.
     Type,
+    /// Boxed object (`0x51`) with an inline type tag and value payload.
     Object,
+    /// Single-dimensional zero-based array (`ELEMENT_TYPE_SZARRAY`) of another field/property type.
     Vector(Box<FieldOrPropType<'a>>),
+    /// Enumeration type (`0x55`) identified by fully qualified type name.
     Enum(Cow<'a, str>),
 }
 
@@ -158,18 +192,56 @@ try_into_ctx!(FieldOrPropType<'_>, |self, into| {
     Ok(*offset)
 });
 
+/// Integral value payload used by custom-attribute arguments.
+///
+/// This enum preserves the integer width and signedness from the blob so callers can
+/// round-trip the original binary representation.
+///
+/// ECMA-335, II.23.3.
 #[derive(Debug, Copy, Clone)]
 pub enum IntegralParam {
+    /// Signed 8-bit integer.
     Int8(i8),
+    /// Signed 16-bit integer.
     Int16(i16),
+    /// Signed 32-bit integer.
     Int32(i32),
+    /// Signed 64-bit integer.
     Int64(i64),
+    /// Unsigned 8-bit integer.
     UInt8(u8),
+    /// Unsigned 16-bit integer.
     UInt16(u16),
+    /// Unsigned 32-bit integer.
     UInt32(u32),
+    /// Unsigned 64-bit integer.
     UInt64(u64),
 }
 impl IntegralParam {
+    /// Returns the corresponding [`FieldOrPropType`] discriminator for this value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotnetdll::binary::signature::attribute::{FieldOrPropType, IntegralParam};
+    ///
+    /// fn as_i128(value: IntegralParam) -> i128 {
+    ///     match value {
+    ///         IntegralParam::Int8(v) => i128::from(v),
+    ///         IntegralParam::Int16(v) => i128::from(v),
+    ///         IntegralParam::Int32(v) => i128::from(v),
+    ///         IntegralParam::Int64(v) => i128::from(v),
+    ///         IntegralParam::UInt8(v) => i128::from(v),
+    ///         IntegralParam::UInt16(v) => i128::from(v),
+    ///         IntegralParam::UInt32(v) => i128::from(v),
+    ///         IntegralParam::UInt64(v) => i128::from(v),
+    ///     }
+    /// }
+    ///
+    /// let arg = IntegralParam::UInt16(512);
+    /// assert!(matches!(arg.argument_type(), FieldOrPropType::UInt16));
+    /// assert_eq!(as_i128(arg), 512);
+    /// ```
     pub fn argument_type(&self) -> FieldOrPropType<'_> {
         macro_rules! build_match {
             ($($variant:ident),*) => {
@@ -202,20 +274,73 @@ try_into_ctx!(IntegralParam, |self, into| {
     Ok(*offset)
 });
 
+/// Fixed (positional) custom-attribute argument payload.
+///
+/// These values appear in constructor argument order immediately after the custom-attribute
+/// prolog. The variant determines the exact binary payload encoding.
+///
+/// Values of this type are produced by
+/// [`crate::resolved::attribute::Attribute::instantiation_data`] in
+/// [`CustomAttributeData::constructor_args`], and are typically consumed via pattern matching.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use dotnetdll::binary::signature::attribute::{FixedArg, IntegralParam};
+/// use dotnetdll::prelude::*;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let bytes = std::fs::read("MyAssembly.dll")?;
+/// let resolution = Resolution::parse(&bytes, ReadOptions::default())?;
+///
+/// let attribute = resolution
+///     .assembly
+///     .as_ref()
+///     .and_then(|assembly| assembly.attributes.first())
+///     .expect("assembly has at least one custom attribute");
+///
+/// let decoded = attribute.instantiation_data(&AlwaysFailsResolver, &resolution)?;
+///
+/// for arg in decoded.constructor_args {
+///     match arg {
+///         FixedArg::Integral(IntegralParam::Int32(v)) => println!("int32: {v}"),
+///         FixedArg::String(Some(s)) => println!("string: {s}"),
+///         FixedArg::Array(_, Some(values)) => println!("array length: {}", values.len()),
+///         other => println!("other fixed arg: {other:?}"),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ECMA-335, II.23.3.
 #[derive(Debug, Clone)]
 pub enum FixedArg<'a> {
+    /// Boolean value (`bool`).
     Boolean(bool),
+    /// Character value (`char`).
     Char(char),
+    /// 32-bit floating-point value.
     Float32(f32),
+    /// 64-bit floating-point value.
     Float64(f64),
+    /// String value encoded as `SerString`, where `None` is the `0xFF` null sentinel.
     String(Option<Cow<'a, str>>),
+    /// Integral value payload.
     Integral(IntegralParam),
+    /// Enum value encoded as `(enum type name, underlying integral value)`.
     Enum(Cow<'a, str>, IntegralParam),
+    /// `System.Type` value encoded as a type-name string.
     Type(Cow<'a, str>),
+    /// `SZARRAY` value encoded as `(element type, optional element list)`.
+    ///
+    /// `None` is encoded as `0xFFFFFFFF` (null array).
     Array(FieldOrPropType<'a>, Option<Vec<FixedArg<'a>>>),
+    /// Boxed object value with inline discriminator and payload.
     Object(Box<FixedArg<'a>>),
 }
 impl FixedArg<'_> {
+    /// Returns the [`FieldOrPropType`] discriminator used when this value is encoded.
     pub fn argument_type(&self) -> FieldOrPropType<'_> {
         use FixedArg::*;
         match self {
@@ -282,9 +407,17 @@ try_into_ctx!(FixedArg<'_>, |self, into| {
     Ok(*offset)
 });
 
+/// Named custom-attribute argument payload.
+///
+/// Named arguments are encoded after fixed constructor arguments and target either a field
+/// (`0x53`) or property (`0x54`) on the custom-attribute type.
+///
+/// ECMA-335, II.23.3.
 #[derive(Debug, Clone)]
 pub enum NamedArg<'a> {
+    /// Assign a field by `(name, value)`.
     Field(Cow<'a, str>, FixedArg<'a>),
+    /// Assign a property by `(name, value)`.
     Property(Cow<'a, str>, FixedArg<'a>),
 }
 try_into_ctx!(NamedArg<'_>, |self, into| {
@@ -304,9 +437,23 @@ try_into_ctx!(NamedArg<'_>, |self, into| {
     Ok(*offset)
 });
 
+/// Structured representation of a custom-attribute blob body.
+///
+/// The encoded form is:
+///
+/// 1. Prolog `0x0001` (`u16`),
+/// 2. Fixed constructor arguments,
+/// 3. Named-argument count (`u16`),
+/// 4. Named arguments.
+///
+/// ECMA-335, II.23.3.
+///
+/// See also: [`crate::resolved::attribute::Attribute`].
 #[derive(Debug)]
 pub struct CustomAttributeData<'a> {
+    /// Fixed constructor arguments in declaration order.
     pub constructor_args: Vec<FixedArg<'a>>,
+    /// Trailing named field/property assignments.
     pub named_args: Vec<NamedArg<'a>>,
 }
 try_into_ctx!(CustomAttributeData<'_>, |self, into| {

@@ -716,12 +716,21 @@ pub enum CharacterSet {
     Auto,
 }
 
+/// Calling convention options used by [`PInvoke`] imports.
+///
+/// See <https://learn.microsoft.com/dotnet/standard/native-interop/pinvoke> for conceptual
+/// P/Invoke guidance. See also ECMA-335, II.15.4.2.2 (page 184) for the metadata encoding.
 #[derive(Debug, Copy, Clone)]
 pub enum UnmanagedCallingConvention {
+    /// Use the platform default calling convention.
     Platformapi,
+    /// C declaration calling convention.
     Cdecl,
+    /// Standard call convention.
     Stdcall,
+    /// `thiscall` convention, typically used for C++ instance methods.
     Thiscall,
+    /// Fastcall convention.
     Fastcall,
 }
 
@@ -735,6 +744,10 @@ pub struct PInvoke<'a> {
     /// Indicates if the function sets a global error value (Windows `SetLastError` or Unix `errno`) before returning to report errors.
     pub supports_last_error: bool,
     /// Describes the calling convention of the unmanaged function.
+    ///
+    /// See <https://learn.microsoft.com/dotnet/standard/native-interop/pinvoke> for conceptual
+    /// P/Invoke guidance and [`UnmanagedCallingConvention`] for the available metadata values.
+    /// See also ECMA-335, II.15.4.2.2 (page 184).
     pub calling_convention: UnmanagedCallingConvention,
     /// The name of the unmanaged function to be invoked.
     pub import_name: Cow<'a, str>,

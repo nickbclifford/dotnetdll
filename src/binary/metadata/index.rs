@@ -10,15 +10,32 @@ use std::{cmp::Ordering, marker::PhantomData};
 
 use dotnetdll_macros::coded_index;
 
+/// Destination namespace for a 4-byte metadata [`Token`].
+///
+/// A token can either point at a metadata table row (`Table`) or at a user-string
+/// literal in the `#US` heap (`UserString`).
+///
+/// See `ECMA-335, II.22` and `ECMA-335, II.24.2.5`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenTarget {
+    /// Token points to a row in one metadata table, identified by its table id.
     Table(Kind),
+    /// Token points to the `#US` heap (tag `0x70`).
     UserString,
 }
 
+/// A raw 4-byte metadata token.
+///
+/// Tokens encode an 8-bit target tag in the high byte and a 24-bit index in the
+/// low three bytes. For table tokens this index is the row id (RID); for
+/// user-string tokens it is the `#US` heap index.
+///
+/// See `ECMA-335, II.22`.
 #[derive(Clone, Copy, Debug)]
 pub struct Token {
+    /// Target namespace encoded by the token's high byte.
     pub target: TokenTarget,
+    /// Low 24-bit index payload (RID for table tokens, `#US` index for user strings).
     pub index: usize,
 }
 
@@ -60,11 +77,30 @@ try_into_ctx!(Token, |self, into| {
     Ok(*offset)
 });
 
-// Kind discriminants span 0x00..=0x2C (44); index by `kind as usize`.
-// Absent tables have row count 0, matching the previous `unwrap_or(&0)` behaviour.
+/// Width-selection context for variable-sized metadata indices.
+///
+/// The `#~` stream header provides both:
+/// - `heap_sizes`, which selects 2-byte vs 4-byte widths for heap indices, and
+/// - per-table row counts, which select 2-byte vs 4-byte widths for table/coded indices.
+///
+/// `Sizes` carries those two inputs while decoding/encoding row fields.
+///
+/// See `ECMA-335, II.24.2.6`.
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes<'a> {
+    /// Bit flags from the metadata header's `heap_sizes` byte.
+    ///
+    /// Bits 0, 1, and 2 select wide (4-byte) indices for `#Strings`, `#GUID`,
+    /// and `#Blob` respectively; when clear, those indices are 2 bytes.
+    ///
+    /// See `ECMA-335, II.24.2.5` and `ECMA-335, II.24.2.6`.
     pub heap: &'a BitSlice<BitSafeU8>,
+    /// Per-table row counts, indexed by metadata table id (`Kind as usize`).
+    ///
+    /// A simple index into table `T` is 2 bytes when `tables[T] < 2^16`, or 4
+    /// bytes otherwise.
+    ///
+    /// See `ECMA-335, II.24.2.6`.
     pub tables: &'a [u32; 45],
 }
 
@@ -93,7 +129,8 @@ uint_impl!(u32);
 uint_impl!(u64);
 
 macro_rules! heap_index {
-    ($name:ident, $idx:literal) => {
+    ($(#[$meta:meta])* $name:ident, $idx:literal) => {
+        $(#[$meta])*
         #[derive(Debug, Copy, Clone, Eq, PartialEq)]
         pub struct $name(pub usize);
         impl<'a> TryFromCtx<'a, Sizes<'a>> for $name {
@@ -133,6 +170,7 @@ macro_rules! heap_index {
         }
 
         impl $name {
+            /// Returns `true` when this heap index is null (`0`).
             pub fn is_null(&self) -> bool {
                 self.0 == 0
             }
@@ -140,12 +178,50 @@ macro_rules! heap_index {
     };
 }
 
-heap_index!(String, 0);
-heap_index!(GUID, 1);
-heap_index!(Blob, 2);
+heap_index!(
+    /// Index into the `#Strings` heap.
+    ///
+    /// Encoded as either 2 bytes or 4 bytes depending on `heap_sizes` bit 0 in
+    /// the `#~` stream header. A value of `0` is the null index.
+    ///
+    /// See `ECMA-335, II.24.2.5` and `ECMA-335, II.24.2.6`.
+    String,
+    0
+);
+heap_index!(
+    /// Index into the `#GUID` heap.
+    ///
+    /// Encoded as either 2 bytes or 4 bytes depending on `heap_sizes` bit 1 in
+    /// the `#~` stream header. A value of `0` is the null index.
+    ///
+    /// See `ECMA-335, II.24.2.5` and `ECMA-335, II.24.2.6`.
+    GUID,
+    1
+);
+heap_index!(
+    /// Index into the `#Blob` heap.
+    ///
+    /// Encoded as either 2 bytes or 4 bytes depending on `heap_sizes` bit 2 in
+    /// the `#~` stream header. A value of `0` is the null index.
+    ///
+    /// See `ECMA-335, II.24.2.5` and `ECMA-335, II.24.2.6`.
+    Blob,
+    2
+);
 
+/// Typed index into a single metadata table.
+///
+/// `Simple<T>` stores a row id (RID) for table `T`. Its on-disk width is
+/// selected from the target table's row count: 2 bytes when the table has fewer
+/// than `2^16` rows, otherwise 4 bytes.
+///
+/// See `ECMA-335, II.24.2.6`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct Simple<T>(pub usize, PhantomData<T>);
+pub struct Simple<T>(
+    /// The raw RID (`0` means null/no row).
+    pub usize,
+    PhantomData<T>,
+);
 impl<'a, T: 'a + HasKind> TryFromCtx<'a, Sizes<'a>> for Simple<T> {
     type Error = scroll::Error;
 
@@ -193,92 +269,145 @@ impl<T> From<usize> for Simple<T> {
 }
 
 impl<T> Simple<T> {
+    /// Returns `true` when this table index is null (`0`).
     pub fn is_null(&self) -> bool {
         self.0 == 0
     }
 }
 
-coded_index!(TypeDefOrRef, {
-    TypeDef,
-    TypeRef,
-    TypeSpec
-});
-coded_index!(HasConstant, {
-    Field,
-    Param,
-    Property
-});
-coded_index!(HasCustomAttribute, {
-    MethodDef,
-    Field,
-    TypeRef,
-    TypeDef,
-    Param,
-    InterfaceImpl,
-    MemberRef,
-    Module,
-    DeclSecurity,
-    Property,
-    Event,
-    StandAloneSig,
-    ModuleRef,
-    TypeSpec,
-    Assembly,
-    AssemblyRef,
-    File,
-    ExportedType,
-    ManifestResource,
-    GenericParam,
-    GenericParamConstraint,
-    MethodSpec
-});
-coded_index!(HasFieldMarshal, {
-    Field,
-    Param
-});
-coded_index!(HasDeclSecurity, {
-    TypeDef,
-    MethodDef,
-    Assembly
-});
-coded_index!(MemberRefParent, {
-    TypeDef,
-    TypeRef,
-    ModuleRef,
-    MethodDef,
-    TypeSpec
-});
-coded_index!(HasSemantics, {
-    Event,
-    Property
-});
-coded_index!(MethodDefOrRef, {
-    MethodDef,
-    MemberRef
-});
-coded_index!(MemberForwarded, {
-    Field,
-    MethodDef
-});
-coded_index!(Implementation, {
-    File,
-    AssemblyRef,
-    ExportedType
-});
-coded_index!(CustomAttributeType, {
-    Unused,
-    Unused,
-    MethodDef,
-    MemberRef,
-    Unused
-});
-coded_index!(ResolutionScope, {
-    Module,
-    ModuleRef,
-    AssemblyRef,
-    TypeRef
-});
-coded_index!(TypeOrMethodDef, {
-    TypeDef,
-    MethodDef
-});
+coded_index!(
+    #[doc = "Target union used by type references and signatures."]
+    TypeDefOrRef,
+    {
+        TypeDef,
+        TypeRef,
+        TypeSpec
+    }
+);
+coded_index!(
+    #[doc = "Target union for constant-owner columns (`Constant::parent`)."]
+    HasConstant,
+    {
+        Field,
+        Param,
+        Property
+    }
+);
+coded_index!(
+    #[doc = "Target union for custom-attribute owner columns (`CustomAttribute::parent`)."]
+    HasCustomAttribute,
+    {
+        MethodDef,
+        Field,
+        TypeRef,
+        TypeDef,
+        Param,
+        InterfaceImpl,
+        MemberRef,
+        Module,
+        DeclSecurity,
+        Property,
+        Event,
+        StandAloneSig,
+        ModuleRef,
+        TypeSpec,
+        Assembly,
+        AssemblyRef,
+        File,
+        ExportedType,
+        ManifestResource,
+        GenericParam,
+        GenericParamConstraint,
+        MethodSpec
+    }
+);
+coded_index!(
+    #[doc = "Target union for field-marshalling owner columns (`FieldMarshal::parent`)."]
+    HasFieldMarshal,
+    {
+        Field,
+        Param
+    }
+);
+coded_index!(
+    #[doc = "Target union for declarative-security owner columns (`DeclSecurity::parent`)."]
+    HasDeclSecurity,
+    {
+        TypeDef,
+        MethodDef,
+        Assembly
+    }
+);
+coded_index!(
+    #[doc = "Target union for `MemberRef::class` parent resolution."]
+    MemberRefParent,
+    {
+        TypeDef,
+        TypeRef,
+        ModuleRef,
+        MethodDef,
+        TypeSpec
+    }
+);
+coded_index!(
+    #[doc = "Target union for method-semantics associations (`MethodSemantics::association`)."]
+    HasSemantics,
+    {
+        Event,
+        Property
+    }
+);
+coded_index!(
+    #[doc = "Target union for method references (`MethodDef` or `MemberRef`)."]
+    MethodDefOrRef,
+    {
+        MethodDef,
+        MemberRef
+    }
+);
+coded_index!(
+    #[doc = "Target union for `ImplMap::member_forwarded`."]
+    MemberForwarded,
+    {
+        Field,
+        MethodDef
+    }
+);
+coded_index!(
+    #[doc = "Target union for `Implementation` columns in `ExportedType` and `ManifestResource`."]
+    Implementation,
+    {
+        File,
+        AssemblyRef,
+        ExportedType
+    }
+);
+coded_index!(
+    #[doc = "Target union for `CustomAttribute::type` constructor references."]
+    CustomAttributeType,
+    {
+        Unused,
+        Unused,
+        MethodDef,
+        MemberRef,
+        Unused
+    }
+);
+coded_index!(
+    #[doc = "Target union for `TypeRef::resolution_scope`."]
+    ResolutionScope,
+    {
+        Module,
+        ModuleRef,
+        AssemblyRef,
+        TypeRef
+    }
+);
+coded_index!(
+    #[doc = "Target union for `TypeDef`/`MethodDef` ownership in generic parameter rows."]
+    TypeOrMethodDef,
+    {
+        TypeDef,
+        MethodDef
+    }
+);

@@ -195,6 +195,9 @@ fn parse_named<'def, 'inst>(
 /// A custom attribute, which can be applied to many metadata elements.
 ///
 /// See ECMA-335, II.22.10 (page 218) for more information.
+///
+/// The attribute value blob decodes into
+/// [`crate::binary::signature::attribute::CustomAttributeData`].
 #[derive(Debug, Clone)]
 pub struct Attribute<'a> {
     /// The constructor method used to create this attribute.
@@ -273,29 +276,46 @@ impl<'def, 'inst> Attribute<'inst> {
 // we abstract away all the StandAloneSigs and TypeSpecs, so there's no good place to put attributes that belong to them
 // it's not really possible to use those unless you're writing raw metadata though so we'll ignore them (for now)
 
-/// A security declaration, which specifies the requested permissions for a method or type.
+/// Declarative security metadata attached to a type, method, or assembly.
 ///
-/// See ECMA-335, II.22.11 (page 220) for more information.
+/// This is dotnetdll's semantic view of a declarative security annotation: a security action
+/// code plus a serialized permission set (`.permission` / `.permissionset` in ILAsm).
+/// For named action values, see the `DeclarativeSecurityAction` enum documented at
+/// <https://learn.microsoft.com/dotnet/api/system.reflection.declarativesecurityaction>.
+///
+/// Use [`Self::requested_permissions`] to decode the serialized permission set into
+/// [`Permission`] values. For the physical metadata/blob encodings, see the `DeclSecurity`
+/// table and custom-attribute named-argument format (`ECMA-335, II.22.11` and
+/// `ECMA-335, II.23.3`).
 #[derive(Debug, Clone)]
 pub struct SecurityDeclaration<'a> {
-    /// All attributes present on the security declaration.
+    /// Custom attributes attached directly to the `DeclSecurity` row.
     pub attributes: Vec<Attribute<'a>>,
-    /// The security action requested.
+    /// `DeclSecurity::Action`, as the raw 2-byte security action code.
+    ///
+    /// For named action values, see
+    /// <https://learn.microsoft.com/dotnet/api/system.reflection.declarativesecurityaction>
+    /// (for example, `Demand = 2`, `Assert = 3`).
     pub action: u16,
     pub(crate) value: Cow<'a, [u8]>,
 }
 
-/// A single permission requested in a [`SecurityDeclaration`].
+/// One decoded permission entry from a [`SecurityDeclaration`].
+///
+/// Each value corresponds to one permission item inside the declaration's serialized
+/// `PermissionSet` blob.
 #[derive(Debug, Clone)]
 pub struct Permission<'a> {
-    /// The name of the permission type.
+    /// Fully qualified type name of the permission/attribute class.
     pub type_name: Cow<'a, str>,
-    /// The named arguments (fields or properties) set on the permission.
+    /// Named arguments (fields or properties) assigned on that permission entry.
     pub fields: Vec<NamedArg<'a>>,
 }
 
 impl<'a> SecurityDeclaration<'a> {
-    /// Decodes the binary blob of the security declaration into a list of [`Permission`]s.
+    /// Decodes the declaration's serialized `PermissionSet` blob.
+    ///
+    /// The decoded output is a list of [`Permission`] values in metadata order.
     pub fn requested_permissions(&'a self, resolver: &'a impl Resolver<'a>) -> Result<Vec<Permission<'a>>> {
         let offset = &mut 0;
 

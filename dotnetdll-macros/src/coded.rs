@@ -2,27 +2,30 @@ use proc_macro2::Ident;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, Result, Token};
+use syn::{braced, Attribute, Result, Token};
 
 pub struct CodedIndex {
+    attrs: Vec<Attribute>,
     name: Ident,
     tables: Punctuated<Ident, Token![,]>,
 }
 
 impl Parse for CodedIndex {
     fn parse(input: ParseStream) -> Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
         let name = input.parse()?;
         input.parse::<Token![,]>()?;
         let tables;
         braced!(tables in input);
         Ok(CodedIndex {
+            attrs,
             name,
             tables: tables.parse_terminated(Ident::parse)?,
         })
     }
 }
 
-pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::TokenStream {
+pub fn coded_index(CodedIndex { attrs, name, tables }: CodedIndex) -> proc_macro2::TokenStream {
     // only define named variants
     let variants: Vec<_> = tables.iter().filter(|&n| n != "Unused").collect();
 
@@ -55,7 +58,33 @@ pub fn coded_index(CodedIndex { name, tables }: CodedIndex) -> proc_macro2::Toke
         }
     });
 
+    let target_tables = variants
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let tag_mappings = tables
+        .iter()
+        .enumerate()
+        .map(|(idx, n)| {
+            if n == "Unused" {
+                format!("- `0b{idx:0width$b}` => unused", width = log as usize)
+            } else {
+                format!("- `0b{idx:0width$b}` => `{n}`", width = log as usize)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let tag_bits = if log == 1 { "bit" } else { "bits" };
+    let auto_doc = format!(
+        "Coded index over {target_tables}.\n\nUses {log} low tag {tag_bits}:\n{tag_mappings}\n\nThe remaining upper bits contain the selected table row id (RID).\nSee `ECMA-335, II.24.2.6` and `ECMA-335, II.23.2.8`."
+    );
+
     quote! {
+        #(#attrs)*
+        #[doc = #auto_doc]
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         pub enum #name {
             #(#variants(usize),)*

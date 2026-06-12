@@ -17,7 +17,14 @@ pub enum Variance {
 
 /// Represents special constraints on a generic parameter.
 ///
-/// See ECMA-335, II.22.20 (page 229) for more information.
+/// Conceptually, these correspond to generic constraint semantics (reference-type,
+/// value-type, and default-constructor constraints) and rely on generic argument
+/// assignability rules (ECMA-335, I.8.7.3).
+///
+/// C# constraint syntax reference:
+/// <https://learn.microsoft.com/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters>
+///
+/// For the physical metadata encoding, see ECMA-335, II.22.20 (page 229).
 #[derive(Debug, Copy, Clone, Default)]
 pub struct SpecialConstraint {
     /// If true, the parameter must be a reference type (`class` constraint in C#).
@@ -36,7 +43,10 @@ impl SpecialConstraint {
 
 /// A type constraint on a generic parameter.
 ///
-/// See ECMA-335, II.22.21 (page 230) for more information.
+/// Conceptually, this requires the generic argument to derive from or implement the
+/// specified constraint type according to assignment compatibility (ECMA-335, I.8.7.3).
+///
+/// For the physical metadata encoding, see ECMA-335, II.22.21 (page 230).
 #[derive(Debug, Clone)]
 pub struct Constraint<'a, ConstraintType> {
     /// All attributes present on the generic parameter's constraint.
@@ -49,7 +59,11 @@ pub struct Constraint<'a, ConstraintType> {
 
 /// A generic parameter for a type or method.
 ///
-/// See ECMA-335, II.22.20 (page 229) for more information.
+/// This semantic model captures generic parameter names, variance, and constraints as used by
+/// .NET languages and the runtime:
+/// <https://learn.microsoft.com/dotnet/standard/generics/>
+///
+/// For the physical metadata encoding, see ECMA-335, II.22.20 (page 229).
 #[derive(Debug, Clone)]
 pub struct Generic<'a, ConstraintType> {
     /// All attributes present on the generic parameter's declaration.

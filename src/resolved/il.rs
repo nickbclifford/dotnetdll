@@ -4,6 +4,40 @@
 //! at a high level. Branch targets use instruction indices (not byte offsets) -
 //! the library handles offset calculation during serialization.
 //!
+//! # Instruction Reference
+//!
+//! [`Instruction`] variants follow verb-style naming patterns that map directly to CIL
+//! opcode families:
+//!
+//! - **Branching and exception flow:** `Branch*`, `Compare*`, `Switch`, `Leave`,
+//!   `Return`, `Throw`, and `Rethrow` map to control-flow instructions (`br*`, `b*`,
+//!   `c*`, `switch`, `leave`, `ret`, `throw`, `rethrow`). (ECMA-335, III.3)
+//! - **Load/store and stack movement:** `LoadArgument*`/`StoreArgument*`,
+//!   `LoadLocal*`/`StoreLocal*`, `LoadConstant*`, `LoadNull`, `Duplicate`, and `Pop`
+//!   cover argument/local/stack transfers (`ldarg*`, `starg*`, `ldloc*`, `stloc*`,
+//!   `ldc.*`, `ldnull`, `dup`, `pop`). (ECMA-335, III.3)
+//! - **Arithmetic and bitwise:** `Add*`, `Subtract*`, `Multiply*`, `Divide`,
+//!   `Remainder`, `And`, `Or`, `Xor`, `Shift*`, `Negate`, and `Not` map to numeric
+//!   opcode groups; [`NumberSign`] and [`OverflowDetection`] select `.un` and `.ovf`
+//!   forms. (ECMA-335, III.3)
+//! - **Conversions:** `Convert*` maps to `conv.*` families; [`ConversionType`]
+//!   selects the integral target, and signedness/overflow options select `.un`/
+//!   `.ovf` forms. (ECMA-335, III.3.27; ECMA-335, III.3.28; ECMA-335, III.3.29)
+//! - **Object model and metadata tokens:** `Call*`, `BoxValue`, `UnboxInto*`,
+//!   `CastClass`, `IsInstance`, `NewArray`, `NewObject`, `LoadToken*`,
+//!   `MakeTypedReference`, and `ReadTypedReference*` cover method dispatch, object
+//!   conversion, allocation, and token loads. (ECMA-335, III.4)
+//! - **Prefix instructions and memory access flags:** `LoadIndirect`/`StoreIndirect`,
+//!   `LoadElement*`/`StoreElement*`, `LoadField*`/`StoreField*`, `LoadObject`/
+//!   `StoreObject`, `CopyMemoryBlock`, and `InitializeMemoryBlock` expose
+//!   `unaligned.`, `volatile.`, and `no.` prefix-style behavior as instruction
+//!   metadata/constructor options. (ECMA-335, III.2; ECMA-335, III.3; ECMA-335,
+//!   III.4)
+//!
+//! For exact stack transition, verification, and encoding rules, consult the opcode
+//! definitions in Partition III; this API keeps those instruction families typed and
+//! ergonomic without changing their semantics.
+//!
 //! # Examples
 //!
 //! ## Basic instructions
@@ -68,6 +102,44 @@
 //!     + loop_end Return;
 //! };
 //! ```
+//!
+//! ## Worked example: field access + virtual call
+//!
+//! This pattern is common in property getters and helper methods: load `this`, read an
+//! instance field, then invoke an instance method via `callvirt` semantics.
+//!
+//! ```rust
+//! use dotnetdll::prelude::*;
+//!
+//! let mut res = Resolution::new(Module::new("example"));
+//! let mscorlib = res.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+//! let object_ref = res.push_type_reference(type_ref! { System.Object in #mscorlib });
+//!
+//! let parent = res.type_definition_index(0).unwrap();
+//! let value_field = res.push_field(
+//!     parent,
+//!     Field::instance(Accessibility::Private, "_value", ctype! { object }),
+//! );
+//!
+//! let object_type: MethodType = BaseType::class(object_ref).into();
+//! let to_string = res.push_method_reference(method_ref! { string #object_type::ToString() });
+//!
+//! let describe = res.push_method(
+//!     parent,
+//!     Method::new(
+//!         Accessibility::Public,
+//!         msig! { string () },
+//!         "Describe",
+//!         Some(body::Method::new(asm! {
+//!             LoadArgument 0;       // `this`
+//!             load_field value_field;
+//!             call_virtual to_string;
+//!             Return;
+//!         }))
+//!     )
+//! );
+//! # let _ = describe;
+//! ```
 
 use super::{members::*, signature, types::*, ResolvedDebug};
 use crate::resolution::Resolution;
@@ -75,63 +147,127 @@ use crate::resolution::Resolution;
 use dotnetdll_macros::r_instructions;
 use num_derive::FromPrimitive;
 
+/// Selects signed vs unsigned interpretation for CIL instruction families that have `.un`
+/// forms.
+///
+/// This affects comparisons/branches (`cgt` vs `cgt.un`, `bge` vs `bge.un`), some integer
+/// arithmetic (`div`/`rem`), and right shift behavior (`shr` sign-extension vs `shr.un`
+/// zero-fill). (ECMA-335, III.3.9; ECMA-335, III.3.23; ECMA-335, III.3.60)
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum NumberSign {
+    /// Use the signed/default opcode semantics.
     Signed,
+    /// Use the unsigned (or unordered, for floating-point comparisons) opcode semantics.
     Unsigned,
 }
 
+/// Controls whether numeric operations use `ovf` overflow-checking instruction forms.
+///
+/// Checked forms throw `System.OverflowException` when the result cannot be represented;
+/// unchecked forms use the non-`ovf` opcode behavior. (ECMA-335, III.3.2; ECMA-335, III.3.28;
+/// ECMA-335, III.3.49; ECMA-335, III.3.65)
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum OverflowDetection {
+    /// Use overflow-checking forms (for example `add.ovf`, `mul.ovf`, or `conv.ovf.*`).
     Check,
+    /// Use non-checking forms that do not throw overflow exceptions.
     NoCheck,
 }
 
+/// Target integer type used by the `conv.*` instruction families.
+///
+/// This enum covers the integral targets used by `conv.<to type>`, `conv.ovf.<to type>`, and
+/// `conv.ovf.<to type>.un`. Floating-point conversions use dedicated instructions in
+/// [`Instruction`] (`ConvertFloat32`, `ConvertFloat64`, `ConvertUnsignedToFloat`).
+/// (ECMA-335, III.3.27; ECMA-335, III.3.28; ECMA-335, III.3.29)
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ConversionType {
+    /// `conv.i1`
     Int8,
+    /// `conv.u1`
     UInt8,
+    /// `conv.i2`
     Int16,
+    /// `conv.u2`
     UInt16,
+    /// `conv.i4`
     Int32,
+    /// `conv.u4`
     UInt32,
+    /// `conv.i8`
     Int64,
+    /// `conv.u8`
     UInt64,
+    /// `conv.i`
     IntPtr,
+    /// `conv.u`
     UIntPtr,
 }
 
+/// Alignment hint value for the `unaligned.` instruction prefix.
+///
+/// The encoded alignment operand is limited to 1, 2, or 4 bytes. (ECMA-335, III.2.5)
 #[derive(Debug, Copy, Clone, FromPrimitive, Eq, PartialEq)]
 pub enum Alignment {
+    /// 1-byte alignment (`unaligned. 1`).
     Byte = 1,
+    /// 2-byte alignment (`unaligned. 2`).
     Double = 2,
+    /// 4-byte alignment (`unaligned. 4`).
     Quad = 4,
 }
 
+/// Element/value type selector for primitive indirect and array load instructions.
+///
+/// Used by `ldind.*` and `ldelem.*` instruction families. (ECMA-335, III.3.42; ECMA-335,
+/// III.4.8)
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum LoadType {
+    /// `*.i1`
     Int8,
+    /// `*.u1`
     UInt8,
+    /// `*.i2`
     Int16,
+    /// `*.u2`
     UInt16,
+    /// `*.i4`
     Int32,
+    /// `*.u4`
     UInt32,
+    /// `*.i8` (also used for unsigned 64-bit loads in CIL).
     Int64,
+    /// `*.r4`
     Float32,
+    /// `*.r8`
     Float64,
+    /// `*.i` (native-sized integer)
     IntPtr,
+    /// `*.ref` (object reference)
     Object,
 }
 
+/// Element/value type selector for primitive indirect and array store instructions.
+///
+/// Used by `stind.*` and `stelem.*` instruction families. (ECMA-335, III.3.62; ECMA-335,
+/// III.4.27)
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum StoreType {
+    /// `*.i1`
     Int8,
+    /// `*.i2`
     Int16,
+    /// `*.i4`
     Int32,
+    /// `*.i8`
     Int64,
+    /// `*.r4`
     Float32,
+    /// `*.r8`
     Float64,
+    /// `*.i` (native-sized integer)
     IntPtr,
+    /// `*.ref` (object reference)
     Object,
 }
 

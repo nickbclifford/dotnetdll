@@ -5,16 +5,46 @@ use scroll::{
 };
 use scroll_buffer::DynamicBuffer;
 
+/// The CIL method body header.
+///
+/// Method bodies are encoded using one of two physical header formats:
+///
+/// - [`Header::Tiny`], a 1-byte header for small methods (body size up to 63 bytes)
+///   that do not declare locals and do not carry extra sections.
+/// - [`Header::Fat`], a 12-byte (3 DWORD) header that supports full method metadata,
+///   including locals and trailing data sections.
+///
+/// ECMA-335, II.25.4.2 and ECMA-335, II.25.4.3.
+///
+/// See also: [`crate::resolved::body::Header`].
 #[derive(Debug)]
 pub enum Header {
+    /// A tiny method header.
+    ///
+    /// This format implies `maxstack = 8`, has no local variable signature token,
+    /// and cannot be followed by additional method data sections.
+    ///
+    /// ECMA-335, II.25.4.2.
     Tiny {
+        /// Size of the method body in bytes.
         size: usize,
     },
+    /// A fat method header.
+    ///
+    /// This format stores explicit stack, locals, and size information and may
+    /// indicate that extra sections follow the method body.
+    ///
+    /// ECMA-335, II.25.4.3.
     Fat {
+        /// Whether one or more additional data sections follow the method body.
         more_sects: bool,
+        /// Whether local variables must be zero-initialized before executing the body.
         init_locals: bool,
+        /// Declared evaluation stack depth required by this method.
         max_stack: u16,
+        /// Size of the method body in bytes.
         size: usize,
+        /// Metadata token for the local variable signature (`StandAloneSig`) or zero.
         local_var_sig_tok: u32,
     },
 }
@@ -98,13 +128,29 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
     }
 }
 
+/// A single exception handling clause inside a method data section.
+///
+/// Offsets and lengths are expressed as byte ranges relative to the start of the
+/// method body (the IL stream). `class_token_or_filter` is interpreted by
+/// `flags`: for typed handlers it is a `TypeDef`/`TypeRef`/`TypeSpec` token,
+/// and for filter handlers it is the byte offset of the filter decision block.
+///
+/// ECMA-335, II.25.4.6.
+///
+/// See also: [`crate::resolved::body::Exception`].
 #[derive(Debug, Pread)]
 pub struct Exception {
+    /// Clause kind flags (`COR_ILEXCEPTION_CLAUSE_*`).
     pub flags: u32,
+    /// Byte offset where the protected `try` region begins.
     pub try_offset: u32,
+    /// Length in bytes of the protected `try` region.
     pub try_length: u32,
+    /// Byte offset where the handler region begins.
     pub handler_offset: u32,
+    /// Length in bytes of the handler region.
     pub handler_length: u32,
+    /// Type token for typed handlers, or filter start offset for filter handlers.
     pub class_token_or_filter: u32,
 }
 impl TryIntoCtx<(), DynamicBuffer> for Exception {
@@ -138,15 +184,39 @@ impl TryIntoCtx<(), DynamicBuffer> for Exception {
     }
 }
 
+/// Decoded kind of an extra method data section.
+///
+/// The CLI currently standardizes exception handling sections; unknown kinds are
+/// preserved as raw spans so the parser can skip them while keeping stream
+/// alignment.
+///
+/// ECMA-335, II.25.4.5.
 #[derive(Debug)]
 pub enum SectionKind {
+    /// Exception handling clauses for the method body.
+    ///
+    /// ECMA-335, II.25.4.6.
     Exceptions(Vec<Exception>),
+    /// A section kind this crate does not currently decode.
+    ///
+    /// `is_fat` records whether the section used the fat section header format and
+    /// `length` is the payload byte length reported in that header.
     Unrecognized { is_fat: bool, length: usize },
 }
 
+/// One extra data section that follows a method body.
+///
+/// These sections appear after the IL stream (aligned to a 4-byte boundary) and
+/// are chained via a continuation bit in each section header.
+///
+/// ECMA-335, II.25.4.5.
+///
+/// See also: [`crate::resolved::body::DataSection`].
 #[derive(Debug)]
 pub struct DataSection {
+    /// Parsed section payload.
     pub section: SectionKind,
+    /// Whether another section follows this one.
     pub more_sections: bool,
 }
 
@@ -273,10 +343,22 @@ impl TryIntoCtx<(), DynamicBuffer> for DataSection {
     }
 }
 
+/// A complete binary CIL method body.
+///
+/// A method body consists of a [`Header`], an IL instruction stream, and
+/// optionally one or more trailing [`DataSection`] values (for example,
+/// exception handling tables).
+///
+/// ECMA-335, II.25.4.2 through ECMA-335, II.25.4.6.
+///
+/// See also: [`crate::resolved::body::Method`].
 #[derive(Debug)]
 pub struct Method {
+    /// The method header (tiny or fat).
     pub header: Header,
+    /// Decoded CIL instructions for the method body.
     pub body: Vec<il::Instruction>,
+    /// Trailing method data sections.
     pub data_sections: Vec<DataSection>,
 }
 

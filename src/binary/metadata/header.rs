@@ -12,15 +12,38 @@ use scroll::{
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 
+/// Header of the `#~` logical metadata stream (metadata tables stream).
+///
+/// This is the binary prefix that declares table-presence bits, row counts,
+/// heap index widths, and then the table row payloads themselves. In practice,
+/// this struct is the root of the parsed metadata table graph in the binary
+/// layer. See ECMA-335, II.24.2.6.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Header {
+    /// Reserved field at the start of the stream header (must be zero).
     pub reserved0: u32,
+    /// Major version of the metadata tables stream format.
     pub major_version: u8,
+    /// Minor version of the metadata tables stream format.
     pub minor_version: u8,
+    /// Heap-size flags for `#Strings`, `#GUID`, and `#Blob` indices.
+    ///
+    /// This is a 3-bit field: when a bit is set, indices into the corresponding
+    /// heap are 4 bytes; otherwise they are 2 bytes.
     pub heap_sizes: u8,
+    /// Reserved field after [`Header::heap_sizes`] (must be 1 in valid images).
     pub reserved1: u8,
+    /// 64-bit bitmask of metadata tables present in this stream.
+    ///
+    /// For each set bit, the header stores one row count (in table-number order)
+    /// before the table data begins.
     pub valid: u64,
+    /// 64-bit bitmask declaring which present tables are guaranteed sorted.
     pub sorted: u64,
+    /// Parsed rows for all metadata tables present in this stream.
+    ///
+    /// The set of populated tables is determined by [`Header::valid`], and each
+    /// table length is encoded by the row-count array in the stream header.
     pub tables: Tables,
 }
 

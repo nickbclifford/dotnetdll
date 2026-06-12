@@ -1,7 +1,10 @@
 use super::{EntryPoint, FieldIndex, MethodIndex, MethodMemberIndex, Resolution, TypeIndex};
 use crate::binary::{
     cli::{Header, Metadata, RVASize},
-    heap::*,
+    heap::{
+        BlobReader, BlobWriter, GUIDReader, GUIDWriter, Reader, StringsReader, StringsWriter, UserStringReader,
+        UserStringWriter, Writer,
+    },
     metadata::{header, index, table::*},
     method,
     signature::kinds::MarshalSpec,
@@ -33,9 +36,29 @@ use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 use tracing::debug;
 
+/// A dictionary of options for [`Resolution::write`].
+///
+/// These knobs roughly correspond to compiler output settings such as `OutputType`
+/// and `PlatformTarget`:
+///
+/// - <https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-options/output#outputtype>
+/// - <https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-options/output#platformtarget>
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Options {
+    /// Emits a 32-bit (`x86`) PE image when `true`.
+    ///
+    /// This affects machine type and pointer-sized PE details used during writing
+    /// (for example import table entries and relocation format).
+    ///
+    /// [`Default`] value of `false` (emit a 64-bit image).
     pub is_32_bit: bool,
+    /// Emits an executable image (`.exe`) when `true`; otherwise emits a library (`.dll`).
+    ///
+    /// Executable output includes the native loader stub/import sections needed to transfer
+    /// control to the managed entry point. Library output is flagged as a DLL and has no
+    /// process entry stub.
+    ///
+    /// [`Default`] value of `false`.
     pub is_executable: bool,
 }
 

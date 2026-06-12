@@ -5,19 +5,42 @@ use scroll::{
 };
 use scroll_buffer::DynamicBuffer;
 
+/// Calling convention bits stored in the low 5 bits of a method signature header byte.
+///
+/// This models the convention discriminator used by [`MethodDefSig`] and [`MethodRefSig`].
+/// `Generic` carries the generic parameter count (`GENERIC` case) encoded immediately after
+/// the header byte.
+///
+/// ECMA-335, II.23.2.1.
+///
+/// Re-exported for the semantic layer as [`crate::resolved::signature::CallingConvention`].
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum CallingConvention {
+    /// Default managed calling convention (`0x0`).
     Default,
+    /// Vararg calling convention (`0x5`).
     Vararg,
+    /// Generic method signature marker (`0x10`) with generic arity.
     Generic(usize),
 }
 
+/// Binary method-definition signature (`MethodDefSig`) from the `#Blob` heap.
+///
+/// A method definition signature contains `HASTHIS`/`EXPLICITTHIS` flags, the
+/// [`CallingConvention`], parameter count, return type, and parameter types.
+///
+/// ECMA-335, II.23.2.1.
 #[derive(Debug, Clone)]
 pub struct MethodDefSig {
+    /// Whether the `HASTHIS` bit is set in the signature header byte.
     pub has_this: bool,
+    /// Whether the `EXPLICITTHIS` bit is set in the signature header byte.
     pub explicit_this: bool,
+    /// The method calling convention discriminator.
     pub calling_convention: CallingConvention,
+    /// Encoded return type.
     pub ret_type: RetType,
+    /// Encoded fixed parameter list.
     pub params: Vec<Param>,
 }
 
@@ -147,9 +170,17 @@ fn build_params_with_varargs(len: &mut u32, from: &[u8], offset: &mut usize) -> 
     Ok(params)
 }
 
+/// Binary method-reference signature (`MethodRefSig`) from the `#Blob` heap.
+///
+/// This shares the same fixed-prefix shape as [`MethodDefSig`], but for vararg calls it may
+/// include additional parameters after an `ELEMENT_TYPE_SENTINEL` marker.
+///
+/// ECMA-335, II.23.2.2.
 #[derive(Debug, Clone)]
 pub struct MethodRefSig {
+    /// Fixed method-signature prefix (`HASTHIS`, convention, return type, and fixed params).
     pub method_def: MethodDefSig,
+    /// Optional vararg tail parameters that follow the sentinel marker.
     pub varargs: Vec<Param>,
 }
 
@@ -206,14 +237,30 @@ impl TryIntoCtx<(), DynamicBuffer> for MethodRefSig {
     }
 }
 
+/// Calling-convention discriminator for standalone method signatures (`calli` signatures).
+///
+/// Standalone signatures can be managed (`DefaultManaged`, `Vararg`) or unmanaged with an
+/// explicit unmanaged convention (`Cdecl`, `Stdcall`, `Thiscall`, `Fastcall`,
+/// `DefaultUnmanaged`).
+///
+/// ECMA-335, II.23.2.3.
+///
+/// Re-exported for the semantic layer as [`crate::resolved::signature::StandAloneCallingConvention`].
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub enum StandAloneCallingConvention {
+    /// Managed default calling convention.
     DefaultManaged,
+    /// Managed vararg calling convention.
     Vararg,
+    /// Unmanaged C declaration calling convention.
     Cdecl,
+    /// Unmanaged standard call calling convention.
     Stdcall,
+    /// Unmanaged thiscall calling convention.
     Thiscall,
+    /// Unmanaged fastcall calling convention.
     Fastcall,
+    /// Unmanaged calling convention without a more specific subtype.
     DefaultUnmanaged,
 }
 
@@ -232,13 +279,25 @@ impl PartialEq<CallingConvention> for StandAloneCallingConvention {
     }
 }
 
+/// Binary standalone method signature used by `calli` and method-body locals metadata.
+///
+/// This encoding includes method-style `HASTHIS`/`EXPLICITTHIS` flags plus a
+/// [`StandAloneCallingConvention`] discriminator and optional vararg tail parameters.
+///
+/// ECMA-335, II.23.2.3.
 #[derive(Debug, Clone)]
 pub struct StandAloneMethodSig {
+    /// Whether the `HASTHIS` bit is set.
     pub has_this: bool,
+    /// Whether the `EXPLICITTHIS` bit is set.
     pub explicit_this: bool,
+    /// Standalone signature calling convention.
     pub calling_convention: StandAloneCallingConvention,
+    /// Encoded return type.
     pub ret_type: RetType,
+    /// Fixed parameter list.
     pub params: Vec<Param>,
+    /// Optional vararg tail parameters after the sentinel marker.
     pub varargs: Vec<Param>,
 }
 
@@ -332,8 +391,15 @@ try_into_ctx!(StandAloneMethodSig, |self, into| {
     Ok(*offset)
 });
 
+/// Binary field signature (`FieldSig`) from the `#Blob` heap.
+///
+/// Field signatures begin with the `FIELD` prefix byte (`0x6`), followed by optional custom
+/// modifiers and the field type.
+///
+/// ECMA-335, II.23.2.4.
 #[derive(Debug)]
 pub struct FieldSig {
+    /// Optional required/optional custom modifiers that precede the field type.
     pub custom_modifiers: Vec<CustomMod>,
     // the standard is conflicting on whether or not byref types are allowed in fields
     //   ECMA-335, I.8.2.1.1 (page 20) says they cannot be used for field signatures
@@ -341,7 +407,9 @@ pub struct FieldSig {
     // however, since C# 11/.NET 7, ref fields are allowed in ref structs
     //   the System.Private.CoreLib implementation for System.TypedReference
     //   uses this feature for its value pointer field
+    /// Whether `ELEMENT_TYPE_BYREF` is present before [`Self::field_type`].
     pub by_ref: bool,
+    /// Encoded field type.
     pub field_type: Type,
 }
 
@@ -391,10 +459,19 @@ try_into_ctx!(FieldSig, |self, into| {
     Ok(*offset)
 });
 
+/// Binary property signature (`PropertySig`) from the `#Blob` heap.
+///
+/// Property signatures start with a property prefix (`0x8`, optionally with `HASTHIS`), then the
+/// parameter count, property type, and any indexer parameters.
+///
+/// ECMA-335, II.23.2.5.
 #[derive(Debug)]
 pub struct PropertySig {
+    /// Whether the property signature has the `HASTHIS` bit set.
     pub has_this: bool,
+    /// Encoded property type.
     pub property_type: Param, // properties can have ref valuetypes, which the Param type covers
+    /// Optional indexer-style parameters.
     pub params: Vec<Param>,
 }
 
@@ -448,19 +525,40 @@ try_into_ctx!(PropertySig, |self, into| {
     Ok(*offset)
 });
 
+/// One local variable entry inside a [`LocalVarSig`] blob.
+///
+/// Locals can be `typedref` (`TypedByRef`) or a regular local with optional custom modifiers,
+/// `pinned`, and `byref` prefixes.
+///
+/// ECMA-335, II.23.2.6.
 #[derive(Debug)]
 pub enum LocalVar {
+    /// A `typedref` local (`ELEMENT_TYPE_TYPEDBYREF`).
     TypedByRef,
+    /// A regular local variable entry.
     Variable {
+        /// Optional required/optional custom modifiers before the local type.
         custom_modifiers: Vec<CustomMod>,
+        /// Whether the local has the `ELEMENT_TYPE_PINNED` prefix.
         pinned: bool,
+        /// Whether the local has the `ELEMENT_TYPE_BYREF` prefix.
         by_ref: bool,
+        /// Encoded local variable type.
         var_type: Type,
     },
 }
 
+/// Binary local-variable signature (`LocalVarSig`) from the `#Blob` heap.
+///
+/// Local variable signatures begin with the `LOCAL_SIG` prefix byte (`0x7`), then a compressed
+/// local count and that many [`LocalVar`] entries.
+///
+/// ECMA-335, II.23.2.6.
 #[derive(Debug)]
-pub struct LocalVarSig(pub Vec<LocalVar>);
+pub struct LocalVarSig(
+    /// Encoded local variable entries.
+    pub Vec<LocalVar>,
+);
 
 impl TryFromCtx<'_> for LocalVarSig {
     type Error = scroll::Error;
@@ -549,8 +647,17 @@ impl TryIntoCtx<(), DynamicBuffer> for LocalVarSig {
     }
 }
 
+/// Binary method-specification signature (`MethodSpec`) used for generic method instantiation.
+///
+/// This blob starts with `GENERICINST` (`0x0a`), followed by a compressed argument count and the
+/// instantiated generic argument types.
+///
+/// ECMA-335, II.23.2.15.
 #[derive(Debug)]
-pub struct MethodSpec(pub Vec<Type>);
+pub struct MethodSpec(
+    /// Generic type arguments supplied to the method instantiation.
+    pub Vec<Type>,
+);
 
 impl TryFromCtx<'_> for MethodSpec {
     type Error = scroll::Error;
@@ -590,12 +697,23 @@ impl TryIntoCtx<(), DynamicBuffer> for MethodSpec {
     }
 }
 
+/// Field marshal descriptor (`MarshalSpec`) stored in `FieldMarshal.NativeType` blobs.
+///
+/// This represents the native marshaling descriptor used by interop metadata. The encoding can be
+/// a primitive native intrinsic or an array form with optional element/size metadata.
+///
+/// ECMA-335, II.23.4.
 #[derive(Debug, Clone, Copy)]
 pub enum MarshalSpec {
+    /// A non-array native type.
     Primitive(NativeIntrinsic),
+    /// Native array marshaling descriptor.
     Array {
+        /// Native intrinsic element type (`None` when omitted / `NATIVE_TYPE_MAX`).
         element_type: Option<NativeIntrinsic>,
+        /// 0-based parameter index supplying the element count.
         length_parameter: Option<usize>,
+        /// Constant number of additional elements.
         additional_elements: Option<usize>,
     },
 }

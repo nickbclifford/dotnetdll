@@ -1,3 +1,14 @@
+//! Encoded signature building blocks shared across method, field, property, and marshal blobs.
+//!
+//! This module contains the binary discriminants and compact encodings used by signature grammars
+//! in `#Blob` metadata: element-type tags, custom modifiers, `Type`, parameter/return wrappers,
+//! and unmanaged native marshalling intrinsics.
+//!
+//! - `ELEMENT_TYPE_*` constants are the one-byte element-type tags from `CorElementType`.
+//!   See ECMA-335, II.23.1.16.
+//! - `NATIVE_TYPE_*` constants are marshalling descriptor tags.
+//!   See ECMA-335, II.23.4.
+
 use paste::paste;
 use scroll::{
     Error, Pread, Pwrite,
@@ -10,9 +21,10 @@ use super::{
 };
 
 macro_rules! element_types {
-    ($($name:ident = $val:literal),+) => {
+    ($( $(#[$meta:meta])* $name:ident = $val:literal ),+ $(,)?) => {
         $(
             paste! {
+                $(#[$meta])*
                 pub const [<ELEMENT_TYPE_ $name>]: u8 = $val;
             }
         )*
@@ -20,45 +32,92 @@ macro_rules! element_types {
 }
 
 element_types! {
+    /// `ELEMENT_TYPE_END` (`0x00`), used as a list terminator in specific signature grammars.
     END = 0x00,
+    /// `ELEMENT_TYPE_VOID` (`0x01`), the `void` return type marker.
     VOID = 0x01,
+    /// `ELEMENT_TYPE_BOOLEAN` (`0x02`), the built-in `bool` type.
     BOOLEAN = 0x02,
+    /// `ELEMENT_TYPE_CHAR` (`0x03`), the built-in UTF-16 code-unit type.
     CHAR = 0x03,
+    /// `ELEMENT_TYPE_I1` (`0x04`), signed 8-bit integer.
     I1 = 0x04,
+    /// `ELEMENT_TYPE_U1` (`0x05`), unsigned 8-bit integer.
     U1 = 0x05,
+    /// `ELEMENT_TYPE_I2` (`0x06`), signed 16-bit integer.
     I2 = 0x06,
+    /// `ELEMENT_TYPE_U2` (`0x07`), unsigned 16-bit integer.
     U2 = 0x07,
+    /// `ELEMENT_TYPE_I4` (`0x08`), signed 32-bit integer.
     I4 = 0x08,
+    /// `ELEMENT_TYPE_U4` (`0x09`), unsigned 32-bit integer.
     U4 = 0x09,
+    /// `ELEMENT_TYPE_I8` (`0x0a`), signed 64-bit integer.
     I8 = 0x0a,
+    /// `ELEMENT_TYPE_U8` (`0x0b`), unsigned 64-bit integer.
     U8 = 0x0b,
+    /// `ELEMENT_TYPE_R4` (`0x0c`), 32-bit IEEE floating-point.
     R4 = 0x0c,
+    /// `ELEMENT_TYPE_R8` (`0x0d`), 64-bit IEEE floating-point.
     R8 = 0x0d,
+    /// `ELEMENT_TYPE_STRING` (`0x0e`), the built-in `string` reference type.
     STRING = 0x0e,
+    /// `ELEMENT_TYPE_PTR` (`0x0f`), unmanaged pointer (`T*`).
     PTR = 0x0f,
+    /// `ELEMENT_TYPE_BYREF` (`0x10`), managed by-reference (`T&`).
     BYREF = 0x10,
+    /// `ELEMENT_TYPE_VALUETYPE` (`0x11`), user-defined value type token.
     VALUETYPE = 0x11,
+    /// `ELEMENT_TYPE_CLASS` (`0x12`), user-defined reference type token.
     CLASS = 0x12,
+    /// `ELEMENT_TYPE_VAR` (`0x13`), generic type parameter (`!n`).
     VAR = 0x13,
+    /// `ELEMENT_TYPE_ARRAY` (`0x14`), multi-dimensional array with [`ArrayShape`].
     ARRAY = 0x14,
+    /// `ELEMENT_TYPE_GENERICINST` (`0x15`), closed generic type instantiation.
     GENERICINST = 0x15,
+    /// `ELEMENT_TYPE_TYPEDBYREF` (`0x16`), typed reference.
     TYPEDBYREF = 0x16,
+    /// `ELEMENT_TYPE_I` (`0x18`), platform-sized signed integer (`native int`).
     I = 0x18,
+    /// `ELEMENT_TYPE_U` (`0x19`), platform-sized unsigned integer (`native uint`).
     U = 0x19,
+    /// `ELEMENT_TYPE_FNPTR` (`0x1b`), function pointer signature.
     FNPTR = 0x1b,
+    /// `ELEMENT_TYPE_OBJECT` (`0x1c`), the built-in `object` reference type.
     OBJECT = 0x1c,
+    /// `ELEMENT_TYPE_SZARRAY` (`0x1d`), single-dimensional zero-based array (`T[]`).
     SZARRAY = 0x1d,
+    /// `ELEMENT_TYPE_MVAR` (`0x1e`), generic method parameter (`!!n`).
     MVAR = 0x1e,
+    /// `ELEMENT_TYPE_CMOD_REQD` (`0x1f`), required custom modifier prefix.
     CMOD_REQD = 0x1f,
+    /// `ELEMENT_TYPE_CMOD_OPT` (`0x20`), optional custom modifier prefix.
     CMOD_OPT = 0x20,
+    /// `ELEMENT_TYPE_INTERNAL` (`0x21`), runtime-internal type marker.
     INTERNAL = 0x21,
+    /// `ELEMENT_TYPE_MODIFIER` (`0x40`), modifier mask value in element-type space.
     MODIFIER = 0x40,
+    /// `ELEMENT_TYPE_SENTINEL` (`0x41`), vararg fixed/optional parameter boundary marker.
     SENTINEL = 0x41,
-    PINNED = 0x45
+    /// `ELEMENT_TYPE_PINNED` (`0x45`), local-variable pinning constraint marker (Constraint item).
+    ///
+    /// See ECMA-335, II.23.2.9.
+    PINNED = 0x45,
 }
 
+/// Compact `TypeDef`/`TypeRef`/`TypeSpec` token used inside signatures.
+///
+/// Signature blobs do not store a full 4-byte metadata token here. Instead, they store a compressed
+/// integer where the low 2 bits encode the target table (`0=TypeDef`, `1=TypeRef`, `2=TypeSpec`)
+/// and the remaining bits encode the row id.
+///
+/// See ECMA-335, II.23.2.8.
 #[derive(Debug, Clone)]
-pub struct TypeDefOrRefOrSpec(pub index::Token);
+pub struct TypeDefOrRefOrSpec(
+    /// The decoded metadata token.
+    pub index::Token,
+);
 
 impl From<index::TypeDefOrRef> for TypeDefOrRefOrSpec {
     fn from(t: index::TypeDefOrRef) -> Self {
@@ -195,12 +254,22 @@ try_into_ctx!(ArrayShape, |self, into| {
     Ok(*offset)
 });
 
+/// Signature-level custom modifier (`modreq` / `modopt`).
+///
+/// A custom modifier prefixes a type position in a signature and references a type via
+/// [`TypeDefOrRefOrSpec`]. Required modifiers must be understood by consumers that reference the
+/// containing signature; optional modifiers may be ignored.
+///
+/// See ECMA-335, II.23.2.7.
 #[derive(Debug, Clone)]
 pub enum CustomMod {
+    /// Required custom modifier (`ELEMENT_TYPE_CMOD_REQD`).
     Required(TypeDefOrRefOrSpec),
+    /// Optional custom modifier (`ELEMENT_TYPE_CMOD_OPT`).
     Optional(TypeDefOrRefOrSpec),
 }
 
+/// Internal lightweight parse failure marker used while scanning custom modifier lists.
 pub struct FailUnit;
 impl From<scroll::Error> for FailUnit {
     fn from(_: Error) -> Self {
@@ -248,6 +317,12 @@ try_into_ctx!(CustomMod, |self, into| {
     Ok(*offset)
 });
 
+/// Reads a maximal contiguous sequence of [`CustomMod`] items at `offset`.
+///
+/// Parsing stops at the first non-`CMOD_*` byte or parse failure and returns all successfully read
+/// modifiers. The input `offset` is advanced past the consumed bytes.
+///
+/// See ECMA-335, II.23.2.7.
 pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> Vec<CustomMod> {
     // CMOD_REQD (0x1f) and CMOD_OPT (0x20) are both < 128, so they encode as single bytes.
     // Peek the first byte to avoid a full gread when there are no custom mods (the common case).
@@ -265,33 +340,66 @@ pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> Vec<CustomMod> {
     }
 }
 
+/// Encoded signature type.
+///
+/// This enum models the `Type` non-terminal used throughout signature blobs, including primitive
+/// types, type/method generic variables, pointers, arrays, function pointers, and generic
+/// instantiations.
+///
+/// See ECMA-335, II.23.2.12 and II.23.2.13.
 #[derive(Debug, Clone)]
 pub enum Type {
+    /// `ELEMENT_TYPE_BOOLEAN`.
     Boolean,
+    /// `ELEMENT_TYPE_CHAR`.
     Char,
+    /// `ELEMENT_TYPE_I1`.
     Int8,
+    /// `ELEMENT_TYPE_U1`.
     UInt8,
+    /// `ELEMENT_TYPE_I2`.
     Int16,
+    /// `ELEMENT_TYPE_U2`.
     UInt16,
+    /// `ELEMENT_TYPE_I4`.
     Int32,
+    /// `ELEMENT_TYPE_U4`.
     UInt32,
+    /// `ELEMENT_TYPE_I8`.
     Int64,
+    /// `ELEMENT_TYPE_U8`.
     UInt64,
+    /// `ELEMENT_TYPE_R4`.
     Float32,
+    /// `ELEMENT_TYPE_R8`.
     Float64,
+    /// `ELEMENT_TYPE_I` (`native int`).
     IntPtr,
+    /// `ELEMENT_TYPE_U` (`native uint`).
     UIntPtr,
+    /// `ELEMENT_TYPE_ARRAY` with element type and [`ArrayShape`].
     Array(Box<Type>, ArrayShape),
+    /// `ELEMENT_TYPE_CLASS` + encoded type token.
     Class(TypeDefOrRefOrSpec),
+    /// `ELEMENT_TYPE_FNPTR` + stand-alone method signature.
     FnPtr(Box<kinds::StandAloneMethodSig>),
+    /// `ELEMENT_TYPE_GENERICINST CLASS` + generic arguments.
     GenericInstClass(TypeDefOrRefOrSpec, Vec<Type>),
+    /// `ELEMENT_TYPE_GENERICINST VALUETYPE` + generic arguments.
     GenericInstValueType(TypeDefOrRefOrSpec, Vec<Type>),
+    /// `ELEMENT_TYPE_MVAR` method generic parameter number.
     MVar(u32),
+    /// `ELEMENT_TYPE_OBJECT`.
     Object,
+    /// `ELEMENT_TYPE_PTR` with optional pointee type (`None` encodes `void*`).
     Ptr(Vec<CustomMod>, Option<Box<Type>>),
+    /// `ELEMENT_TYPE_STRING`.
     String,
+    /// `ELEMENT_TYPE_SZARRAY` with custom modifiers on the element type.
     SzArray(Vec<CustomMod>, Box<Type>),
+    /// `ELEMENT_TYPE_VALUETYPE` + encoded type token.
     ValueType(TypeDefOrRefOrSpec),
+    /// `ELEMENT_TYPE_VAR` type generic parameter number.
     Var(u32),
 }
 
@@ -494,15 +602,31 @@ try_into_ctx!(Type, |self, into| {
     Ok(*offset)
 });
 
+/// Parameter-type payload used by [`Param`].
+///
+/// See ECMA-335, II.23.2.10.
 #[derive(Debug, Clone)]
 pub enum ParamType {
+    /// A regular parameter type.
     Type(Type),
+    /// A managed by-reference parameter (`byref T`).
     ByRef(Type),
+    /// A typed reference parameter (`typedbyref`).
     TypedByRef,
 }
 
+/// Encoded method parameter signature item.
+///
+/// A parameter consists of zero or more custom modifiers followed by a [`ParamType`].
+///
+/// See ECMA-335, II.23.2.10.
 #[derive(Debug, Clone)]
-pub struct Param(pub Vec<CustomMod>, pub ParamType);
+pub struct Param(
+    /// Custom modifiers that precede the parameter type.
+    pub Vec<CustomMod>,
+    /// The parameter type payload.
+    pub ParamType,
+);
 
 impl TryFromCtx<'_> for Param {
     type Error = scroll::Error;
@@ -544,16 +668,35 @@ try_into_ctx!(Param, |self, into| {
     Ok(*offset)
 });
 
+/// Return-type payload used by [`RetType`].
+///
+/// `RetType` uses the same forms as [`ParamType`], with an additional `void` case.
+///
+/// See ECMA-335, II.23.2.11.
 #[derive(Debug, Clone)]
 pub enum RetTypeType {
+    /// A non-`void` return type.
     Type(Type),
+    /// A managed by-reference return (`byref T`).
     ByRef(Type),
+    /// A typed reference return (`typedbyref`).
     TypedByRef,
+    /// `void` return.
     Void,
 }
 
+/// Encoded method return signature item.
+///
+/// A return type consists of zero or more custom modifiers followed by a [`RetTypeType`].
+///
+/// See ECMA-335, II.23.2.11.
 #[derive(Debug, Clone)]
-pub struct RetType(pub Vec<CustomMod>, pub RetTypeType);
+pub struct RetType(
+    /// Custom modifiers that precede the return type.
+    pub Vec<CustomMod>,
+    /// The return type payload.
+    pub RetTypeType,
+);
 
 impl TryFromCtx<'_> for RetType {
     type Error = scroll::Error;
@@ -597,49 +740,90 @@ try_into_ctx!(RetType, |self, into| {
     Ok(*offset)
 });
 
+/// Unmanaged intrinsic type discriminator used in `MarshalSpec` blobs.
+///
+/// The first 16 variants correspond directly to `NativeIntrinsic` in ECMA-335 marshalling
+/// descriptors. Additional variants represent widely used Microsoft extensions accepted by this
+/// crate during parse/write.
+///
+/// See ECMA-335, II.23.4.
 #[derive(Debug, Copy, Clone)]
 pub enum NativeIntrinsic {
+    /// `NATIVE_TYPE_BOOLEAN` (`bool`).
     Boolean,
+    /// `NATIVE_TYPE_I1`.
     Int8,
+    /// `NATIVE_TYPE_U1`.
     UInt8,
+    /// `NATIVE_TYPE_I2`.
     Int16,
+    /// `NATIVE_TYPE_U2`.
     UInt16,
+    /// `NATIVE_TYPE_I4`.
     Int32,
+    /// `NATIVE_TYPE_U4`.
     UInt32,
+    /// `NATIVE_TYPE_I8`.
     Int64,
+    /// `NATIVE_TYPE_U8`.
     UInt64,
+    /// `NATIVE_TYPE_R4`.
     Float32,
+    /// `NATIVE_TYPE_R8`.
     Float64,
+    /// `NATIVE_TYPE_LPSTR`.
     LPStr,
+    /// `NATIVE_TYPE_LPWSTR`.
     LPWStr,
+    /// `NATIVE_TYPE_INT`.
     IntPtr,
+    /// `NATIVE_TYPE_UINT`.
     UIntPtr,
+    /// `NATIVE_TYPE_FUNC` (function pointer).
     Function,
-    // not in ECMA spec, but part of Microsoft unmanaged types
+    /// Microsoft extension (`0x0f`).
     Currency,
+    /// Microsoft extension (`0x13`).
     BStr,
+    /// Microsoft extension (`0x16`).
     LPTStr,
+    /// Microsoft extension (`0x17`).
     FixedSysString,
+    /// Microsoft extension (`0x19`).
     COMIUnknown,
+    /// Microsoft extension (`0x1a`).
     COMIDispatch,
+    /// Microsoft extension (`0x1b`).
     Struct,
+    /// Microsoft extension (`0x1c`).
     COMInterface,
+    /// Microsoft extension (`0x1d`).
     SafeArray,
+    /// Microsoft extension (`0x1e`).
     FixedArray,
+    /// Microsoft extension (`0x22`).
     ByValStr,
+    /// Microsoft extension (`0x23`).
     AnsiBStr,
+    /// Microsoft extension (`0x24`).
     TBStr,
+    /// Microsoft extension (`0x25`).
     VariantBool,
+    /// Microsoft extension (`0x28`).
     AsAny,
+    /// Microsoft extension (`0x2b`).
     LpStruct,
+    /// Microsoft extension (`0x2c`).
     CustomMarshaler,
+    /// Microsoft extension (`0x30`).
     LPUTF8Str,
 }
 
 macro_rules! native_types {
-    ($($name:ident = $val:literal),+) => {
+    ($( $(#[$meta:meta])* $name:ident = $val:literal ),+ $(,)?) => {
         $(
             paste! {
+                $(#[$meta])*
                 pub const [<NATIVE_TYPE_ $name>]: u8 = $val;
             }
         )*
@@ -647,24 +831,42 @@ macro_rules! native_types {
 }
 
 native_types! {
+    /// `NATIVE_TYPE_BOOLEAN` (`0x02`) marshalling intrinsic.
     BOOLEAN = 0x02,
+    /// `NATIVE_TYPE_I1` (`0x03`) marshalling intrinsic.
     I1 = 0x03,
+    /// `NATIVE_TYPE_U1` (`0x04`) marshalling intrinsic.
     U1 = 0x04,
+    /// `NATIVE_TYPE_I2` (`0x05`) marshalling intrinsic.
     I2 = 0x05,
+    /// `NATIVE_TYPE_U2` (`0x06`) marshalling intrinsic.
     U2 = 0x06,
+    /// `NATIVE_TYPE_I4` (`0x07`) marshalling intrinsic.
     I4 = 0x07,
+    /// `NATIVE_TYPE_U4` (`0x08`) marshalling intrinsic.
     U4 = 0x08,
+    /// `NATIVE_TYPE_I8` (`0x09`) marshalling intrinsic.
     I8 = 0x09,
+    /// `NATIVE_TYPE_U8` (`0x0a`) marshalling intrinsic.
     U8 = 0x0a,
+    /// `NATIVE_TYPE_R4` (`0x0b`) marshalling intrinsic.
     R4 = 0x0b,
+    /// `NATIVE_TYPE_R8` (`0x0c`) marshalling intrinsic.
     R8 = 0x0c,
+    /// `NATIVE_TYPE_LPSTR` (`0x14`) marshalling intrinsic.
     LPSTR = 0x14,
+    /// `NATIVE_TYPE_LPWSTR` (`0x15`) marshalling intrinsic.
     LPWSTR = 0x15,
+    /// `NATIVE_TYPE_INT` (`0x1f`) marshalling intrinsic.
     INT = 0x1f,
+    /// `NATIVE_TYPE_UINT` (`0x20`) marshalling intrinsic.
     UINT = 0x20,
+    /// `NATIVE_TYPE_FUNC` (`0x26`) marshalling intrinsic.
     FUNC = 0x26,
+    /// `NATIVE_TYPE_ARRAY` (`0x2a`) marshalling intrinsic.
     ARRAY = 0x2a,
-    MAX = 0x50
+    /// `NATIVE_TYPE_MAX` (`0x50`) element-type sentinel used in array marshal specs.
+    MAX = 0x50,
 }
 
 impl TryFromCtx<'_> for NativeIntrinsic {

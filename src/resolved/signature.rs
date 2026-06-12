@@ -71,9 +71,15 @@ use crate::{
     resolved::{types::CustomTypeModifier, ResolvedDebug},
 };
 
-/// Specifies the type of a parameter or return value in a method signature.
+/// Specifies how a method parameter or return value is passed in a signature.
 ///
-/// See ECMA-335, II.23.2.10 (page 264) for more information.
+/// Conceptually, this models the CLI parameter-passing conventions (`by-value`, `by-reference`,
+/// and `typedref`) described in ECMA-335, I.12.4.1.5 and I.8.2.1.1.
+///
+/// C# `ref` usage maps to the by-reference form:
+/// <https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/ref>
+///
+/// For the physical signature-blob encoding, see ECMA-335, II.23.2.10 (page 264).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParameterType<InnerType> {
     /// A value of the specified type.
@@ -181,7 +187,10 @@ impl<T> ReturnType<T> {
 /// The `InnerType` type parameter represents the types allowed in the return type and parameter list.
 /// See [`crate::resolved::types::BaseType`]'s documentation for more information.
 ///
-/// See ECMA-335, II.23.2.1 (page 260) for more information.
+/// Conceptually, method signatures define `this` handling, calling convention, parameter list,
+/// and return type (ECMA-335, I.8.6.1.5 and I.12.4.1.5).
+///
+/// For the physical signature-blob encoding, see ECMA-335, II.23.2.1 (page 260).
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodSignature<CallConv, InnerType> {

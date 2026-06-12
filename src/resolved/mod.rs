@@ -9,13 +9,28 @@ pub mod resource;
 pub mod signature;
 pub mod types;
 
+/// Member accessibility levels used across resolved metadata items.
+///
+/// This maps the Common Type System accessibility categories to ergonomic Rust variants.
+/// Conceptually, this is the same set of access levels used for .NET members and nested types
+/// (ECMA-335, I.8.5.3), with C# keyword equivalents:
+/// `private`, `private protected`, `internal`, `protected`, `protected internal`, and `public`.
+///
+/// For top-level type visibility (`public` vs. `not public`), see
+/// [`crate::resolved::types::Accessibility`].
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
 pub enum Accessibility {
+    /// Accessible only within the declaring type (`private`).
     Private,
+    /// Accessible by derived types in the same assembly (`private protected`).
     FamilyANDAssembly,
+    /// Accessible from any type in the same assembly (`internal`).
     Assembly,
+    /// Accessible by derived types (`protected`).
     Family,
+    /// Accessible by derived types or from the same assembly (`protected internal`).
     FamilyORAssembly,
+    /// Accessible from anywhere (`public`).
     Public,
 }
 
@@ -74,7 +89,12 @@ impl Display for Accessibility {
     }
 }
 
+/// Context-aware formatting for resolved metadata values.
+///
+/// Unlike [`std::fmt::Display`], implementations can use a [`crate::resolution::Resolution`]
+/// to resolve typed indices into human-readable names while formatting.
 #[allow(clippy::module_name_repetitions)]
 pub trait ResolvedDebug {
+    /// Returns a display-oriented string using `res` as lookup context.
     fn show(&self, res: &crate::resolution::Resolution) -> String;
 }
