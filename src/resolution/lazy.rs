@@ -77,20 +77,15 @@ pub(crate) struct LazyParseState<'a> {
     // ── Lazy attribute fields (populated only when lazy_attributes is true) ──────
     /// Whether attributes are decoded lazily (mirrors `ReadOptions::lazy_attributes`).
     pub lazy_attributes: bool,
-    /// Raw table rows from the CustomAttribute table, captured at parse time.
-    pub attr_table: Vec<crate::binary::metadata::table::CustomAttribute>,
-    /// One-time index: `HasCustomAttribute` variant → Vec<row index in attr_table>.
-    /// Built on first attribute access.
-    pub attr_index: OnceLock<FxHashMap<crate::binary::metadata::index::HasCustomAttribute, Vec<usize>>>,
-    /// Per-TypeDef attribute cache: `[type_def_idx]` → pre-resolved (constructor, blob_idx) pairs.
-    /// Storing raw indices (no `'a`) keeps `LazyParseState<'a>` covariant.
-    pub attr_cache_type: Vec<OnceLock<Vec<AttrRaw>>>,
-    /// Per-MethodDef attribute cache: `[method_def_idx]` → pre-resolved pairs.
-    pub attr_cache_method: Vec<OnceLock<Vec<AttrRaw>>>,
-    /// Per-Field attribute cache: `[field_def_idx]` → pre-resolved pairs.
-    pub attr_cache_field: Vec<OnceLock<Vec<AttrRaw>>>,
-    /// Assembly attribute cache (at most one assembly per module).
-    pub attr_cache_assembly: OnceLock<Vec<AttrRaw>>,
+    /// type_def_idx (0-based) → pre-resolved (constructor, blob_idx) pairs.
+    /// Populated in one pass at construction; only entries with attributes are present.
+    pub attr_by_type: FxHashMap<usize, Vec<AttrRaw>>,
+    /// method_def_idx (0-based) → pre-resolved pairs.
+    pub attr_by_method: FxHashMap<usize, Vec<AttrRaw>>,
+    /// field_def_idx (0-based) → pre-resolved pairs.
+    pub attr_by_field: FxHashMap<usize, Vec<AttrRaw>>,
+    /// Assembly custom attributes (usually empty or a handful).
+    pub attr_by_assembly: Vec<AttrRaw>,
     /// O(1) reverse map: MethodIndex → method_def_idx. Populated when `lazy_attributes` is true
     /// so `method_attributes` avoids a linear scan over `method_indices`.
     pub attr_method_idx_to_def: FxHashMap<super::MethodIndex, usize>,
@@ -115,7 +110,9 @@ impl<'a> std::fmt::Debug for LazyParseState<'a> {
             .field("body_cached_count", &self.body_cache.iter().filter(|c| c.get().is_some()).count())
             .field("sig_def_cached_count", &self.sig_cache_def.iter().filter(|c| c.get().is_some()).count())
             .field("sig_ref_cached_count", &self.sig_cache_ref.iter().filter(|c| c.get().is_some()).count())
-            .field("attr_table_len", &self.attr_table.len())
+            .field("attr_type_count", &self.attr_by_type.len())
+            .field("attr_method_count", &self.attr_by_method.len())
+            .field("attr_field_count", &self.attr_by_field.len())
             .finish_non_exhaustive()
     }
 }
@@ -187,157 +184,42 @@ impl<'a> LazyParseState<'a> {
         Ok(signature)
     }
 
-    fn attr_index_map(
-        &self,
-    ) -> &FxHashMap<crate::binary::metadata::index::HasCustomAttribute, Vec<usize>> {
-        self.attr_index.get_or_init(|| {
-            let mut map: FxHashMap<crate::binary::metadata::index::HasCustomAttribute, Vec<usize>> =
-                FxHashMap::default();
-            for (i, row) in self.attr_table.iter().enumerate() {
-                map.entry(row.parent).or_default().push(i);
-            }
-            map
-        })
-    }
-
-    fn build_attrs_for_tag(
-        &self,
-        parent: crate::binary::metadata::index::HasCustomAttribute,
-    ) -> Result<Vec<AttrRaw>> {
-        use crate::binary::metadata::index::CustomAttributeType;
-        use crate::resolved::members::UserMethod;
-
-        let index = self.attr_index_map();
-        let row_indices = match index.get(&parent) {
-            Some(v) => v.as_slice(),
-            None => return Ok(vec![]),
-        };
-
-        let mut result = Vec::with_capacity(row_indices.len());
-        for &row_idx in row_indices {
-            let a = &self.attr_table[row_idx];
-            let constructor = match a.attr_type {
-                CustomAttributeType::MethodDef(i) => {
-                    let m_idx = i - 1;
-                    UserMethod::Definition(self.method_indices[m_idx])
-                }
-                CustomAttributeType::MemberRef(i) => {
-                    let r_idx = i - 1;
-                    let m_idx = *self
-                        .method_map
-                        .get(&r_idx)
-                        .ok_or(Other("invalid member ref for custom attribute"))?;
-                    UserMethod::Reference(super::MethodRefIndex(m_idx))
-                }
-                CustomAttributeType::Null => {
-                    return Err(Other("null constructor in custom attribute"))
-                }
-            };
-            let blob_idx = if a.value.is_null() { None } else { Some(a.value) };
-            result.push((constructor, blob_idx));
-        }
-        Ok(result)
-    }
-
     fn raw_to_attrs(&self, raw: &[AttrRaw]) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
         use crate::resolved::attribute::Attribute;
-        let mut result = Vec::with_capacity(raw.len());
-        for &(constructor, blob_idx) in raw {
-            let value = match blob_idx {
-                Some(idx) => Some(std::borrow::Cow::Borrowed(self.blobs.at_index(idx)?)),
-                None => None,
-            };
-            result.push(Attribute { constructor, value });
-        }
-        Ok(result)
+        raw.iter()
+            .map(|&(constructor, blob_idx)| {
+                let value = match blob_idx {
+                    Some(idx) => Some(std::borrow::Cow::Borrowed(self.blobs.at_index(idx)?)),
+                    None => None,
+                };
+                Ok(Attribute { constructor, value })
+            })
+            .collect()
     }
 
-    /// Returns the attributes for the TypeDef at `type_def_idx` (0-based).
-    ///
-    /// Caches the pre-resolved `(constructor, blob_idx)` pairs on the first call; reconstructs
-    /// full [`Attribute`](crate::resolved::attribute::Attribute) values from the cache on each
-    /// call. Returns an error only if a constructor reference cannot be resolved (malformed DLL).
     pub fn type_attributes(
         &self,
         type_def_idx: usize,
     ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
-        let raw = self.type_attributes_raw(type_def_idx)?;
-        self.raw_to_attrs(raw)
+        self.raw_to_attrs(self.attr_by_type.get(&type_def_idx).map_or(&[], Vec::as_slice))
     }
 
-    fn type_attributes_raw(&self, type_def_idx: usize) -> Result<&[AttrRaw]> {
-        if let Some(cached) = self.attr_cache_type[type_def_idx].get() {
-            return Ok(cached);
-        }
-        use crate::binary::metadata::index::HasCustomAttribute;
-        let raw = self.build_attrs_for_tag(HasCustomAttribute::TypeDef(type_def_idx + 1))?;
-        let _ = self.attr_cache_type[type_def_idx].set(raw);
-        Ok(self.attr_cache_type[type_def_idx].get().unwrap())
-    }
-
-    /// Returns the attributes for the MethodDef at `method_def_idx` (0-based).
-    ///
-    /// Caches on the first call; reconstructs `Attribute` values on each call.
-    /// See [`type_attributes`](Self::type_attributes) for the full contract.
     pub fn method_attributes(
         &self,
         method_def_idx: usize,
     ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
-        let raw = self.method_attributes_raw(method_def_idx)?;
-        self.raw_to_attrs(raw)
+        self.raw_to_attrs(self.attr_by_method.get(&method_def_idx).map_or(&[], Vec::as_slice))
     }
 
-    fn method_attributes_raw(&self, method_def_idx: usize) -> Result<&[AttrRaw]> {
-        if let Some(cached) = self.attr_cache_method[method_def_idx].get() {
-            return Ok(cached);
-        }
-        use crate::binary::metadata::index::HasCustomAttribute;
-        let raw =
-            self.build_attrs_for_tag(HasCustomAttribute::MethodDef(method_def_idx + 1))?;
-        let _ = self.attr_cache_method[method_def_idx].set(raw);
-        Ok(self.attr_cache_method[method_def_idx].get().unwrap())
-    }
-
-    /// Returns the attributes for the Field at `field_def_idx` (0-based).
-    ///
-    /// Caches on the first call; reconstructs `Attribute` values on each call.
-    /// See [`type_attributes`](Self::type_attributes) for the full contract.
     pub fn field_attributes(
         &self,
         field_def_idx: usize,
     ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
-        let raw = self.field_attributes_raw(field_def_idx)?;
-        self.raw_to_attrs(raw)
+        self.raw_to_attrs(self.attr_by_field.get(&field_def_idx).map_or(&[], Vec::as_slice))
     }
 
-    fn field_attributes_raw(&self, field_def_idx: usize) -> Result<&[AttrRaw]> {
-        if let Some(cached) = self.attr_cache_field[field_def_idx].get() {
-            return Ok(cached);
-        }
-        use crate::binary::metadata::index::HasCustomAttribute;
-        let raw = self.build_attrs_for_tag(HasCustomAttribute::Field(field_def_idx + 1))?;
-        let _ = self.attr_cache_field[field_def_idx].set(raw);
-        Ok(self.attr_cache_field[field_def_idx].get().unwrap())
-    }
-
-    /// Returns the attributes on the Assembly manifest entry.
-    ///
-    /// Caches on the first call; reconstructs `Attribute` values on each call. Returns an empty
-    /// `Vec` when no Assembly row carries custom attributes.
-    /// See [`type_attributes`](Self::type_attributes) for the full contract.
     pub fn assembly_attributes(&self) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
-        let raw = self.assembly_attributes_raw()?;
-        self.raw_to_attrs(raw)
-    }
-
-    fn assembly_attributes_raw(&self) -> Result<&[AttrRaw]> {
-        if let Some(cached) = self.attr_cache_assembly.get() {
-            return Ok(cached);
-        }
-        use crate::binary::metadata::index::HasCustomAttribute;
-        let raw = self.build_attrs_for_tag(HasCustomAttribute::Assembly(1))?;
-        let _ = self.attr_cache_assembly.set(raw);
-        Ok(self.attr_cache_assembly.get().unwrap())
+        self.raw_to_attrs(&self.attr_by_assembly)
     }
 
     fn make_ctx(&self) -> convert::read::Context<'_, 'a> {

@@ -1942,6 +1942,57 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     if opts.lazy_method_bodies || opts.lazy_method_signatures || opts.lazy_attributes {
         debug!("building lazy parse state");
 
+        // Build sparse attribute maps in one pass before the LazyParseState literal.
+        let (attr_by_type, attr_by_method, attr_by_field, attr_by_assembly) =
+            if opts.lazy_attributes {
+                use crate::binary::metadata::index::{CustomAttributeType, HasCustomAttribute};
+                use crate::resolved::members::UserMethod;
+
+                let mut by_type: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+                let mut by_method: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+                let mut by_field: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+                let mut by_asm: Vec<lazy::AttrRaw> = Vec::new();
+
+                for a in &tables.custom_attribute {
+                    let constructor = match a.attr_type {
+                        CustomAttributeType::MethodDef(i) => {
+                            UserMethod::Definition(methods[i - 1])
+                        }
+                        CustomAttributeType::MemberRef(i) => {
+                            let m_idx = match method_map.get(&(i - 1)) {
+                                Some(&m) => m,
+                                None => continue,
+                            };
+                            UserMethod::Reference(MethodRefIndex(m_idx))
+                        }
+                        CustomAttributeType::Null => continue,
+                    };
+                    let blob_idx = if a.value.is_null() { None } else { Some(a.value) };
+                    let raw = (constructor, blob_idx);
+                    match a.parent {
+                        HasCustomAttribute::TypeDef(i) => {
+                            by_type.entry(i - 1).or_default().push(raw)
+                        }
+                        HasCustomAttribute::MethodDef(i) => {
+                            by_method.entry(i - 1).or_default().push(raw)
+                        }
+                        HasCustomAttribute::Field(i) => {
+                            by_field.entry(i - 1).or_default().push(raw)
+                        }
+                        HasCustomAttribute::Assembly(_) => by_asm.push(raw),
+                        _ => {}
+                    }
+                }
+                (by_type, by_method, by_field, by_asm)
+            } else {
+                (
+                    HashMap::default(),
+                    HashMap::default(),
+                    HashMap::default(),
+                    Vec::new(),
+                )
+            };
+
         let n = tables.method_def.len();
         let (pending, method_idx_to_def, body_cache) = if opts.lazy_method_bodies {
             debug!("  lazy method bodies");
@@ -1988,7 +2039,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             vec![]
         };
 
-        let n_fields = tables.field.len();
         res.lazy_state = Some(Arc::new(lazy::LazyParseState {
             lazy_bodies: opts.lazy_method_bodies,
             lazy_signatures: opts.lazy_method_signatures,
@@ -2012,30 +2062,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             sig_cache_def,
             sig_pending_ref,
             sig_cache_ref,
-            attr_table: if opts.lazy_attributes {
-                tables.custom_attribute.clone()
-            } else {
-                vec![]
-            },
-            attr_index: std::sync::OnceLock::new(),
-            attr_cache_type: if opts.lazy_attributes {
-                (0..res.type_definitions.len())
-                    .map(|_| std::sync::OnceLock::new())
-                    .collect()
-            } else {
-                vec![]
-            },
-            attr_cache_method: if opts.lazy_attributes {
-                (0..n).map(|_| std::sync::OnceLock::new()).collect()
-            } else {
-                vec![]
-            },
-            attr_cache_field: if opts.lazy_attributes {
-                (0..n_fields).map(|_| std::sync::OnceLock::new()).collect()
-            } else {
-                vec![]
-            },
-            attr_cache_assembly: std::sync::OnceLock::new(),
+            attr_by_type,
+            attr_by_method,
+            attr_by_field,
+            attr_by_assembly,
             attr_method_idx_to_def: if opts.lazy_attributes {
                 methods.iter().enumerate().map(|(i, &m)| (m, i)).collect()
             } else {
