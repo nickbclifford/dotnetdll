@@ -1,7 +1,7 @@
 use super::{
     binary::{
         cli::{Header, Metadata, RVASize},
-        heap::Reader,
+        heap::{BlobReader, GUIDReader, Reader, StringsReader, UserStringReader},
         metadata, method,
     },
     resolution::{read, Resolution},
@@ -109,6 +109,54 @@ impl<'a> DLL<'a> {
         // heap names from the traits are known to be good
         // so if we can't find them, assume they are empty
         Ok(T::new(self.get_stream(T::NAME)?.unwrap_or(&[])))
+    }
+
+    pub fn get_all_streams(
+        &self,
+    ) -> Result<(
+        StringsReader<'a>,
+        BlobReader<'a>,
+        GUIDReader<'a>,
+        UserStringReader<'a>,
+        metadata::header::Header,
+    )> {
+        let meta = self.get_cli_metadata()?;
+
+        let mut strings = None;
+        let mut blobs = None;
+        let mut guids = None;
+        let mut userstrings = None;
+        let mut logical = None;
+
+        for header in &meta.stream_headers {
+            let data = self.raw_rva(self.cli.metadata.rva + header.offset)?;
+            let stream = &data[..header.size as usize];
+
+            if header.name == <StringsReader<'a> as Reader<'a>>::NAME && strings.is_none() {
+                strings = Some(stream);
+            } else if header.name == <BlobReader<'a> as Reader<'a>>::NAME && blobs.is_none() {
+                blobs = Some(stream);
+            } else if header.name == <GUIDReader<'a> as Reader<'a>>::NAME && guids.is_none() {
+                guids = Some(stream);
+            } else if header.name == <UserStringReader<'a> as Reader<'a>>::NAME
+                && userstrings.is_none()
+            {
+                userstrings = Some(stream);
+            } else if header.name == "#~" && logical.is_none() {
+                logical = Some(stream);
+            }
+        }
+
+        Ok((
+            StringsReader::new(strings.unwrap_or(&[])),
+            BlobReader::new(blobs.unwrap_or(&[])),
+            GUIDReader::new(guids.unwrap_or(&[])),
+            UserStringReader::new(userstrings.unwrap_or(&[])),
+            logical
+                .ok_or(Other("unable to find metadata stream"))?
+                .pread(0)
+                .map_err(CLI)?,
+        ))
     }
 
     pub fn get_cli_metadata(&self) -> Result<Metadata<'a>> {

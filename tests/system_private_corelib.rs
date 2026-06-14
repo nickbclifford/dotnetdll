@@ -17,38 +17,57 @@ fn lazy_signatures_match_eager() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Spot-check the first 500 method defs across all types.
-    let mut checked = 0;
-    'outer: for (type_idx, typedef) in eager.enumerate_type_definitions() {
-        for (method_idx, eager_method) in eager.enumerate_methods(type_idx) {
-            let eager_sig = &eager_method.signature;
-            let lazy_sig = lazy.method_signature(method_idx)?;
-            assert_eq!(
-                eager_sig, lazy_sig,
-                "signature mismatch for method {}::{}",
-                typedef.name, eager_method.name
-            );
-            checked += 1;
-            if checked >= 500 {
-                break 'outer;
+    let method_checks = {
+        let mut checked = 0;
+        for (type_idx, typedef) in eager.enumerate_type_definitions() {
+            for (method_idx, eager_method) in eager.enumerate_methods(type_idx) {
+                let eager_sig = &eager_method.signature;
+                let lazy_sig = lazy.method_signature(method_idx)?;
+                assert_eq!(
+                    eager_sig, lazy_sig,
+                    "signature mismatch for method {}::{}",
+                    typedef.name, eager_method.name
+                );
+                checked += 1;
             }
         }
-    }
+        checked
+    };
 
-    // Also spot-check method refs.
-    let mut ref_checked = 0;
-    for (ref_idx, eager_ref) in eager.enumerate_method_references() {
-        let eager_sig = &eager_ref.signature;
-        let lazy_sig = lazy.method_ref_signature(ref_idx)?;
-        assert_eq!(eager_sig, lazy_sig, "method ref signature mismatch for {}", eager_ref.name);
-        ref_checked += 1;
-        if ref_checked >= 200 {
-            break;
+    let method_ref_checks = {
+        let mut checked = 0;
+        for (ref_idx, eager_ref) in eager.enumerate_method_references() {
+            let eager_sig = &eager_ref.signature;
+            let lazy_sig = lazy.method_ref_signature(ref_idx)?;
+            assert_eq!(
+                eager_sig, lazy_sig,
+                "method ref signature mismatch for {}",
+                eager_ref.name
+            );
+            checked += 1;
         }
-    }
+        checked
+    };
 
-    assert!(checked > 0, "no method defs checked");
-    assert!(ref_checked > 0, "no method refs checked");
+    // Run a second pass to exercise hot accessor/cache lookups after lazy map/cache initialization.
+    let cache_pass = {
+        let mut checked = 0;
+        for (type_idx, _) in eager.enumerate_type_definitions() {
+            for (method_idx, _) in eager.enumerate_methods(type_idx) {
+                let _ = lazy.method_signature(method_idx)?;
+                checked += 1;
+            }
+        }
+        for (ref_idx, _) in eager.enumerate_method_references() {
+            let _ = lazy.method_ref_signature(ref_idx)?;
+            checked += 1;
+        }
+        checked
+    };
+
+    assert!(method_checks > 0, "no method defs checked");
+    assert!(method_ref_checks > 0, "no method refs checked");
+    assert!(cache_pass >= method_checks + method_ref_checks);
     Ok(())
 }
 

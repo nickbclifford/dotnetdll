@@ -1,15 +1,12 @@
 use super::{
-    lazy, AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex,
-    MethodMemberIndex, MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex,
+    AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex, MethodMemberIndex,
+    MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex, lazy,
 };
 use crate::binary::{heap::*, metadata};
 use crate::convert::{self, TypeKind};
-use crate::dll::{DLLError::*, Result, DLL};
+use crate::dll::{DLL, DLLError::*, Result};
 use crate::prelude::generic::{Constraint, Generic, SpecialConstraint, Variance};
-use crate::resolved::{
-    types::MemberType,
-    *,
-};
+use crate::resolved::{types::MemberType, *};
 use rustc_hash::FxHashMap as HashMap;
 use scroll::Pread;
 use std::{borrow::Cow, sync::Arc};
@@ -136,6 +133,28 @@ macro_rules! build_vec {
     };
 }
 
+macro_rules! stage_start {
+    ($start:ident) => {
+        #[cfg(feature = "stage-timing")]
+        let $start = std::time::Instant::now();
+    };
+}
+
+macro_rules! stage_end {
+    ($start:ident, $name:literal) => {
+        #[cfg(feature = "stage-timing")]
+        {
+            let elapsed = $start.elapsed();
+            debug!(
+                stage = $name,
+                elapsed_ns = elapsed.as_nanos() as u64,
+                elapsed = ?elapsed,
+                "read_impl stage timing"
+            );
+        }
+    };
+}
+
 // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
 // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
 fn extract_method<'a>(
@@ -242,46 +261,27 @@ fn make_generic<'a, T: TypeKind>(
     })
 }
 
-#[allow(clippy::too_many_lines, clippy::nonminimal_bool)]
-pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'a>> {
-    let strings: StringsReader = dll.get_heap()?;
-    let blobs: BlobReader = dll.get_heap()?;
-    let guids: GUIDReader = dll.get_heap()?;
-    let userstrings: UserStringReader = dll.get_heap()?;
-    let tables = dll.get_logical_metadata()?.tables;
+fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
+    use Accessibility::*;
+    use members::Accessibility::*;
 
-    let def_len = tables.type_def.len();
-    let ref_len = tables.type_ref.len();
-    let ctx = convert::read::Context {
-        def_len,
-        ref_len,
-        specs: &tables.type_spec,
-        sigs: &tables.stand_alone_sig,
-        blobs: &blobs,
-        userstrings: &userstrings,
-    };
+    Ok(match flags & 0x7 {
+        0x0 => CompilerControlled,
+        0x1 => Access(Private),
+        0x2 => Access(FamilyANDAssembly),
+        0x3 => Access(Assembly),
+        0x4 => Access(Family),
+        0x5 => Access(FamilyORAssembly),
+        0x6 => Access(Public),
+        _ => throw!("flags value 0x7 has no meaning for member accessibility"),
+    })
+}
 
-    macro_rules! range_index {
-        (enumerated $enum:expr => range $field:ident in $table:ident indexes $index_table:ident) => {{
-            let (idx, var) = $enum;
-            let range = (var.$field.0 - 1)..(match tables.$table.get(idx + 1) {
-                Some(r) => r.$field.0,
-                None => tables.$index_table.len() + 1,
-            } - 1);
-            match tables.$index_table.get(range.clone()) {
-                Some(rows) => range.zip(rows),
-                None => throw!(
-                    "invalid {} range in {} {}",
-                    stringify!($index_table),
-                    stringify!($table),
-                    idx
-                ),
-            }
-        }};
-    }
-
-    debug!("assembly");
-
+fn decode_assembly<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+) -> Result<Option<assembly::Assembly<'a>>> {
     let mut assembly = None;
     if let Some(a) = tables.assembly.first() {
         use assembly::*;
@@ -303,24 +303,39 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         });
     }
 
-    debug!("assembly refs");
+    Ok(assembly)
+}
 
-    let mut assembly_refs = Vec::with_capacity(tables.assembly_ref.len());
-    for a in &tables.assembly_ref {
-        use assembly::*;
-        assembly_refs.push(ExternalAssemblyReference {
-            attributes: vec![],
-            version: build_version!(a),
-            has_full_public_key: check_bitmask!(a.flags, 0x0001),
-            public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
-            name: heap_idx!(strings, a.name),
-            culture: optional_idx!(strings, a.culture),
-            hash_value: optional_idx!(blobs, a.hash_value),
-        });
-    }
+fn decode_assembly_refs<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+) -> Result<Vec<assembly::ExternalAssemblyReference<'a>>> {
+    use rayon::prelude::*;
 
-    debug!("type definitions");
+    tables
+        .assembly_ref
+        .par_iter()
+        .map(|a| {
+            use assembly::*;
+            Ok(ExternalAssemblyReference {
+                attributes: vec![],
+                version: build_version!(a),
+                has_full_public_key: check_bitmask!(a.flags, 0x0001),
+                public_key_or_token: optional_idx!(blobs, a.public_key_or_token),
+                name: heap_idx!(strings, a.name),
+                culture: optional_idx!(strings, a.culture),
+                hash_value: optional_idx!(blobs, a.hash_value),
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
+fn decode_type_definitions<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    ctx: &convert::read::Context<'_, 'a>,
+) -> Result<Vec<types::TypeDefinition<'a>>> {
     let mut types = Vec::with_capacity(tables.type_def.len());
     for (idx, t) in tables.type_def.iter().enumerate() {
         use types::*;
@@ -363,7 +378,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             extends: if t.extends.is_null() {
                 None
             } else {
-                Some(convert::read::type_source(t.extends, &ctx)?)
+                Some(convert::read::type_source(t.extends, ctx)?)
             },
             implements: vec![],
             generic_parameters: vec![],
@@ -371,284 +386,328 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         });
     }
 
-    debug!("nested types");
+    Ok(types)
+}
 
-    for n in &tables.nested_class {
-        let nest_idx = n.nested_class.0 - 1;
-        match types.get_mut(nest_idx) {
-            Some(t) => {
-                let enclose_idx = n.enclosing_class.0 - 1;
-                if enclose_idx < tables.type_def.len() {
-                    t.encloser = Some(TypeIndex(enclose_idx));
-                } else {
-                    throw!(
-                        "invalid enclosing type index {} for nested class declaration of type {}",
-                        nest_idx,
-                        t.name
-                    );
-                }
-            }
-            None => throw!("invalid type index {} for nested class declaration", nest_idx),
-        }
-    }
+fn decode_files<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+) -> Result<Vec<module::File<'a>>> {
+    use rayon::prelude::*;
 
-    let mut owned_fields = Vec::with_capacity(tables.type_def.len());
-    for e in tables.type_def.iter().enumerate() {
-        owned_fields.push(range_index!(enumerated e => range field_list in type_def indexes field));
-    }
+    tables
+        .file
+        .par_iter()
+        .map(|f| {
+            Ok(module::File {
+                attributes: vec![],
+                has_metadata: !check_bitmask!(f.flags, 0x0001),
+                name: heap_idx!(strings, f.name),
+                hash_value: heap_idx!(blobs, f.hash_value),
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
-    let mut owned_methods = Vec::with_capacity(tables.type_def.len());
-    for e in tables.type_def.iter().enumerate() {
-        owned_methods.push(range_index!(enumerated e => range method_list in type_def indexes method_def));
-    }
+fn decode_resources<'a>(
+    dll: &DLL<'a>,
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    files: &[module::File<'a>],
+    assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
+) -> Result<Vec<resource::ManifestResource<'a>>> {
+    use rayon::prelude::*;
 
-    debug!("files");
+    tables
+        .manifest_resource
+        .par_iter()
+        .map(|r| {
+            use metadata::index::Implementation as BinImpl;
+            use resource::*;
 
-    let mut files = Vec::with_capacity(tables.file.len());
-    for f in &tables.file {
-        files.push(module::File {
-            attributes: vec![],
-            has_metadata: !check_bitmask!(f.flags, 0x0001),
-            name: heap_idx!(strings, f.name),
-            hash_value: heap_idx!(blobs, f.hash_value),
-        });
-    }
+            let name = heap_idx!(strings, r.name);
+            let mut offset = r.offset as usize;
 
-    debug!("resources");
-
-    let mut resources = Vec::with_capacity(tables.manifest_resource.len());
-    for r in &tables.manifest_resource {
-        use metadata::index::Implementation as BinImpl;
-        use resource::*;
-
-        let name = heap_idx!(strings, r.name);
-        let mut offset = r.offset as usize;
-
-        resources.push(ManifestResource {
-            attributes: vec![],
-            visibility: match r.flags & 0x7 {
-                0x1 => Visibility::Public,
-                0x2 => Visibility::Private,
-                bad => throw!("invalid visibility {:#03x} for manifest resource {}", bad, name),
-            },
-            implementation: match r.implementation {
-                BinImpl::File(f) => {
-                    let idx = f - 1;
-                    if idx < files.len() {
-                        Implementation::File {
-                            location: FileIndex(idx),
-                            offset,
+            Ok(ManifestResource {
+                attributes: vec![],
+                visibility: match r.flags & 0x7 {
+                    0x1 => Visibility::Public,
+                    0x2 => Visibility::Private,
+                    bad => throw!("invalid visibility {:#03x} for manifest resource {}", bad, name),
+                },
+                implementation: match r.implementation {
+                    BinImpl::File(f) => {
+                        let idx = f - 1;
+                        if idx < files.len() {
+                            Implementation::File {
+                                location: FileIndex(idx),
+                                offset,
+                            }
+                        } else {
+                            throw!("invalid file index {} for manifest resource {}", idx, name)
                         }
-                    } else {
-                        throw!("invalid file index {} for manifest resource {}", idx, name)
                     }
-                }
-                BinImpl::AssemblyRef(a) => {
-                    let idx = a - 1;
+                    BinImpl::AssemblyRef(a) => {
+                        let idx = a - 1;
 
-                    if idx < assembly_refs.len() {
-                        Implementation::Assembly {
-                            location: AssemblyRefIndex(idx),
-                            offset,
+                        if idx < assembly_refs.len() {
+                            Implementation::Assembly {
+                                location: AssemblyRefIndex(idx),
+                                offset,
+                            }
+                        } else {
+                            throw!(
+                                "invalid assembly reference index {} for manifest resource {}",
+                                idx,
+                                name
+                            )
                         }
-                    } else {
-                        throw!(
-                            "invalid assembly reference index {} for manifest resource {}",
-                            idx,
-                            name
-                        )
                     }
-                }
-                BinImpl::ExportedType(_) => throw!(
-                    "exported type indices are invalid in manifest resource implementations (found in resource {})",
-                    name
-                ),
-                BinImpl::Null => {
-                    let rva_data = dll.at_rva(&dll.cli.resources)?;
-                    let len: u32 = rva_data.gread_with(&mut offset, scroll::LE)?;
-                    Implementation::CurrentFile(rva_data[offset..offset + (len as usize)].into())
-                }
-            },
-            name,
-        });
-    }
+                    BinImpl::ExportedType(_) => throw!(
+                        "exported type indices are invalid in manifest resource implementations (found in resource {})",
+                        name
+                    ),
+                    BinImpl::Null => {
+                        let rva_data = dll.at_rva(&dll.cli.resources)?;
+                        let len: u32 = rva_data.gread_with(&mut offset, scroll::LE)?;
+                        Implementation::CurrentFile(rva_data[offset..offset + (len as usize)].into())
+                    }
+                },
+                name,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
-    debug!("exported types");
+fn decode_exported_types<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    files: &[module::File<'a>],
+    assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
+) -> Result<Vec<types::ExportedType<'a>>> {
+    use rayon::prelude::*;
 
-    let mut exports = Vec::with_capacity(tables.exported_type.len());
-    for e in &tables.exported_type {
-        use metadata::index::Implementation;
-        use types::*;
+    tables
+        .exported_type
+        .par_iter()
+        .map(|e| {
+            use metadata::index::Implementation;
+            use types::*;
 
-        let name = heap_idx!(strings, e.type_name);
-        exports.push(ExportedType {
-            attributes: vec![],
-            flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
-            namespace: optional_idx!(strings, e.type_namespace),
-            implementation: match e.implementation {
-                Implementation::File(f) => {
-                    let idx = f - 1;
-                    let t_idx = e.type_def_id as usize;
+            let name = heap_idx!(strings, e.type_name);
+            Ok(ExportedType {
+                attributes: vec![],
+                flags: TypeFlags::from_mask(e.flags, Layout::Automatic),
+                namespace: optional_idx!(strings, e.type_namespace),
+                implementation: match e.implementation {
+                    Implementation::File(f) => {
+                        let idx = f - 1;
+                        let t_idx = e.type_def_id as usize;
 
-                    if idx < files.len() {
-                        TypeImplementation::ModuleFile {
-                            type_def: if t_idx < tables.type_def.len() {
-                                TypeIndex(t_idx)
-                            } else {
-                                throw!("invalid type definition index {} in exported type {}", t_idx, name)
-                            },
-                            file: FileIndex(idx),
+                        if idx < files.len() {
+                            TypeImplementation::ModuleFile {
+                                type_def: if t_idx < tables.type_def.len() {
+                                    TypeIndex(t_idx)
+                                } else {
+                                    throw!("invalid type definition index {} in exported type {}", t_idx, name)
+                                },
+                                file: FileIndex(idx),
+                            }
+                        } else {
+                            throw!("invalid file index {} in exported type {}", idx, name)
                         }
-                    } else {
-                        throw!("invalid file index {} in exported type {}", idx, name)
                     }
-                }
-                Implementation::AssemblyRef(a) => {
-                    let idx = a - 1;
+                    Implementation::AssemblyRef(a) => {
+                        let idx = a - 1;
 
-                    if idx < assembly_refs.len() {
-                        TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
-                    } else {
-                        throw!("invalid assembly reference index {} in exported type {}", idx, name)
+                        if idx < assembly_refs.len() {
+                            TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
+                        } else {
+                            throw!("invalid assembly reference index {} in exported type {}", idx, name)
+                        }
                     }
-                }
-                Implementation::ExportedType(t) => {
-                    let idx = t - 1;
-                    if idx < tables.exported_type.len() {
-                        TypeImplementation::Nested(ExportedTypeIndex(idx))
-                    } else {
-                        throw!("invalid nested type index {} in exported type {}", idx, name);
+                    Implementation::ExportedType(t) => {
+                        let idx = t - 1;
+                        if idx < tables.exported_type.len() {
+                            TypeImplementation::Nested(ExportedTypeIndex(idx))
+                        } else {
+                            throw!("invalid nested type index {} in exported type {}", idx, name);
+                        }
                     }
-                }
-                Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
-            },
-            name,
-        });
-    }
+                    Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
+                },
+                name,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
+fn decode_module<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    guids: &GUIDReader<'a>,
+) -> Result<module::Module<'a>> {
     let module_row = tables
         .module
         .first()
         .ok_or_else(|| scroll::Error::Custom("missing required module metadata table".to_string()))?;
-    let module = module::Module {
+    Ok(module::Module {
         attributes: vec![],
         name: heap_idx!(strings, module_row.name),
         mvid: guids.at_index(module_row.mvid)?,
-    };
+    })
+}
 
-    debug!("resolving module {}", module.name);
+fn decode_module_refs<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+) -> Result<Vec<module::ExternalModuleReference<'a>>> {
+    use rayon::prelude::*;
 
-    let mut module_refs = Vec::with_capacity(tables.module_ref.len());
-    for r in &tables.module_ref {
-        module_refs.push(module::ExternalModuleReference {
-            attributes: vec![],
-            name: heap_idx!(strings, r.name),
-        });
-    }
+    tables
+        .module_ref
+        .par_iter()
+        .map(|r| {
+            Ok(module::ExternalModuleReference {
+                attributes: vec![],
+                name: heap_idx!(strings, r.name),
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
-    debug!("type refs");
+fn decode_type_refs<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    module_refs: &[module::ExternalModuleReference<'a>],
+    assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
+) -> Result<Vec<types::ExternalTypeReference<'a>>> {
+    use rayon::prelude::*;
 
-    let mut type_refs = Vec::with_capacity(tables.type_ref.len());
-    for r in &tables.type_ref {
-        use metadata::index::ResolutionScope as BinRS;
-        use types::*;
+    tables
+        .type_ref
+        .par_iter()
+        .map(|r| {
+            use metadata::index::ResolutionScope as BinRS;
+            use types::*;
 
-        let name = heap_idx!(strings, r.type_name);
-        let namespace = optional_idx!(strings, r.type_namespace);
+            let name = heap_idx!(strings, r.type_name);
+            let namespace = optional_idx!(strings, r.type_namespace);
 
-        type_refs.push(ExternalTypeReference {
-            attributes: vec![],
-            namespace,
-            scope: match r.resolution_scope {
-                BinRS::Module(_) => ResolutionScope::CurrentModule,
-                BinRS::ModuleRef(m) => {
-                    let idx = m - 1;
-                    if idx < module_refs.len() {
-                        ResolutionScope::ExternalModule(ModuleRefIndex(idx))
-                    } else {
-                        throw!("invalid module reference index {} for type reference {}", idx, name)
+            Ok(ExternalTypeReference {
+                attributes: vec![],
+                namespace,
+                scope: match r.resolution_scope {
+                    BinRS::Module(_) => ResolutionScope::CurrentModule,
+                    BinRS::ModuleRef(m) => {
+                        let idx = m - 1;
+                        if idx < module_refs.len() {
+                            ResolutionScope::ExternalModule(ModuleRefIndex(idx))
+                        } else {
+                            throw!("invalid module reference index {} for type reference {}", idx, name)
+                        }
                     }
-                }
-                BinRS::AssemblyRef(a) => {
-                    let idx = a - 1;
+                    BinRS::AssemblyRef(a) => {
+                        let idx = a - 1;
 
-                    if idx < assembly_refs.len() {
-                        ResolutionScope::Assembly(AssemblyRefIndex(idx))
-                    } else {
-                        throw!("invalid assembly reference index {} for type reference {}", idx, name)
+                        if idx < assembly_refs.len() {
+                            ResolutionScope::Assembly(AssemblyRefIndex(idx))
+                        } else {
+                            throw!("invalid assembly reference index {} for type reference {}", idx, name)
+                        }
                     }
-                }
-                BinRS::TypeRef(t) => {
-                    let idx = t - 1;
-                    if idx < tables.type_ref.len() {
-                        ResolutionScope::Nested(TypeRefIndex(idx))
-                    } else {
-                        throw!("invalid nested type index {} for type reference {}", idx, name);
+                    BinRS::TypeRef(t) => {
+                        let idx = t - 1;
+                        if idx < tables.type_ref.len() {
+                            ResolutionScope::Nested(TypeRefIndex(idx))
+                        } else {
+                            throw!("invalid nested type index {} for type reference {}", idx, name);
+                        }
                     }
-                }
-                BinRS::Null => ResolutionScope::Exported,
-            },
-            name,
-        });
-    }
+                    BinRS::Null => ResolutionScope::Exported,
+                },
+                name,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+}
 
-    debug!("interfaces");
-
+fn decode_interfaces<'a>(
+    tables: &metadata::table::Tables,
+    types: &mut [types::TypeDefinition<'a>],
+    ctx: &convert::read::Context<'_, 'a>,
+) -> Result<Vec<(usize, usize)>> {
     let mut interface_idxs = Vec::with_capacity(tables.interface_impl.len());
     for i in &tables.interface_impl {
         let idx = i.class.0 - 1;
         match types.get_mut(idx) {
             Some(t) => {
                 t.implements
-                    .push((vec![], convert::read::type_source(i.interface, &ctx)?));
+                    .push((vec![], convert::read::type_source(i.interface, ctx)?));
                 interface_idxs.push((idx, t.implements.len() - 1));
             }
             None => throw!("invalid type index {} for interface implementation", idx),
         }
     }
+    Ok(interface_idxs)
+}
 
-    fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
-        use members::Accessibility::*;
-        use Accessibility::*;
+fn decode_fields<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+    ctx: &convert::read::Context<'_, 'a>,
+) -> Result<Vec<FieldIndex>> {
+    use rayon::prelude::*;
 
-        Ok(match flags & 0x7 {
-            0x0 => CompilerControlled,
-            0x1 => Access(Private),
-            0x2 => Access(FamilyANDAssembly),
-            0x3 => Access(Assembly),
-            0x4 => Access(Family),
-            0x5 => Access(FamilyORAssembly),
-            0x6 => Access(Public),
-            _ => throw!("flags value 0x7 has no meaning for member accessibility"),
+    let owned_fields = tables
+        .type_def
+        .iter()
+        .enumerate()
+        .map(|(type_idx, t)| {
+            let start = t.field_list.0 - 1;
+            let end = match tables.type_def.get(type_idx + 1) {
+                Some(next) => next.field_list.0,
+                None => tables.field.len() + 1,
+            } - 1;
+
+            (type_idx, start, end)
         })
-    }
+        .collect::<Vec<_>>();
 
-    build_vec!(fields = FieldIndex[tables.field.len()], {
-        debug!("fields");
-
-        for (type_idx, type_fields) in owned_fields.into_iter().enumerate() {
+    let decoded_fields = owned_fields
+        .par_iter()
+        .map(|&(type_idx, start, end)| {
             use crate::binary::signature::kinds::FieldSig;
             use members::*;
 
-            let parent_fields = &mut types[type_idx].fields;
-            parent_fields.reserve(type_fields.len());
+            let Some(type_fields) = tables.field.get(start..end) else {
+                throw!("invalid field range in type_def {}", type_idx)
+            };
 
-            for (f_idx, f) in type_fields {
+            let mut fields = Vec::with_capacity(type_fields.len());
+            let mut field_idxs = Vec::with_capacity(type_fields.len());
+
+            for (offset, f) in type_fields.iter().enumerate() {
+                let f_idx = start + offset;
+
                 let FieldSig {
                     custom_modifiers: cmod,
                     field_type: t,
                     by_ref,
                 } = heap_idx!(blobs, f.signature).pread(0)?;
 
-                parent_fields.push(Field {
+                fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
                     type_modifiers: cmod
                         .into_iter()
-                        .map(|c| convert::read::custom_modifier(c, &ctx))
+                        .map(|c| convert::read::custom_modifier(c, ctx))
                         .collect::<Result<_>>()?,
                     by_ref,
-                    return_type: MemberType::from_sig(t, &ctx)?,
+                    return_type: MemberType::from_sig(t, ctx)?,
                     accessibility: member_accessibility(f.flags)?,
                     static_member: check_bitmask!(f.flags, 0x10),
                     init_only: check_bitmask!(f.flags, 0x20),
@@ -662,80 +721,97 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     marshal: None,
                     initial_value: None,
                 });
-                fields[f_idx].write(FieldIndex {
-                    parent_type: TypeIndex(type_idx),
-                    field: parent_fields.len() - 1,
-                });
+
+                field_idxs.push((
+                    f_idx,
+                    FieldIndex {
+                        parent_type: TypeIndex(type_idx),
+                        field: fields.len() - 1,
+                    },
+                ));
+            }
+
+            Ok((type_idx, fields, field_idxs))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    build_vec!(fields = FieldIndex[tables.field.len()], {
+        for (type_idx, decoded_type_fields, decoded_type_field_idxs) in decoded_fields {
+            let parent_fields = &mut types[type_idx].fields;
+            let field_offset = parent_fields.len();
+            parent_fields.reserve(decoded_type_fields.len());
+            parent_fields.extend(decoded_type_fields);
+
+            for (f_idx, mut field_idx) in decoded_type_field_idxs {
+                field_idx.field += field_offset;
+                fields[f_idx].write(field_idx);
             }
         }
     });
 
-    macro_rules! get_field {
-        ($f_idx:ident) => {{
-            &mut types[$f_idx.parent_type.0].fields[$f_idx.field]
-        }};
-    }
+    Ok(fields)
+}
 
-    debug!("field layout");
+struct DecodedMethods {
+    methods: Vec<MethodIndex>,
+    owned_params: Vec<(usize, usize, usize)>,
+    sig_pending_def: Vec<(crate::binary::metadata::index::Blob, bool)>,
+}
 
-    for layout in &tables.field_layout {
-        let idx = layout.field.0 - 1;
-        match fields.get(idx) {
-            Some(&field) => {
-                get_field!(field).offset = Some(layout.offset as usize);
-            }
-            None => throw!("bad parent field index {} for field layout specification", idx),
-        }
-    }
+fn decode_methods<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+    ctx: &convert::read::Context<'_, 'a>,
+    opts: Options,
+) -> Result<DecodedMethods> {
+    use rayon::prelude::*;
 
-    debug!("field rva");
+    let owned_methods = tables
+        .type_def
+        .iter()
+        .enumerate()
+        .map(|(type_idx, t)| {
+            let start = t.method_list.0 - 1;
+            let end = match tables.type_def.get(type_idx + 1) {
+                Some(next) => next.method_list.0,
+                None => tables.method_def.len() + 1,
+            } - 1;
 
-    for rva in &tables.field_rva {
-        let idx = rva.field.0 - 1;
-        match fields.get(idx) {
-            Some(&field) => {
-                get_field!(field).initial_value = Some(dll.raw_rva(rva.rva)?.into());
-            }
-            None => throw!("bad parent field index {} for field RVA specification", idx),
-        }
-    }
+            (type_idx, start, end)
+        })
+        .collect::<Vec<_>>();
 
-    let mut owned_params = Vec::with_capacity(tables.param.len());
+    let decoded_methods = owned_methods
+        .par_iter()
+        .map(|&(type_idx, start, end)| {
+            use members::*;
 
-    // Pre-sized storage for lazy signature pending data; only populated when
-    // opts.lazy_method_signatures is set.  Indexed by method_def row index.
-    let mut sig_pending_def: Vec<(crate::binary::metadata::index::Blob, bool)> =
-        if opts.lazy_method_signatures {
-            vec![(crate::binary::metadata::index::Blob(0), false); tables.method_def.len()]
-        } else {
-            vec![]
-        };
+            let Some(type_methods) = tables.method_def.get(start..end) else {
+                throw!("invalid method_def range in type_def {}", type_idx)
+            };
 
-    build_vec!(methods = MethodIndex[tables.method_def.len()], {
-        debug!("methods");
+            let mut methods = Vec::with_capacity(type_methods.len());
+            let mut method_idxs = Vec::with_capacity(type_methods.len());
+            let mut param_ranges = Vec::with_capacity(type_methods.len());
 
-        for (type_idx, type_methods) in owned_methods.into_iter().enumerate() {
-            let parent_methods = &mut types[type_idx].methods;
-            parent_methods.reserve(type_methods.len());
-
-            for (m_idx, m) in type_methods {
-                use members::*;
+            for (offset, m) in type_methods.iter().enumerate() {
+                let m_idx = start + offset;
 
                 let name = heap_idx!(strings, m.name);
 
                 let sig = if opts.lazy_method_signatures {
-                    sig_pending_def[m_idx] = (m.signature, check_bitmask!(m.flags, 0x10));
                     Default::default()
                 } else {
-                    let mut sig =
-                        convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, &ctx)?;
+                    let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, ctx)?;
                     if check_bitmask!(m.flags, 0x10) {
                         sig.instance = false;
                     }
                     sig
                 };
 
-                parent_methods.push(Method {
+                methods.push(Method {
                     attributes: vec![],
                     body: None,
                     signature: sig,
@@ -779,22 +855,987 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     no_optimization: check_bitmask!(m.impl_flags, 0x40),
                 });
 
-                let method_idx = MethodIndex {
-                    parent_type: TypeIndex(type_idx),
-                    member: MethodMemberIndex::Method(parent_methods.len() - 1),
-                };
-                methods[m_idx].write(method_idx);
-
-                owned_params.push((
+                method_idxs.push((
                     m_idx,
-                    range_index!(
-                        enumerated (m_idx, m) =>
-                        range param_list in method_def indexes param
-                    ),
+                    MethodIndex {
+                        parent_type: TypeIndex(type_idx),
+                        member: MethodMemberIndex::Method(methods.len() - 1),
+                    },
                 ));
+
+                let param_start = m.param_list.0 - 1;
+                let param_end = match tables.method_def.get(m_idx + 1) {
+                    Some(next) => next.param_list.0,
+                    None => tables.param.len() + 1,
+                } - 1;
+
+                if tables.param.get(param_start..param_end).is_none() {
+                    throw!("invalid param range in method_def {}", m_idx)
+                }
+
+                if param_start != param_end {
+                    param_ranges.push((m_idx, param_start, param_end));
+                }
+            }
+
+            Ok((type_idx, methods, method_idxs, param_ranges))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut owned_params = Vec::with_capacity(tables.param.len());
+    let sig_pending_def: Vec<(crate::binary::metadata::index::Blob, bool)> = if opts.lazy_method_signatures {
+        tables
+            .method_def
+            .iter()
+            .map(|m| (m.signature, check_bitmask!(m.flags, 0x10)))
+            .collect()
+    } else {
+        vec![]
+    };
+
+    build_vec!(methods = MethodIndex[tables.method_def.len()], {
+        for (type_idx, decoded_type_methods, decoded_type_method_idxs, decoded_type_param_ranges) in decoded_methods {
+            let parent_methods = &mut types[type_idx].methods;
+            let method_offset = parent_methods.len();
+            parent_methods.reserve(decoded_type_methods.len());
+            parent_methods.extend(decoded_type_methods);
+
+            for (m_idx, mut method_idx) in decoded_type_method_idxs {
+                let MethodMemberIndex::Method(member_idx) = &mut method_idx.member else {
+                    unreachable!()
+                };
+                *member_idx += method_offset;
+                methods[m_idx].write(method_idx);
+            }
+
+            owned_params.extend(decoded_type_param_ranges);
+        }
+    });
+
+    Ok(DecodedMethods {
+        methods,
+        owned_params,
+        sig_pending_def,
+    })
+}
+
+fn get_field_mut<'a, 'r>(types: &'r mut [types::TypeDefinition<'a>], idx: FieldIndex) -> &'r mut members::Field<'a> {
+    &mut types[idx.parent_type.0].fields[idx.field]
+}
+
+fn get_method_mut<'a, 'r>(types: &'r mut [types::TypeDefinition<'a>], idx: MethodIndex) -> &'r mut members::Method<'a> {
+    let MethodMemberIndex::Method(member_idx) = idx.member else {
+        unreachable!()
+    };
+    &mut types[idx.parent_type.0].methods[member_idx]
+}
+
+fn decode_params<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    methods: &[MethodIndex],
+    owned_params: Vec<(usize, usize, usize)>,
+) -> Result<Vec<(usize, usize)>> {
+    use rayon::prelude::*;
+
+    struct DecodedParam<'a> {
+        p_idx: usize,
+        sequence: usize,
+        metadata: Option<members::ParameterMetadata<'a>>,
+    }
+
+    let decoded_params = owned_params
+        .par_iter()
+        .map(|&(m_idx, start, end)| {
+            use members::*;
+
+            let mut decoded = Vec::with_capacity(end - start);
+
+            for p_idx in start..end {
+                let param = &tables.param[p_idx];
+                let sequence = param.sequence as usize;
+
+                decoded.push(DecodedParam {
+                    p_idx,
+                    sequence,
+                    metadata: Some(ParameterMetadata {
+                        attributes: vec![],
+                        name: optional_idx!(strings, param.name),
+                        is_in: check_bitmask!(param.flags, 0x1),
+                        is_out: check_bitmask!(param.flags, 0x2),
+                        optional: check_bitmask!(param.flags, 0x10),
+                        default: None,
+                        marshal: None,
+                    }),
+                });
+            }
+
+            Ok((m_idx, decoded))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    build_vec!(params = (usize, usize)[tables.param.len()], {
+        for (m_idx, decoded_method_params) in decoded_params {
+            let method = get_method_mut(types, methods[m_idx]);
+
+            let max_sequence = decoded_method_params
+                .iter()
+                .map(|param| param.sequence)
+                .max()
+                .unwrap_or(0);
+            if max_sequence > 0 && method.parameter_metadata.len() < max_sequence {
+                method.parameter_metadata.resize(max_sequence, None);
+            }
+
+            for param in decoded_method_params {
+                if param.sequence == 0 {
+                    method.return_type_metadata = param.metadata;
+                } else {
+                    method.parameter_metadata[param.sequence - 1] = param.metadata;
+                }
+
+                params[param.p_idx].write((m_idx, param.sequence));
             }
         }
     });
+
+    Ok(params)
+}
+
+fn decode_properties<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+    ctx: &convert::read::Context<'_, 'a>,
+) -> Result<Vec<(usize, usize)>> {
+    use rayon::prelude::*;
+
+    let owned_properties = tables
+        .property_map
+        .iter()
+        .enumerate()
+        .map(|(map_idx, map)| {
+            let type_idx = map.parent.0 - 1;
+            if type_idx >= types.len() {
+                throw!("invalid parent type index {} for property map {}", type_idx, map_idx)
+            }
+
+            let start = map.property_list.0 - 1;
+            let end = match tables.property_map.get(map_idx + 1) {
+                Some(next) => next.property_list.0,
+                None => tables.property.len() + 1,
+            } - 1;
+
+            Ok((type_idx, start, end, map_idx))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let decoded_properties = owned_properties
+        .par_iter()
+        .map(|&(type_idx, start, end, map_idx)| {
+            use crate::binary::signature::kinds::PropertySig;
+            use members::*;
+
+            let Some(props) = tables.property.get(start..end) else {
+                throw!("invalid property range in property_map {}", map_idx)
+            };
+
+            let mut properties = Vec::with_capacity(props.len());
+            let mut property_idxs = Vec::with_capacity(props.len());
+
+            for (offset, prop) in props.iter().enumerate() {
+                let p_idx = start + offset;
+                let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
+
+                properties.push(Property {
+                    attributes: vec![],
+                    name: heap_idx!(strings, prop.name),
+                    getter: None,
+                    setter: None,
+                    other: vec![],
+                    static_member: !sig.has_this,
+                    property_type: convert::read::parameter(sig.property_type, ctx)?,
+                    parameters: {
+                        let mut ps = Vec::with_capacity(sig.params.len());
+                        for p in sig.params {
+                            ps.push(convert::read::parameter(p, ctx)?);
+                        }
+                        ps
+                    },
+                    special_name: check_bitmask!(prop.flags, 0x200),
+                    runtime_special_name: check_bitmask!(prop.flags, 0x1000),
+                    default: None,
+                });
+
+                property_idxs.push((p_idx, (type_idx, properties.len() - 1)));
+            }
+
+            Ok((type_idx, properties, property_idxs))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    build_vec!(properties = (usize, usize)[tables.property.len()], {
+        for (type_idx, decoded_type_properties, decoded_type_property_idxs) in decoded_properties {
+            let parent_properties = &mut types[type_idx].properties;
+            let property_offset = parent_properties.len();
+            parent_properties.reserve(decoded_type_properties.len());
+            parent_properties.extend(decoded_type_properties);
+
+            for (p_idx, (prop_type_idx, mut prop_idx)) in decoded_type_property_idxs {
+                debug_assert_eq!(type_idx, prop_type_idx);
+                prop_idx += property_offset;
+                properties[p_idx].write((prop_type_idx, prop_idx));
+            }
+        }
+    });
+
+    Ok(properties)
+}
+
+fn decode_events<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    ctx: &convert::read::Context<'_, 'a>,
+    sem_by_event: &mut HashMap<usize, Vec<(u16, usize)>>,
+    methods: &mut [MethodIndex],
+) -> Result<Vec<(usize, usize)>> {
+    build_vec!(events = (usize, usize)[tables.event.len()], {
+        for (map_idx, map) in tables.event_map.iter().enumerate() {
+            let type_idx = map.parent.0 - 1;
+
+            let parent = types.get_mut(type_idx).ok_or_else(|| {
+                scroll::Error::Custom(format!(
+                    "invalid parent type index {} for event map {}",
+                    type_idx, map_idx
+                ))
+            })?;
+
+            let start = map.event_list.0 - 1;
+            let end = match tables.event_map.get(map_idx + 1) {
+                Some(next) => next.event_list.0,
+                None => tables.event.len() + 1,
+            } - 1;
+
+            let Some(type_events) = tables.event.get(start..end) else {
+                throw!("invalid event range in event_map {}", map_idx)
+            };
+
+            for (offset, event) in type_events.iter().enumerate() {
+                use members::*;
+
+                let e_idx = start + offset;
+                let name = heap_idx!(strings, event.name);
+
+                let internal_idx = parent.events.len();
+
+                macro_rules! get_listener {
+                    ($l_name:literal, $flag:literal, $variant:ident) => {{
+                        let Some(entries) = sem_by_event.get_mut(&e_idx) else {
+                            throw!("could not find {} listener for event {}", $l_name, name)
+                        };
+                        let Some(position) = entries
+                            .iter()
+                            .position(|(semantics, _)| check_bitmask!(*semantics, $flag))
+                        else {
+                            throw!("could not find {} listener for event {}", $l_name, name)
+                        };
+                        let (_, m_idx) = entries.swap_remove(position);
+                        if m_idx < tables.method_def.len() {
+                            let method = extract_method(parent, methods[m_idx], methods, tables);
+                            methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
+                            method
+                        } else {
+                            throw!(
+                                "invalid method index {} in {} index for event {}",
+                                m_idx,
+                                $l_name,
+                                name
+                            );
+                        }
+                    }};
+                }
+
+                let add_listener = get_listener!("add", 0x8, EventAdd);
+                let remove_listener = get_listener!("remove", 0x10, EventRemove);
+
+                parent.events.push(Event {
+                    attributes: vec![],
+                    delegate_type: convert::read::type_idx(event.event_type, ctx)?,
+                    add_listener,
+                    remove_listener,
+                    name,
+                    raise_event: None,
+                    other: vec![],
+                    special_name: check_bitmask!(event.event_flags, 0x200),
+                    runtime_special_name: check_bitmask!(event.event_flags, 0x400),
+                });
+                events[e_idx].write((type_idx, internal_idx));
+            }
+        }
+    });
+
+    Ok(events)
+}
+
+#[derive(Copy, Clone)]
+enum SemanticsAssociation {
+    Event(usize),
+    Property(usize),
+}
+
+#[derive(Copy, Clone)]
+struct SemanticsAction {
+    raw_method_idx: usize,
+    semantics: u16,
+    association: SemanticsAssociation,
+}
+
+struct TypeSemanticsWork {
+    parent_type: usize,
+    method_start: usize,
+    method_end: usize,
+    actions: Vec<SemanticsAction>,
+}
+
+fn apply_method_semantics_for_type<'a>(
+    parent_type: usize,
+    parent: &mut types::TypeDefinition<'a>,
+    methods_for_type: &mut [MethodIndex],
+    method_start: usize,
+    actions: &[SemanticsAction],
+    properties: &[(usize, usize)],
+    events: &[(usize, usize)],
+) -> Result<()> {
+    let mut raw_by_internal = vec![usize::MAX; parent.methods.len()];
+    for (local_raw_idx, method_idx) in methods_for_type.iter().enumerate() {
+        if let MethodMemberIndex::Method(internal_idx) = method_idx.member {
+            let Some(slot) = raw_by_internal.get_mut(internal_idx) else {
+                throw!(
+                    "invalid method internal index {} for type {} in method semantics",
+                    internal_idx,
+                    parent_type
+                )
+            };
+            *slot = local_raw_idx;
+        }
+    }
+
+    if raw_by_internal.contains(&usize::MAX) {
+        throw!(
+            "incomplete method index map for type {} in method semantics",
+            parent_type
+        )
+    }
+
+    let mut extraction_order = Vec::with_capacity(actions.len());
+    for (action_idx, action) in actions.iter().enumerate() {
+        let Some(local_raw_idx) = action
+            .raw_method_idx
+            .checked_sub(method_start)
+            .filter(|idx| *idx < methods_for_type.len())
+        else {
+            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+        };
+
+        let MethodMemberIndex::Method(internal_idx) = methods_for_type[local_raw_idx].member else {
+            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+        };
+
+        extraction_order.push((internal_idx, action_idx, local_raw_idx));
+    }
+    extraction_order.sort_unstable_by_key(|(internal_idx, _, _)| std::cmp::Reverse(*internal_idx));
+
+    let mut extracted = Vec::with_capacity(actions.len());
+
+    for (internal_idx, action_idx, expected_local_raw_idx) in extraction_order {
+        let Some(&removed_local_raw_idx) = raw_by_internal.get(internal_idx) else {
+            throw!(
+                "invalid method internal index {} for type {} in method semantics",
+                internal_idx,
+                parent_type
+            )
+        };
+
+        if removed_local_raw_idx != expected_local_raw_idx {
+            throw!(
+                "method semantics extraction mismatch for method {}",
+                actions[action_idx].raw_method_idx
+            )
+        }
+
+        let moved_local_raw_idx = raw_by_internal[raw_by_internal.len() - 1];
+
+        raw_by_internal.swap_remove(internal_idx);
+        let method = parent.methods.swap_remove(internal_idx);
+
+        if internal_idx < raw_by_internal.len() {
+            methods_for_type[moved_local_raw_idx].member = MethodMemberIndex::Method(internal_idx);
+        }
+
+        extracted.push((action_idx, method));
+    }
+
+    extracted.sort_unstable_by_key(|(action_idx, _)| *action_idx);
+
+    for ((expected_action_idx, action), (action_idx, new_meth)) in actions.iter().enumerate().zip(extracted) {
+        debug_assert_eq!(expected_action_idx, action_idx);
+
+        let Some(local_raw_idx) = action
+            .raw_method_idx
+            .checked_sub(method_start)
+            .filter(|idx| *idx < methods_for_type.len())
+        else {
+            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+        };
+
+        let member_idx = &mut methods_for_type[local_raw_idx].member;
+
+        match action.association {
+            SemanticsAssociation::Event(idx) => {
+                let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
+                    scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
+                })?;
+                let event = &mut parent.events[internal_idx];
+
+                if check_bitmask!(action.semantics, 0x20) {
+                    event.raise_event = Some(new_meth);
+                    *member_idx = MethodMemberIndex::EventRaise(internal_idx);
+                } else if check_bitmask!(action.semantics, 0x4) {
+                    event.other.push(new_meth);
+                    *member_idx = MethodMemberIndex::EventOther {
+                        event: internal_idx,
+                        other: event.other.len() - 1,
+                    };
+                }
+            }
+            SemanticsAssociation::Property(idx) => {
+                let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
+                    scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
+                })?;
+                let property = &mut parent.properties[internal_idx];
+
+                if check_bitmask!(action.semantics, 0x1) {
+                    property.setter = Some(new_meth);
+                    *member_idx = MethodMemberIndex::PropertySetter(internal_idx);
+                } else if check_bitmask!(action.semantics, 0x2) {
+                    property.getter = Some(new_meth);
+                    *member_idx = MethodMemberIndex::PropertyGetter(internal_idx);
+                } else if check_bitmask!(action.semantics, 0x4) {
+                    property.other.push(new_meth);
+                    *member_idx = MethodMemberIndex::PropertyOther {
+                        property: internal_idx,
+                        other: property.other.len() - 1,
+                    };
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_method_semantics_work<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    methods: &mut [MethodIndex],
+    works: &[TypeSemanticsWork],
+    type_base: usize,
+    method_base: usize,
+    properties: &[(usize, usize)],
+    events: &[(usize, usize)],
+) -> Result<()> {
+    if works.is_empty() {
+        return Ok(());
+    }
+
+    const SEQUENTIAL_WORK_THRESHOLD: usize = 8;
+
+    if works.len() <= SEQUENTIAL_WORK_THRESHOLD {
+        for work in works {
+            let Some(type_local_idx) = work.parent_type.checked_sub(type_base).filter(|idx| *idx < types.len()) else {
+                throw!("invalid parent type index {} for method semantics", work.parent_type)
+            };
+
+            let Some(method_start) = work
+                .method_start
+                .checked_sub(method_base)
+                .filter(|idx| *idx <= methods.len())
+            else {
+                throw!("invalid method start index {} for method semantics", work.method_start)
+            };
+
+            let Some(method_end) = work
+                .method_end
+                .checked_sub(method_base)
+                .filter(|idx| *idx <= methods.len())
+            else {
+                throw!("invalid method end index {} for method semantics", work.method_end)
+            };
+
+            let parent = &mut types[type_local_idx];
+            let methods_for_type = methods.get_mut(method_start..method_end).ok_or_else(|| {
+                scroll::Error::Custom(format!(
+                    "invalid method range {}..{} for method semantics",
+                    work.method_start, work.method_end
+                ))
+            })?;
+
+            apply_method_semantics_for_type(
+                work.parent_type,
+                parent,
+                methods_for_type,
+                work.method_start,
+                &work.actions,
+                properties,
+                events,
+            )?;
+        }
+
+        return Ok(());
+    }
+
+    let mid = works.len() / 2;
+    let split_type = works[mid].parent_type.checked_sub(type_base).ok_or_else(|| {
+        scroll::Error::Custom(format!(
+            "invalid type split for method semantics at {}",
+            works[mid].parent_type
+        ))
+    })?;
+    let split_method = works[mid].method_start.checked_sub(method_base).ok_or_else(|| {
+        scroll::Error::Custom(format!(
+            "invalid method split for method semantics at {}",
+            works[mid].method_start
+        ))
+    })?;
+
+    let (left_types, right_types) = types.split_at_mut(split_type);
+    let (left_methods, right_methods) = methods.split_at_mut(split_method);
+    let (left_works, right_works) = works.split_at(mid);
+
+    let (left_result, right_result) = rayon::join(
+        || {
+            apply_method_semantics_work(
+                left_types,
+                left_methods,
+                left_works,
+                type_base,
+                method_base,
+                properties,
+                events,
+            )
+        },
+        || {
+            apply_method_semantics_work(
+                right_types,
+                right_methods,
+                right_works,
+                type_base + split_type,
+                method_base + split_method,
+                properties,
+                events,
+            )
+        },
+    );
+
+    left_result?;
+    right_result
+}
+
+fn apply_method_semantics<'a>(
+    types: &mut [types::TypeDefinition<'a>],
+    tables: &metadata::table::Tables,
+    methods: &mut [MethodIndex],
+    properties: &[(usize, usize)],
+    events: &[(usize, usize)],
+    sem_by_event: &HashMap<usize, Vec<(u16, usize)>>,
+    sem_by_property: &HashMap<usize, Vec<(u16, usize)>>,
+) -> Result<()> {
+    // Batch semantics extraction by parent type so each type's method-index map is built once.
+    // Within a type, extract in descending internal-index order so swap_remove does not
+    // invalidate any method positions that are still waiting to be removed.
+    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> =
+        HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
+    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> =
+        HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
+
+    for (&event_idx, entries) in sem_by_event {
+        for &(semantics, raw_method_idx) in entries {
+            *remaining_event_counts
+                .entry((event_idx, semantics, raw_method_idx))
+                .or_insert(0) += 1;
+        }
+    }
+
+    for (&property_idx, entries) in sem_by_property {
+        for &(semantics, raw_method_idx) in entries {
+            *remaining_property_counts
+                .entry((property_idx, semantics, raw_method_idx))
+                .or_insert(0) += 1;
+        }
+    }
+
+    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> =
+        HashMap::with_capacity_and_hasher(types.len(), Default::default());
+
+    for s in &tables.method_semantics {
+        use metadata::index::HasSemantics;
+
+        let raw_method_idx = s.method.0 - 1;
+
+        let (association, include) = match s.association {
+            HasSemantics::Event(i) => {
+                let idx = i - 1;
+                let key = (idx, s.semantics, raw_method_idx);
+                let include = match remaining_event_counts.get_mut(&key) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                };
+                (SemanticsAssociation::Event(idx), include)
+            }
+            HasSemantics::Property(i) => {
+                let idx = i - 1;
+                let key = (idx, s.semantics, raw_method_idx);
+                let include = match remaining_property_counts.get_mut(&key) {
+                    Some(count) if *count > 0 => {
+                        *count -= 1;
+                        true
+                    }
+                    _ => false,
+                };
+                (SemanticsAssociation::Property(idx), include)
+            }
+            HasSemantics::Null => throw!("invalid null index for method semantics",),
+        };
+
+        if !include {
+            continue;
+        }
+
+        let Some(&method_idx) = methods.get(raw_method_idx) else {
+            throw!("invalid method index {} for method semantics", raw_method_idx)
+        };
+
+        semantics_by_type
+            .entry(method_idx.parent_type.0)
+            .or_default()
+            .push(SemanticsAction {
+                raw_method_idx,
+                semantics: s.semantics,
+                association,
+            });
+    }
+
+    let mut work_by_type = semantics_by_type
+        .into_iter()
+        .map(|(parent_type, actions)| {
+            let type_idx = TypeIndex(parent_type);
+            let method_start = methods.partition_point(|m| m.parent_type < type_idx);
+            let method_end = methods.partition_point(|m| m.parent_type <= type_idx);
+
+            TypeSemanticsWork {
+                parent_type,
+                method_start,
+                method_end,
+                actions,
+            }
+        })
+        .collect::<Vec<_>>();
+    work_by_type.sort_unstable_by_key(|work| work.parent_type);
+
+    apply_method_semantics_work(types, methods, &work_by_type, 0, 0, properties, events)
+}
+
+struct DecodedMemberRefs<'a> {
+    field_refs: Vec<members::ExternalFieldReference<'a>>,
+    field_map: HashMap<usize, usize>,
+    method_refs: Vec<members::ExternalMethodReference<'a>>,
+    method_map: HashMap<usize, usize>,
+    sig_pending_ref: Vec<crate::binary::metadata::index::Blob>,
+}
+
+fn decode_member_refs<'a>(
+    tables: &metadata::table::Tables,
+    strings: &StringsReader<'a>,
+    blobs: &BlobReader<'a>,
+    module_refs: &[module::ExternalModuleReference<'a>],
+    methods: &[MethodIndex],
+    ctx: &convert::read::Context<'_, 'a>,
+    opts: Options,
+) -> Result<DecodedMemberRefs<'a>> {
+    let member_ref_len = tables.member_ref.len();
+    let mut field_refs = Vec::with_capacity(member_ref_len);
+    let mut field_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
+    let mut method_refs = Vec::with_capacity(member_ref_len);
+    let mut method_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
+    let mut sig_pending_ref: Vec<crate::binary::metadata::index::Blob> = if opts.lazy_method_signatures {
+        Vec::with_capacity(member_ref_len)
+    } else {
+        vec![]
+    };
+
+    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
+        use members::*;
+        use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+        let name = strings.at_index(r.name).map_err(CLI)?.into();
+        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
+
+        let Some(&sig_kind) = sig_blob.first() else {
+            continue;
+        };
+
+        if sig_kind == 0x06 {
+            use crate::binary::signature::kinds::FieldSig;
+
+            // NOTE: discarding errors means wasted allocation of formatted messages
+            let field_sig: FieldSig = match sig_blob.pread(0) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let parent = match r.class {
+                MemberRefParent::TypeDef(i) => {
+                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
+                }
+                MemberRefParent::TypeRef(i) => {
+                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
+                }
+                MemberRefParent::TypeSpec(i) => {
+                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
+                }
+                MemberRefParent::ModuleRef(i) => {
+                    let idx = i - 1;
+                    if idx < module_refs.len() {
+                        FieldReferenceParent::Module(ModuleRefIndex(idx))
+                    } else {
+                        throw!("invalid module reference index {} for field reference {}", idx, name);
+                    }
+                }
+                _ => continue,
+            };
+
+            let field_type = MemberType::from_sig(field_sig.field_type, ctx)?;
+            let mut custom_modifiers = Vec::with_capacity(field_sig.custom_modifiers.len());
+            for c in field_sig.custom_modifiers {
+                custom_modifiers.push(convert::read::custom_modifier(c, ctx)?);
+            }
+
+            let current_idx = field_refs.len();
+            field_map.insert(orig_idx, current_idx);
+            field_refs.push(ExternalFieldReference {
+                attributes: vec![],
+                parent,
+                name,
+                custom_modifiers,
+                field_type,
+            });
+        } else {
+            use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
+
+            // NOTE: discarding errors means wasted allocation of formatted messages
+            let ref_sig: MethodRefSig = match sig_blob.pread(0) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let signature = if opts.lazy_method_signatures {
+                sig_pending_ref.push(r.signature);
+                Default::default()
+            } else {
+                let mut sig = convert::read::managed_method(ref_sig.method_def, ctx)?;
+                if sig.calling_convention == CallingConvention::Vararg {
+                    let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
+                    for p in ref_sig.varargs {
+                        varargs.push(convert::read::parameter(p, ctx)?);
+                    }
+                    sig.varargs = Some(varargs);
+                }
+                sig
+            };
+
+            let parent = match r.class {
+                MemberRefParent::TypeDef(i) => {
+                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
+                }
+                MemberRefParent::TypeRef(i) => {
+                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
+                }
+                MemberRefParent::TypeSpec(i) => {
+                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
+                }
+                MemberRefParent::ModuleRef(i) => {
+                    let idx = i - 1;
+                    if idx < module_refs.len() {
+                        MethodReferenceParent::Module(ModuleRefIndex(idx))
+                    } else {
+                        throw!("invalid module reference index {} for method reference {}", idx, name);
+                    }
+                }
+                MemberRefParent::MethodDef(i) => {
+                    let idx = i - 1;
+                    match methods.get(idx) {
+                        Some(&m) => MethodReferenceParent::VarargMethod(m),
+                        None => throw!("bad method def index {} for method reference {}", idx, name),
+                    }
+                }
+                MemberRefParent::Null => throw!("invalid null parent index for method reference {}", name),
+            };
+
+            let current_idx = method_refs.len();
+            method_map.insert(orig_idx, current_idx);
+            method_refs.push(ExternalMethodReference {
+                attributes: vec![],
+                parent,
+                name,
+                signature,
+            });
+        }
+    }
+
+    Ok(DecodedMemberRefs {
+        field_refs,
+        field_map,
+        method_refs,
+        method_map,
+        sig_pending_ref,
+    })
+}
+
+#[allow(clippy::too_many_lines, clippy::nonminimal_bool)]
+pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'a>> {
+    let (strings, blobs, guids, userstrings, logical) = dll.get_all_streams()?;
+    let tables = logical.tables;
+
+    let def_len = tables.type_def.len();
+    let ref_len = tables.type_ref.len();
+    let ctx = convert::read::Context {
+        def_len,
+        ref_len,
+        specs: &tables.type_spec,
+        sigs: &tables.stand_alone_sig,
+        blobs: &blobs,
+        userstrings: &userstrings,
+    };
+
+    stage_start!(stage_timer);
+    debug!("assembly");
+    let mut assembly = decode_assembly(&tables, &strings, &blobs)?;
+    stage_end!(stage_timer, "assembly");
+
+    stage_start!(stage_timer);
+    debug!("assembly refs");
+    let assembly_refs = decode_assembly_refs(&tables, &strings, &blobs)?;
+    stage_end!(stage_timer, "assembly refs");
+
+    stage_start!(stage_timer);
+    debug!("type definitions");
+    let mut types = decode_type_definitions(&tables, &strings, &ctx)?;
+    stage_end!(stage_timer, "type definitions");
+
+    debug!("nested types");
+
+    for n in &tables.nested_class {
+        let nest_idx = n.nested_class.0 - 1;
+        match types.get_mut(nest_idx) {
+            Some(t) => {
+                let enclose_idx = n.enclosing_class.0 - 1;
+                if enclose_idx < tables.type_def.len() {
+                    t.encloser = Some(TypeIndex(enclose_idx));
+                } else {
+                    throw!(
+                        "invalid enclosing type index {} for nested class declaration of type {}",
+                        nest_idx,
+                        t.name
+                    );
+                }
+            }
+            None => throw!("invalid type index {} for nested class declaration", nest_idx),
+        }
+    }
+
+    debug!("files");
+    let files = decode_files(&tables, &strings, &blobs)?;
+
+    debug!("resources");
+    let resources = decode_resources(dll, &tables, &strings, &files, &assembly_refs)?;
+
+    debug!("exported types");
+    let exports = decode_exported_types(&tables, &strings, &files, &assembly_refs)?;
+
+    let module = decode_module(&tables, &strings, &guids)?;
+
+    debug!("resolving module {}", module.name);
+
+    let module_refs = decode_module_refs(&tables, &strings)?;
+
+    debug!("type refs");
+    let type_refs = decode_type_refs(&tables, &strings, &module_refs, &assembly_refs)?;
+
+    debug!("interfaces");
+    let interface_idxs = decode_interfaces(&tables, &mut types, &ctx)?;
+
+    stage_start!(stage_timer);
+    debug!("fields");
+    let fields = decode_fields(&mut types, &tables, &strings, &blobs, &ctx)?;
+    stage_end!(stage_timer, "fields");
+
+    debug!("field layout");
+
+    {
+        use rayon::prelude::*;
+
+        let field_layout_updates = tables
+            .field_layout
+            .par_iter()
+            .map(|layout| {
+                let idx = layout.field.0 - 1;
+                match fields.get(idx) {
+                    Some(&field) => Ok((field, layout.offset as usize)),
+                    None => throw!("bad parent field index {} for field layout specification", idx),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (field, offset) in field_layout_updates {
+            get_field_mut(&mut types, field).offset = Some(offset);
+        }
+    }
+
+    debug!("field rva");
+
+    {
+        use rayon::prelude::*;
+
+        let field_rva_updates = tables
+            .field_rva
+            .par_iter()
+            .map(|rva| {
+                let idx = rva.field.0 - 1;
+                match fields.get(idx) {
+                    Some(&field) => Ok((field, dll.raw_rva(rva.rva)?.into())),
+                    None => throw!("bad parent field index {} for field RVA specification", idx),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (field, initial_value) in field_rva_updates {
+            get_field_mut(&mut types, field).initial_value = Some(initial_value);
+        }
+    }
+
+    stage_start!(stage_timer);
+    debug!("methods");
+    let DecodedMethods {
+        mut methods,
+        owned_params,
+        sig_pending_def,
+    } = decode_methods(&mut types, &tables, &strings, &blobs, &ctx, opts)?;
+    stage_end!(stage_timer, "methods");
 
     // only should be used before the event/method semantics phase
     // since before then we know member index is a Method(usize)
@@ -810,69 +1851,90 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("pinvoke");
 
-    for i in &tables.impl_map {
+    {
         use members::*;
         use metadata::index::MemberForwarded;
+        use rayon::prelude::*;
 
-        let name = heap_idx!(strings, i.import_name);
+        enum PInvokeTarget {
+            Field(FieldIndex),
+            Method(MethodIndex),
+        }
 
-        let value = Some(PInvoke {
-            no_mangle: check_bitmask!(i.mapping_flags, 0x1),
-            character_set: match i.mapping_flags & 0x6 {
-                0x0 => CharacterSet::NotSpecified,
-                0x2 => CharacterSet::Ansi,
-                0x4 => CharacterSet::Unicode,
-                0x6 => CharacterSet::Auto,
-                bad => throw!(
-                    "invalid character set specifier {:#03x} for PInvoke import {}",
-                    bad,
-                    name
-                ),
-            },
-            supports_last_error: check_bitmask!(i.mapping_flags, 0x40),
-            calling_convention: match i.mapping_flags & 0x700 {
-                0x100 => UnmanagedCallingConvention::Platformapi,
-                0x200 => UnmanagedCallingConvention::Cdecl,
-                0x300 => UnmanagedCallingConvention::Stdcall,
-                0x400 => UnmanagedCallingConvention::Thiscall,
-                0x500 => UnmanagedCallingConvention::Fastcall,
-                bad => throw!(
-                    "invalid calling convention specifier {:#05x} for PInvoke import {}",
-                    bad,
-                    name
-                ),
-            },
-            import_name: name.clone(),
-            import_scope: {
-                let idx = i.import_scope.0 - 1;
+        let pinvoke_updates = tables
+            .impl_map
+            .par_iter()
+            .map(|i| {
+                let name = heap_idx!(strings, i.import_name);
 
-                if idx < module_refs.len() {
-                    ModuleRefIndex(idx)
-                } else {
-                    throw!("invalid module reference index {} for PInvoke import {}", idx, name)
-                }
-            },
-        });
+                let value = PInvoke {
+                    no_mangle: check_bitmask!(i.mapping_flags, 0x1),
+                    character_set: match i.mapping_flags & 0x6 {
+                        0x0 => CharacterSet::NotSpecified,
+                        0x2 => CharacterSet::Ansi,
+                        0x4 => CharacterSet::Unicode,
+                        0x6 => CharacterSet::Auto,
+                        bad => throw!(
+                            "invalid character set specifier {:#03x} for PInvoke import {}",
+                            bad,
+                            name
+                        ),
+                    },
+                    supports_last_error: check_bitmask!(i.mapping_flags, 0x40),
+                    calling_convention: match i.mapping_flags & 0x700 {
+                        0x100 => UnmanagedCallingConvention::Platformapi,
+                        0x200 => UnmanagedCallingConvention::Cdecl,
+                        0x300 => UnmanagedCallingConvention::Stdcall,
+                        0x400 => UnmanagedCallingConvention::Thiscall,
+                        0x500 => UnmanagedCallingConvention::Fastcall,
+                        bad => throw!(
+                            "invalid calling convention specifier {:#05x} for PInvoke import {}",
+                            bad,
+                            name
+                        ),
+                    },
+                    import_name: name.clone(),
+                    import_scope: {
+                        let idx = i.import_scope.0 - 1;
 
-        match i.member_forwarded {
-            MemberForwarded::Field(i) => {
-                let idx = i - 1;
+                        if idx < module_refs.len() {
+                            ModuleRefIndex(idx)
+                        } else {
+                            throw!("invalid module reference index {} for PInvoke import {}", idx, name)
+                        }
+                    },
+                };
 
-                match fields.get(idx) {
-                    Some(&i) => get_field!(i).pinvoke = value,
-                    None => throw!("invalid field index {} for PInvoke import {}", idx, name),
-                }
-            }
-            MemberForwarded::MethodDef(i) => {
-                let idx = i - 1;
+                let target = match i.member_forwarded {
+                    MemberForwarded::Field(i) => {
+                        let idx = i - 1;
 
-                match methods.get(idx) {
-                    Some(&m) => get_method!(m).pinvoke = value,
-                    None => throw!("invalid method index {} for PInvoke import {}", idx, name),
-                }
-            }
-            MemberForwarded::Null => {
-                throw!("invalid null member index for PInvoke import {}", name)
+                        match fields.get(idx) {
+                            Some(&i) => PInvokeTarget::Field(i),
+                            None => throw!("invalid field index {} for PInvoke import {}", idx, name),
+                        }
+                    }
+                    MemberForwarded::MethodDef(i) => {
+                        let idx = i - 1;
+
+                        match methods.get(idx) {
+                            Some(&m) => PInvokeTarget::Method(m),
+                            None => throw!("invalid method index {} for PInvoke import {}", idx, name),
+                        }
+                    }
+                    MemberForwarded::Null => {
+                        throw!("invalid null member index for PInvoke import {}", name)
+                    }
+                };
+
+                Ok((target, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (target, value) in pinvoke_updates {
+            match target {
+                PInvokeTarget::Field(field) => get_field_mut(&mut types, field).pinvoke = Some(value),
+                PInvokeTarget::Method(method) => get_method!(method).pinvoke = Some(value),
             }
         }
     }
@@ -888,21 +1950,24 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let t_idx = t - 1;
                 match types.get_mut(t_idx) {
                     Some(t) => &mut t.security,
-                    None => throw!("invalid type parent index {} for security declaration {}", t_idx, idx)
+                    None => throw!("invalid type parent index {} for security declaration {}", t_idx, idx),
                 }
             }
             HasDeclSecurity::MethodDef(m) => {
                 let m_idx = m - 1;
                 match methods.get(m_idx) {
                     Some(&m) => &mut get_method!(m).security,
-                    None => throw!("invalid method parent index {} for security declaration {}", m_idx, idx)
+                    None => throw!("invalid method parent index {} for security declaration {}", m_idx, idx),
                 }
             }
             HasDeclSecurity::Assembly(_) => match &mut assembly {
                 Some(a) => &mut a.security,
-                None => throw!("invalid assembly parent index for security declaration {} when no assembly exists in the current module", idx)
-            }
-            HasDeclSecurity::Null => throw!("invalid null parent index for security declaration {}", idx)
+                None => throw!(
+                    "invalid assembly parent index for security declaration {} when no assembly exists in the current module",
+                    idx
+                ),
+            },
+            HasDeclSecurity::Null => throw!("invalid null parent index for security declaration {}", idx),
         };
 
         *parent = Some(SecurityDeclaration {
@@ -914,7 +1979,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("generic parameters");
 
-    let mut constraint_map = HashMap::with_capacity_and_hasher(tables.generic_param_constraint.len(), Default::default());
+    let mut constraint_map =
+        HashMap::with_capacity_and_hasher(tables.generic_param_constraint.len(), Default::default());
 
     // this table is supposed to be sorted by owner and number (ECMA-335, II.22, page 210)
     // thus no need to sort the generics by sequence after the fact
@@ -957,122 +2023,70 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         }
     }
 
-    build_vec!(params = (usize, usize)[tables.param.len()], {
-        debug!("params");
-
-        for (m_idx, iter) in owned_params {
-            for (p_idx, param) in iter {
-                use members::*;
-
-                let sequence = param.sequence as usize;
-
-                let param_val = Some(ParameterMetadata {
-                    attributes: vec![],
-                    name: optional_idx!(strings, param.name),
-                    is_in: check_bitmask!(param.flags, 0x1),
-                    is_out: check_bitmask!(param.flags, 0x2),
-                    optional: check_bitmask!(param.flags, 0x10),
-                    default: None,
-                    marshal: None,
-                });
-
-                let method = get_method!(methods[m_idx]);
-
-                if sequence == 0 {
-                    method.return_type_metadata = param_val;
-                } else {
-                    let len = method.parameter_metadata.len();
-                    if len < sequence {
-                        method.parameter_metadata.extend(vec![None; sequence - len]);
-                    }
-
-                    method.parameter_metadata[sequence - 1] = param_val;
-                }
-
-                params[p_idx].write((m_idx, sequence));
-            }
-        }
-    });
+    stage_start!(stage_timer);
+    debug!("params");
+    let params = decode_params(&mut types, &tables, &strings, &methods, owned_params)?;
+    stage_end!(stage_timer, "params");
 
     debug!("field marshal");
 
-    for marshal in &tables.field_marshal {
+    {
         use crate::binary::{metadata::index::HasFieldMarshal, signature::kinds::MarshalSpec};
+        use rayon::prelude::*;
 
-        let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
-
-        match marshal.parent {
-            HasFieldMarshal::Field(i) => {
-                let idx = i - 1;
+        let field_marshal_updates = tables
+            .field_marshal
+            .par_iter()
+            .filter_map(|marshal| match marshal.parent {
+                HasFieldMarshal::Field(_) => Some(marshal),
+                _ => None,
+            })
+            .map(|marshal| {
+                let idx = match marshal.parent {
+                    HasFieldMarshal::Field(i) => i - 1,
+                    _ => unreachable!(),
+                };
                 match fields.get(idx) {
-                    Some(&field) => get_field!(field).marshal = value,
+                    Some(&field) => Ok((field, heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?)),
                     None => throw!("bad field index {} for field marshal", idx),
                 }
-            }
-            HasFieldMarshal::Param(i) => {
-                let idx = i - 1;
-                match params.get(idx) {
-                    Some(&(m_idx, p_idx)) => {
-                        let method = get_method!(methods[m_idx]);
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-                        let param_meta = if p_idx == 0 {
-                            &mut method.return_type_metadata
-                        } else {
-                            &mut method.parameter_metadata[p_idx - 1]
-                        };
+        for (field, marshal) in field_marshal_updates {
+            get_field_mut(&mut types, field).marshal = Some(marshal);
+        }
 
-                        param_meta.as_mut().unwrap().marshal = value;
+        for marshal in &tables.field_marshal {
+            match marshal.parent {
+                HasFieldMarshal::Field(_) => {}
+                HasFieldMarshal::Param(i) => {
+                    let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
+                    let idx = i - 1;
+                    match params.get(idx) {
+                        Some(&(m_idx, p_idx)) => {
+                            let method = get_method!(methods[m_idx]);
+
+                            let param_meta = if p_idx == 0 {
+                                &mut method.return_type_metadata
+                            } else {
+                                &mut method.parameter_metadata[p_idx - 1]
+                            };
+
+                            param_meta.as_mut().unwrap().marshal = value;
+                        }
+                        None => throw!("bad parameter index {} for field marshal", idx),
                     }
-                    None => throw!("bad parameter index {} for field marshal", idx),
                 }
+                HasFieldMarshal::Null => throw!("invalid null parent index for field marshal"),
             }
-            HasFieldMarshal::Null => throw!("invalid null parent index for field marshal"),
         }
     }
 
-    build_vec!(properties = (usize, usize)[tables.property.len()], {
-        debug!("properties");
-
-        for (map_idx, map) in tables.property_map.iter().enumerate() {
-            let type_idx = map.parent.0 - 1;
-
-            let parent_props = match types.get_mut(type_idx) {
-                Some(t) => &mut t.properties,
-                None => throw!("invalid parent type index {} for property map {}", type_idx, map_idx),
-            };
-
-            for (p_idx, prop) in range_index!(
-                enumerated (map_idx, map) =>
-                range property_list in property_map indexes property
-            ) {
-                use crate::binary::signature::kinds::PropertySig;
-                use members::*;
-
-                let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
-
-                parent_props.push(Property {
-                    attributes: vec![],
-                    name: heap_idx!(strings, prop.name),
-                    getter: None,
-                    setter: None,
-                    other: vec![],
-                    static_member: !sig.has_this,
-                    property_type: convert::read::parameter(sig.property_type, &ctx)?,
-                    parameters: {
-                        let mut ps = Vec::with_capacity(sig.params.len());
-                        for p in sig.params {
-                            ps.push(convert::read::parameter(p, &ctx)?);
-                        }
-                        ps
-                    },
-                    special_name: check_bitmask!(prop.flags, 0x200),
-                    runtime_special_name: check_bitmask!(prop.flags, 0x1000),
-                    default: None,
-                });
-                properties[p_idx].write((type_idx, parent_props.len() - 1));
-            }
-        }
-    });
+    stage_start!(stage_timer);
+    debug!("properties");
+    let properties = decode_properties(&mut types, &tables, &strings, &blobs, &ctx)?;
+    stage_end!(stage_timer, "properties");
 
     debug!("constants");
 
@@ -1124,7 +2138,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let f_idx = i - 1;
 
                 match fields.get(f_idx) {
-                    Some(&i) => get_field!(i).default = value,
+                    Some(&i) => get_field_mut(&mut types, i).default = value,
                     None => throw!("invalid field parent index {} for constant {}", f_idx, idx),
                 }
             }
@@ -1163,8 +2177,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     // sorts in preparation for the binary search in extract_method
     methods.sort_unstable_by_key(|m| m.parent_type);
 
-    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> = HashMap::with_capacity_and_hasher(tables.event.len(), Default::default());
-    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> = HashMap::with_capacity_and_hasher(tables.property.len(), Default::default());
+    let mut sem_by_event: HashMap<usize, Vec<(u16, usize)>> =
+        HashMap::with_capacity_and_hasher(tables.event.len(), Default::default());
+    let mut sem_by_property: HashMap<usize, Vec<(u16, usize)>> =
+        HashMap::with_capacity_and_hasher(tables.property.len(), Default::default());
 
     for s in &tables.method_semantics {
         use metadata::index::HasSemantics;
@@ -1172,390 +2188,42 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let method_idx = s.method.0 - 1;
         match s.association {
             HasSemantics::Event(e) => sem_by_event.entry(e - 1).or_default().push((s.semantics, method_idx)),
-            HasSemantics::Property(p) => sem_by_property.entry(p - 1).or_default().push((s.semantics, method_idx)),
+            HasSemantics::Property(p) => sem_by_property
+                .entry(p - 1)
+                .or_default()
+                .push((s.semantics, method_idx)),
             HasSemantics::Null => {}
         }
     }
 
-    build_vec!(events = (usize, usize)[tables.event.len()], {
-        debug!("events");
+    stage_start!(stage_timer);
+    debug!("events");
+    let events = decode_events(&mut types, &tables, &strings, &ctx, &mut sem_by_event, &mut methods)?;
+    stage_end!(stage_timer, "events");
 
-        for (map_idx, map) in tables.event_map.iter().enumerate() {
-            let type_idx = map.parent.0 - 1;
-
-            let parent = types.get_mut(type_idx).ok_or_else(|| {
-                scroll::Error::Custom(format!(
-                    "invalid parent type index {} for event map {}",
-                    type_idx, map_idx
-                ))
-            })?;
-
-            for (e_idx, event) in range_index!(
-                enumerated (map_idx, map) =>
-                range event_list in event_map indexes event
-            ) {
-                use members::*;
-
-                let name = heap_idx!(strings, event.name);
-
-                let internal_idx = parent.events.len();
-
-                macro_rules! get_listener {
-                    ($l_name:literal, $flag:literal, $variant:ident) => {{
-                        let Some(entries) = sem_by_event.get_mut(&e_idx) else {
-                            throw!("could not find {} listener for event {}", $l_name, name)
-                        };
-                        let Some(position) = entries.iter().position(|(semantics, _)| check_bitmask!(*semantics, $flag)) else {
-                            throw!("could not find {} listener for event {}", $l_name, name)
-                        };
-                        let (_, m_idx) = entries.swap_remove(position);
-                        if m_idx < tables.method_def.len() {
-                            let method = extract_method(parent, methods[m_idx], &mut methods, &tables);
-                            methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
-                            method
-                        } else {
-                            throw!("invalid method index {} in {} index for event {}", m_idx, $l_name, name);
-                        }
-                    }}
-                }
-
-                let add_listener = get_listener!("add", 0x8, EventAdd);
-                let remove_listener = get_listener!("remove", 0x10, EventRemove);
-
-                parent.events.push(Event {
-                    attributes: vec![],
-                    delegate_type: convert::read::type_idx(event.event_type, &ctx)?,
-                    add_listener,
-                    remove_listener,
-                    name,
-                    raise_event: None,
-                    other: vec![],
-                    special_name: check_bitmask!(event.event_flags, 0x200),
-                    runtime_special_name: check_bitmask!(event.event_flags, 0x400),
-                });
-                events[e_idx].write((type_idx, internal_idx));
-            }
-        }
-    });
-
+    stage_start!(stage_timer);
     debug!("method semantics");
+    apply_method_semantics(
+        &mut types,
+        &tables,
+        &mut methods,
+        &properties,
+        &events,
+        &sem_by_event,
+        &sem_by_property,
+    )?;
+    stage_end!(stage_timer, "method semantics");
 
-    // Batch semantics extraction by parent type so each type's method-index map is built once.
-    // Within a type, extract in descending internal-index order so swap_remove does not
-    // invalidate any method positions that are still waiting to be removed.
-    #[derive(Copy, Clone)]
-    enum SemanticsAssociation {
-        Event(usize),
-        Property(usize),
-    }
-
-    #[derive(Copy, Clone)]
-    struct SemanticsAction {
-        raw_method_idx: usize,
-        semantics: u16,
-        association: SemanticsAssociation,
-    }
-
-    let mut remaining_event_counts: HashMap<(usize, u16, usize), usize> = HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
-    let mut remaining_property_counts: HashMap<(usize, u16, usize), usize> = HashMap::with_capacity_and_hasher(tables.method_semantics.len(), Default::default());
-
-    for (&event_idx, entries) in &sem_by_event {
-        for &(semantics, raw_method_idx) in entries {
-            *remaining_event_counts.entry((event_idx, semantics, raw_method_idx)).or_insert(0) += 1;
-        }
-    }
-
-    for (&property_idx, entries) in &sem_by_property {
-        for &(semantics, raw_method_idx) in entries {
-            *remaining_property_counts.entry((property_idx, semantics, raw_method_idx)).or_insert(0) += 1;
-        }
-    }
-
-    let mut semantics_by_type: HashMap<usize, Vec<SemanticsAction>> = HashMap::with_capacity_and_hasher(types.len(), Default::default());
-
-    for s in &tables.method_semantics {
-        use metadata::index::HasSemantics;
-
-        let raw_method_idx = s.method.0 - 1;
-
-        let (association, include) = match s.association {
-            HasSemantics::Event(i) => {
-                let idx = i - 1;
-                let key = (idx, s.semantics, raw_method_idx);
-                let include = match remaining_event_counts.get_mut(&key) {
-                    Some(count) if *count > 0 => {
-                        *count -= 1;
-                        true
-                    }
-                    _ => false,
-                };
-                (SemanticsAssociation::Event(idx), include)
-            }
-            HasSemantics::Property(i) => {
-                let idx = i - 1;
-                let key = (idx, s.semantics, raw_method_idx);
-                let include = match remaining_property_counts.get_mut(&key) {
-                    Some(count) if *count > 0 => {
-                        *count -= 1;
-                        true
-                    }
-                    _ => false,
-                };
-                (SemanticsAssociation::Property(idx), include)
-            }
-            HasSemantics::Null => throw!("invalid null index for method semantics",),
-        };
-
-        if !include {
-            continue;
-        }
-
-        let Some(&method_idx) = methods.get(raw_method_idx) else {
-            throw!("invalid method index {} for method semantics", raw_method_idx)
-        };
-
-        semantics_by_type.entry(method_idx.parent_type.0).or_default().push(SemanticsAction {
-            raw_method_idx,
-            semantics: s.semantics,
-            association,
-        });
-    }
-
-    let mut semantics_by_type = semantics_by_type.into_iter().collect::<Vec<_>>();
-    semantics_by_type.sort_unstable_by_key(|(parent_type, _)| *parent_type);
-
-    for (parent_type, actions) in semantics_by_type {
-        let type_idx = TypeIndex(parent_type);
-        let start = methods.partition_point(|m| m.parent_type < type_idx);
-        let end = methods.partition_point(|m| m.parent_type <= type_idx);
-
-        let parent = &mut types[parent_type];
-
-        let mut raw_by_internal = vec![usize::MAX; parent.methods.len()];
-        for (raw_idx, method_idx) in methods.iter().enumerate().take(end).skip(start) {
-            if let MethodMemberIndex::Method(internal_idx) = method_idx.member {
-                let Some(slot) = raw_by_internal.get_mut(internal_idx) else {
-                    throw!(
-                        "invalid method internal index {} for type {} in method semantics",
-                        internal_idx,
-                        parent_type
-                    )
-                };
-                *slot = raw_idx;
-            }
-        }
-
-        if raw_by_internal.contains(&usize::MAX) {
-            throw!("incomplete method index map for type {} in method semantics", parent_type)
-        }
-
-        let mut extraction_order = Vec::with_capacity(actions.len());
-        for (action_idx, action) in actions.iter().enumerate() {
-            let MethodMemberIndex::Method(internal_idx) = methods[action.raw_method_idx].member else {
-                throw!("invalid method index {} for method semantics", action.raw_method_idx)
-            };
-            extraction_order.push((internal_idx, action_idx));
-        }
-        extraction_order.sort_unstable_by_key(|(internal_idx, _)| std::cmp::Reverse(*internal_idx));
-
-        let mut extracted = Vec::with_capacity(actions.len());
-
-        for (internal_idx, action_idx) in extraction_order {
-            let Some(&removed_raw_idx) = raw_by_internal.get(internal_idx) else {
-                throw!(
-                    "invalid method internal index {} for type {} in method semantics",
-                    internal_idx,
-                    parent_type
-                )
-            };
-
-            if removed_raw_idx != actions[action_idx].raw_method_idx {
-                throw!(
-                    "method semantics extraction mismatch for method {}",
-                    actions[action_idx].raw_method_idx
-                )
-            }
-
-            let moved_raw_idx = raw_by_internal[raw_by_internal.len() - 1];
-
-            raw_by_internal.swap_remove(internal_idx);
-            let method = parent.methods.swap_remove(internal_idx);
-
-            if internal_idx < raw_by_internal.len() {
-                methods[moved_raw_idx].member = MethodMemberIndex::Method(internal_idx);
-            }
-
-            extracted.push((action_idx, method));
-        }
-
-        extracted.sort_unstable_by_key(|(action_idx, _)| *action_idx);
-
-        for ((expected_action_idx, action), (action_idx, new_meth)) in actions.into_iter().enumerate().zip(extracted) {
-            debug_assert_eq!(expected_action_idx, action_idx);
-
-            let member_idx = &mut methods[action.raw_method_idx].member;
-
-            match action.association {
-                SemanticsAssociation::Event(idx) => {
-                    let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
-                        scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
-                    })?;
-                    let event = &mut parent.events[internal_idx];
-
-                    if check_bitmask!(action.semantics, 0x20) {
-                        event.raise_event = Some(new_meth);
-                        *member_idx = MethodMemberIndex::EventRaise(internal_idx);
-                    } else if check_bitmask!(action.semantics, 0x4) {
-                        event.other.push(new_meth);
-                        *member_idx = MethodMemberIndex::EventOther {
-                            event: internal_idx,
-                            other: event.other.len() - 1,
-                        };
-                    }
-                }
-                SemanticsAssociation::Property(idx) => {
-                    let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
-                        scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
-                    })?;
-                    let property = &mut parent.properties[internal_idx];
-
-                    if check_bitmask!(action.semantics, 0x1) {
-                        property.setter = Some(new_meth);
-                        *member_idx = MethodMemberIndex::PropertySetter(internal_idx);
-                    } else if check_bitmask!(action.semantics, 0x2) {
-                        property.getter = Some(new_meth);
-                        *member_idx = MethodMemberIndex::PropertyGetter(internal_idx);
-                    } else if check_bitmask!(action.semantics, 0x4) {
-                        property.other.push(new_meth);
-                        *member_idx = MethodMemberIndex::PropertyOther {
-                            property: internal_idx,
-                            other: property.other.len() - 1,
-                        };
-                    }
-                }
-            }
-        }
-    }
-
-    debug!("field refs");
-
-    let member_ref_len = tables.member_ref.len();
-    let mut field_refs = Vec::with_capacity(member_ref_len);
-    let mut field_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
-
-    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
-        use crate::binary::signature::kinds::FieldSig;
-        use members::*;
-        use metadata::index::{MemberRefParent, TypeDefOrRef};
-
-        let name = strings.at_index(r.name).map_err(CLI)?.into();
-        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
-
-        // NOTE: discarding errors means wasted allocation of formatted messages
-        let field_sig: FieldSig = match sig_blob.pread(0) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let parent = match r.class {
-            MemberRefParent::TypeDef(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)?),
-            MemberRefParent::TypeRef(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)?),
-            MemberRefParent::TypeSpec(i) => FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)?),
-            MemberRefParent::ModuleRef(i) => {
-                let idx = i - 1;
-                if idx < module_refs.len() {
-                    FieldReferenceParent::Module(ModuleRefIndex(idx))
-                } else {
-                    throw!("invalid module reference index {} for field reference {}", idx, name);
-                }
-            }
-            _ => continue,
-        };
-
-        let field_type = MemberType::from_sig(field_sig.field_type, &ctx)?;
-        let mut custom_modifiers = Vec::with_capacity(field_sig.custom_modifiers.len());
-        for c in field_sig.custom_modifiers {
-            custom_modifiers.push(convert::read::custom_modifier(c, &ctx)?);
-        }
-
-        let current_idx = field_refs.len();
-        field_map.insert(orig_idx, current_idx);
-        field_refs.push(ExternalFieldReference {
-            attributes: vec![],
-            parent,
-            name,
-            custom_modifiers,
-            field_type,
-        });
-    }
-
-    debug!("method refs");
-
-    let mut method_refs = Vec::with_capacity(member_ref_len);
-    let mut method_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
-    let mut sig_pending_ref: Vec<crate::binary::metadata::index::Blob> =
-        if opts.lazy_method_signatures { Vec::with_capacity(member_ref_len) } else { vec![] };
-
-    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
-        use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
-        use members::*;
-        use metadata::index::{MemberRefParent, TypeDefOrRef};
-
-        let name = strings.at_index(r.name).map_err(CLI)?.into();
-        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
-
-        // NOTE: discarding errors means wasted allocation of formatted messages
-        let ref_sig: MethodRefSig = match sig_blob.pread(0) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let signature = if opts.lazy_method_signatures {
-            sig_pending_ref.push(r.signature);
-            Default::default()
-        } else {
-            let mut sig = convert::read::managed_method(ref_sig.method_def, &ctx)?;
-            if sig.calling_convention == CallingConvention::Vararg {
-                let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
-                for p in ref_sig.varargs {
-                    varargs.push(convert::read::parameter(p, &ctx)?);
-                }
-                sig.varargs = Some(varargs);
-            }
-            sig
-        };
-
-        let parent = match r.class {
-            MemberRefParent::TypeDef(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), &ctx)?),
-            MemberRefParent::TypeRef(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), &ctx)?),
-            MemberRefParent::TypeSpec(i) => MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), &ctx)?),
-            MemberRefParent::ModuleRef(i) => {
-                let idx = i - 1;
-                if idx < module_refs.len() {
-                    MethodReferenceParent::Module(ModuleRefIndex(idx))
-                } else {
-                    throw!("invalid module reference index {} for method reference {}", idx, name);
-                }
-            }
-            MemberRefParent::MethodDef(i) => {
-                let idx = i - 1;
-                match methods.get(idx) {
-                    Some(&m) => MethodReferenceParent::VarargMethod(m),
-                    None => throw!("bad method def index {} for method reference {}", idx, name),
-                }
-            }
-            MemberRefParent::Null => throw!("invalid null parent index for method reference {}", name),
-        };
-
-        let current_idx = method_refs.len();
-        method_map.insert(orig_idx, current_idx);
-        method_refs.push(ExternalMethodReference {
-            attributes: vec![],
-            parent,
-            name,
-            signature,
-        });
-    }
+    stage_start!(stage_timer);
+    debug!("field refs / method refs");
+    let DecodedMemberRefs {
+        field_refs,
+        field_map,
+        method_refs,
+        method_map,
+        sig_pending_ref,
+    } = decode_member_refs(&tables, &strings, &blobs, &module_refs, &methods, &ctx, opts)?;
+    stage_end!(stage_timer, "field refs / method refs");
 
     let m_ctx = convert::read::MethodContext {
         field_map: &field_map,
@@ -1586,7 +2254,6 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     };
 
     let entry_token = dll.cli.entry_point_token.to_le_bytes().pread::<Token>(0)?;
-    let method_ref_count = method_refs.len();
 
     let mut res = Resolution {
         assembly,
@@ -1622,376 +2289,362 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         lazy_state: None,
     };
 
+    stage_start!(stage_timer);
     debug!("custom attributes");
 
     if !opts.lazy_attributes {
-    for (idx, a) in tables.custom_attribute.iter().enumerate() {
-        use attribute::*;
-        use members::UserMethod;
-        use metadata::index::{CustomAttributeType, HasCustomAttribute::*};
+        for (idx, a) in tables.custom_attribute.iter().enumerate() {
+            use attribute::*;
+            use members::UserMethod;
+            use metadata::index::{CustomAttributeType, HasCustomAttribute::*};
 
-        let attr = Attribute {
-            constructor: match a.attr_type {
-                CustomAttributeType::MethodDef(i) => {
+            let attr = Attribute {
+                constructor: match a.attr_type {
+                    CustomAttributeType::MethodDef(i) => {
+                        let m_idx = i - 1;
+                        match methods.get(m_idx) {
+                            Some(&m) => UserMethod::Definition(m),
+                            None => throw!(
+                                "invalid method index {} for constructor of custom attribute {}",
+                                m_idx,
+                                idx
+                            ),
+                        }
+                    }
+                    CustomAttributeType::MemberRef(i) => {
+                        let r_idx = i - 1;
+                        match method_map.get(&r_idx) {
+                            Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
+                            None => throw!(
+                                "invalid member reference index {} for constructor of custom attribute {}",
+                                r_idx,
+                                idx
+                            ),
+                        }
+                    }
+                    CustomAttributeType::Null => {
+                        throw!("invalid null index for constructor of custom attribute {}", idx)
+                    }
+                },
+                value: optional_idx!(blobs, a.value),
+            };
+
+            // panicking indexers after the indexes from the attribute are okay here,
+            // since they've already been checked during resolution
+
+            macro_rules! do_at_generic {
+                ($g:expr, |$capt:ident| $do:expr) => {{
+                    use metadata::index::TypeOrMethodDef;
+                    let g = $g;
+                    match g.owner {
+                        TypeOrMethodDef::TypeDef(t) => {
+                            let $capt = &mut res.type_definitions[t - 1].generic_parameters[g.number as usize];
+                            $do;
+                        }
+                        TypeOrMethodDef::MethodDef(m) => {
+                            let $capt = &mut res[methods[m - 1]].generic_parameters[g.number as usize];
+                            $do;
+                        }
+                        TypeOrMethodDef::Null => unreachable!(),
+                    }
+                }};
+            }
+
+            match a.parent {
+                MethodDef(i) => {
                     let m_idx = i - 1;
                     match methods.get(m_idx) {
-                        Some(&m) => UserMethod::Definition(m),
-                        None => throw!(
-                            "invalid method index {} for constructor of custom attribute {}",
-                            m_idx,
-                            idx
-                        ),
+                        Some(&m) => res[m].attributes.push(attr),
+                        None => throw!("invalid method index {} for parent of custom attribute {}", m_idx, idx),
                     }
                 }
-                CustomAttributeType::MemberRef(i) => {
+                Field(i) => {
+                    let f_idx = i - 1;
+                    match fields.get(f_idx) {
+                        Some(&i) => res[i].attributes.push(attr),
+                        None => throw!("invalid field index {} for parent of custom attribute {}", f_idx, idx),
+                    }
+                }
+                TypeRef(i) => {
                     let r_idx = i - 1;
-                    match method_map.get(&r_idx) {
-                        Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
+                    match res.type_references.get_mut(r_idx) {
+                        Some(r) => r.attributes.push(attr),
                         None => throw!(
-                            "invalid member reference index {} for constructor of custom attribute {}",
-                            r_idx,
-                            idx
-                        ),
-                    }
-                }
-                CustomAttributeType::Null => {
-                    throw!("invalid null index for constructor of custom attribute {}", idx)
-                }
-            },
-            value: optional_idx!(blobs, a.value),
-        };
-
-        // panicking indexers after the indexes from the attribute are okay here,
-        // since they've already been checked during resolution
-
-        macro_rules! do_at_generic {
-            ($g:expr, |$capt:ident| $do:expr) => {{
-                use metadata::index::TypeOrMethodDef;
-                let g = $g;
-                match g.owner {
-                    TypeOrMethodDef::TypeDef(t) => {
-                        let $capt = &mut res.type_definitions[t - 1].generic_parameters[g.number as usize];
-                        $do;
-                    }
-                    TypeOrMethodDef::MethodDef(m) => {
-                        let $capt = &mut res[methods[m - 1]].generic_parameters[g.number as usize];
-                        $do;
-                    }
-                    TypeOrMethodDef::Null => unreachable!(),
-                }
-            }};
-        }
-
-        match a.parent {
-            MethodDef(i) => {
-                let m_idx = i - 1;
-                match methods.get(m_idx) {
-                    Some(&m) => res[m].attributes.push(attr),
-                    None => throw!(
-                            "invalid method index {} for parent of custom attribute {}",
-                            m_idx,
-                            idx
-                        ),
-                }
-            }
-            Field(i) => {
-                let f_idx = i - 1;
-                match fields.get(f_idx) {
-                    Some(&i) => res[i].attributes
-                        .push(attr),
-                    None => throw!(
-                            "invalid field index {} for parent of custom attribute {}",
-                            f_idx,
-                            idx
-                        ),
-                }
-            }
-            TypeRef(i) => {
-                let r_idx = i - 1;
-                match res.type_references.get_mut(r_idx) {
-                    Some(r) => r.attributes.push(attr),
-                    None => throw!(
                             "invalid type reference index {} for parent of custom attribute {}",
                             r_idx,
                             idx
                         ),
+                    }
                 }
-            }
-            TypeDef(i) => {
-                let t_idx = i - 1;
-                match res.type_definitions.get_mut(t_idx) {
-                    Some(t) => t.attributes.push(attr),
-                    None => throw!(
+                TypeDef(i) => {
+                    let t_idx = i - 1;
+                    match res.type_definitions.get_mut(t_idx) {
+                        Some(t) => t.attributes.push(attr),
+                        None => throw!(
                             "invalid type definition index {} for parent of custom attribute {}",
                             t_idx,
                             idx
                         ),
+                    }
                 }
-            }
-            Param(i) => {
-                let p_idx = i - 1;
-                match params.get(p_idx) {
-                    Some(&(parent, internal)) => {
-                        let method = &mut res[methods[parent]];
+                Param(i) => {
+                    let p_idx = i - 1;
+                    match params.get(p_idx) {
+                        Some(&(parent, internal)) => {
+                            let method = &mut res[methods[parent]];
 
-                        let param_meta = if internal == 0 {
-                            &mut method.return_type_metadata
-                        } else {
-                            &mut method.parameter_metadata[internal - 1]
-                        };
+                            let param_meta = if internal == 0 {
+                                &mut method.return_type_metadata
+                            } else {
+                                &mut method.parameter_metadata[internal - 1]
+                            };
 
-                        param_meta
-                            .as_mut()
-                            .unwrap()
-                            .attributes
-                            .push(attr);
-                    },
-                    None => throw!(
+                            param_meta.as_mut().unwrap().attributes.push(attr);
+                        }
+                        None => throw!(
                             "invalid parameter index {} for parent of custom attribute {}",
                             p_idx,
                             idx
                         ),
+                    }
                 }
-            }
-            InterfaceImpl(i) => {
-                let i_idx = i - 1;
+                InterfaceImpl(i) => {
+                    let i_idx = i - 1;
 
-                match interface_idxs.get(i_idx) {
-                    Some(&(parent, internal)) => res.type_definitions[parent].implements[internal].0.push(attr),
-                    None => throw!(
+                    match interface_idxs.get(i_idx) {
+                        Some(&(parent, internal)) => res.type_definitions[parent].implements[internal].0.push(attr),
+                        None => throw!(
                             "invalid interface implementation index {} for parent of custom attribute {}",
                             i_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
-            }
-            MemberRef(i) => {
-                let m_idx = i - 1;
+                MemberRef(i) => {
+                    let m_idx = i - 1;
 
-                match field_map.get(&m_idx) {
-                    Some(&f) => res.field_references[f].attributes.push(attr),
-                    None => match method_map.get(&m_idx) {
-                        Some(&m) => res.method_references[m].attributes.push(attr),
-                        None => throw!(
+                    match field_map.get(&m_idx) {
+                        Some(&f) => res.field_references[f].attributes.push(attr),
+                        None => match method_map.get(&m_idx) {
+                            Some(&m) => res.method_references[m].attributes.push(attr),
+                            None => throw!(
                                 "invalid member reference index {} for parent of custom attribute {}",
                                 m_idx,
                                 idx
                             ),
-                    },
+                        },
+                    }
                 }
-            }
-            Module(_) => res.module.attributes.push(attr),
-            DeclSecurity(i) => {
-                use metadata::index::HasDeclSecurity;
+                Module(_) => res.module.attributes.push(attr),
+                DeclSecurity(i) => {
+                    use metadata::index::HasDeclSecurity;
 
-                let s_idx = i - 1;
+                    let s_idx = i - 1;
 
-                match tables.decl_security.get(s_idx) {
-                    Some(s) => match s.parent {
-                        HasDeclSecurity::TypeDef(t) => res.type_definitions[t - 1].security.as_mut().unwrap().attributes.push(attr),
-                        HasDeclSecurity::MethodDef(m) => res[methods[m - 1]].security.as_mut().unwrap().attributes.push(attr),
-                        HasDeclSecurity::Assembly(_) => res.assembly.as_mut().and_then(|a| a.security.as_mut()).unwrap().attributes.push(attr),
-                        HasDeclSecurity::Null => unreachable!()
-                    },
-                    None => throw!(
+                    match tables.decl_security.get(s_idx) {
+                        Some(s) => match s.parent {
+                            HasDeclSecurity::TypeDef(t) => res.type_definitions[t - 1]
+                                .security
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .push(attr),
+                            HasDeclSecurity::MethodDef(m) => {
+                                res[methods[m - 1]].security.as_mut().unwrap().attributes.push(attr)
+                            }
+                            HasDeclSecurity::Assembly(_) => res
+                                .assembly
+                                .as_mut()
+                                .and_then(|a| a.security.as_mut())
+                                .unwrap()
+                                .attributes
+                                .push(attr),
+                            HasDeclSecurity::Null => unreachable!(),
+                        },
+                        None => throw!(
                             "invalid security declaration index {} for parent of custom attribute {}",
                             s_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
-            }
-            Property(i) => {
-                let p_idx = i - 1;
+                Property(i) => {
+                    let p_idx = i - 1;
 
-                match properties.get(p_idx) {
-                    Some(&(parent, internal)) => res.type_definitions[parent].properties
-                        [internal]
-                        .attributes
-                        .push(attr),
-                    None => throw!(
+                    match properties.get(p_idx) {
+                        Some(&(parent, internal)) => {
+                            res.type_definitions[parent].properties[internal].attributes.push(attr)
+                        }
+                        None => throw!(
                             "invalid property index {} for parent of custom attribute {}",
                             p_idx,
                             idx
                         ),
+                    }
                 }
-            }
-            Event(i) => {
-                let e_idx = i - 1;
+                Event(i) => {
+                    let e_idx = i - 1;
 
-                match events.get(e_idx) {
-                    Some(&(parent, internal)) => res.type_definitions[parent].events[internal]
-                        .attributes
-                        .push(attr),
-                    None => throw!(
-                            "invalid event index {} for parent of custom attribute {}",
-                            e_idx,
-                            idx
-                        ),
+                    match events.get(e_idx) {
+                        Some(&(parent, internal)) => {
+                            res.type_definitions[parent].events[internal].attributes.push(attr)
+                        }
+                        None => throw!("invalid event index {} for parent of custom attribute {}", e_idx, idx),
+                    }
                 }
-            }
-            ModuleRef(i) => {
-                let m_idx = i - 1;
+                ModuleRef(i) => {
+                    let m_idx = i - 1;
 
-                match res.module_references.get_mut(m_idx) {
-                    Some(m) => m.attributes.push(attr),
-                    None => throw!(
+                    match res.module_references.get_mut(m_idx) {
+                        Some(m) => m.attributes.push(attr),
+                        None => throw!(
                             "invalid module reference index {} for parent of custom attribute {}",
                             m_idx,
                             idx
                         ),
+                    }
                 }
-            }
-            Assembly(_) => {
-                match res.assembly.as_mut() {
+                Assembly(_) => match res.assembly.as_mut() {
                     Some(a) => a.attributes.push(attr),
                     None => throw!(
-                            "custom attribute {} has the module assembly as a parent, but this module does not have an assembly",
-                            idx
-                        )
-                }
-            }
-            AssemblyRef(i) => {
-                let r_idx = i - 1;
+                        "custom attribute {} has the module assembly as a parent, but this module does not have an assembly",
+                        idx
+                    ),
+                },
+                AssemblyRef(i) => {
+                    let r_idx = i - 1;
 
-                match res.assembly_references.get_mut(r_idx) {
-                    Some(a) => a.attributes.push(attr),
-                    None => throw!(
+                    match res.assembly_references.get_mut(r_idx) {
+                        Some(a) => a.attributes.push(attr),
+                        None => throw!(
                             "invalid assembly reference index {} for parent of custom attribute {}",
                             r_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
-            }
-            File(i) => {
-                let f_idx = i - 1;
+                File(i) => {
+                    let f_idx = i - 1;
 
-                match res.files.get_mut(f_idx) {
-                    Some(f) => f.attributes.push(attr),
-                    None => throw!(
-                            "invalid file index {} for parent of custom attribute {}",
-                            f_idx,
-                            idx
-                        )
+                    match res.files.get_mut(f_idx) {
+                        Some(f) => f.attributes.push(attr),
+                        None => throw!("invalid file index {} for parent of custom attribute {}", f_idx, idx),
+                    }
                 }
-            }
-            ExportedType(i) => {
-                let e_idx = i - 1;
+                ExportedType(i) => {
+                    let e_idx = i - 1;
 
-                match res.exported_types.get_mut(e_idx) {
-                    Some(e) => e.attributes.push(attr),
-                    None => throw!(
+                    match res.exported_types.get_mut(e_idx) {
+                        Some(e) => e.attributes.push(attr),
+                        None => throw!(
                             "invalid exported type index {} for parent of custom attribute {}",
                             e_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
-            }
-            ManifestResource(i) => {
-                let r_idx = i - 1;
+                ManifestResource(i) => {
+                    let r_idx = i - 1;
 
-                match res.manifest_resources.get_mut(r_idx) {
-                    Some(r) => r.attributes.push(attr),
-                    None => throw!(
+                    match res.manifest_resources.get_mut(r_idx) {
+                        Some(r) => r.attributes.push(attr),
+                        None => throw!(
                             "invalid manifest resource index {} for parent of custom attribute {}",
                             r_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
-            }
-            GenericParam(i) => {
-                let g_idx = i - 1;
+                GenericParam(i) => {
+                    let g_idx = i - 1;
 
-                match tables.generic_param.get(g_idx) {
-                    Some(g) => do_at_generic!(g, |rg| rg.attributes.push(attr)),
-                    None => throw!(
+                    match tables.generic_param.get(g_idx) {
+                        Some(g) => do_at_generic!(g, |rg| rg.attributes.push(attr)),
+                        None => throw!(
                             "invalid generic parameter index {} for parent of custom attribute {}",
                             g_idx,
                             idx
-                        )
-                }
-            }
-            GenericParamConstraint(i) => {
-                let g_idx = i - 1;
-
-                match constraint_map.get(&g_idx) {
-                    Some(&(generic, internal)) => do_at_generic!(
-                            tables.generic_param[generic],
-                            |g| g.type_constraints[internal].attributes.push(attr)
                         ),
-                    None => throw!(
+                    }
+                }
+                GenericParamConstraint(i) => {
+                    let g_idx = i - 1;
+
+                    match constraint_map.get(&g_idx) {
+                        Some(&(generic, internal)) => do_at_generic!(tables.generic_param[generic], |g| g
+                            .type_constraints[internal]
+                            .attributes
+                            .push(attr)),
+                        None => throw!(
                             "invalid generic constraint index {} for parent of custom attribute {}",
                             g_idx,
                             idx
-                        )
+                        ),
+                    }
                 }
+                MethodSpec(_) => {
+                    warn!(
+                        "custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll",
+                        idx
+                    );
+                }
+                StandAloneSig(_) => {
+                    warn!(
+                        "custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll",
+                        idx
+                    );
+                }
+                TypeSpec(_) => {
+                    warn!(
+                        "custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll",
+                        idx
+                    );
+                }
+                Null => throw!("invalid null index for parent of custom attribute {}", idx),
             }
-            MethodSpec(_) => {
-                warn!("custom attribute {} has a MethodSpec parent, this is not supported by dotnetdll", idx);
-            }
-            StandAloneSig(_) => {
-                warn!("custom attribute {} has a StandAloneSig parent, this is not supported by dotnetdll", idx);
-            }
-            TypeSpec(_) => {
-                warn!("custom attribute {} has a TypeSpec parent, this is not supported by dotnetdll", idx);
-            }
-            Null => throw!("invalid null index for parent of custom attribute {}", idx)
         }
-    }
     } // end if !opts.lazy_attributes
+    stage_end!(stage_timer, "custom attributes");
 
     if opts.lazy_method_bodies || opts.lazy_method_signatures || opts.lazy_attributes {
         debug!("building lazy parse state");
 
         // Build sparse attribute maps in one pass before the LazyParseState literal.
-        let (attr_by_type, attr_by_method, attr_by_field, attr_by_assembly) =
-            if opts.lazy_attributes {
-                use crate::binary::metadata::index::{CustomAttributeType, HasCustomAttribute};
-                use crate::resolved::members::UserMethod;
+        let (attr_by_type, attr_by_method, attr_by_field, attr_by_assembly) = if opts.lazy_attributes {
+            use crate::binary::metadata::index::{CustomAttributeType, HasCustomAttribute};
+            use crate::resolved::members::UserMethod;
 
-                let mut by_type: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
-                let mut by_method: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
-                let mut by_field: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
-                let mut by_asm: Vec<lazy::AttrRaw> = Vec::new();
+            let mut by_type: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+            let mut by_method: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+            let mut by_field: HashMap<usize, Vec<lazy::AttrRaw>> = HashMap::default();
+            let mut by_asm: Vec<lazy::AttrRaw> = Vec::new();
 
-                for a in &tables.custom_attribute {
-                    let constructor = match a.attr_type {
-                        CustomAttributeType::MethodDef(i) => {
-                            UserMethod::Definition(methods[i - 1])
-                        }
-                        CustomAttributeType::MemberRef(i) => {
-                            let m_idx = match method_map.get(&(i - 1)) {
-                                Some(&m) => m,
-                                None => continue,
-                            };
-                            UserMethod::Reference(MethodRefIndex(m_idx))
-                        }
-                        CustomAttributeType::Null => continue,
-                    };
-                    let blob_idx = if a.value.is_null() { None } else { Some(a.value) };
-                    let raw = (constructor, blob_idx);
-                    match a.parent {
-                        HasCustomAttribute::TypeDef(i) => {
-                            by_type.entry(i - 1).or_default().push(raw)
-                        }
-                        HasCustomAttribute::MethodDef(i) => {
-                            by_method.entry(i - 1).or_default().push(raw)
-                        }
-                        HasCustomAttribute::Field(i) => {
-                            by_field.entry(i - 1).or_default().push(raw)
-                        }
-                        HasCustomAttribute::Assembly(_) => by_asm.push(raw),
-                        _ => {}
+            for a in &tables.custom_attribute {
+                let constructor = match a.attr_type {
+                    CustomAttributeType::MethodDef(i) => UserMethod::Definition(methods[i - 1]),
+                    CustomAttributeType::MemberRef(i) => {
+                        let m_idx = match method_map.get(&(i - 1)) {
+                            Some(&m) => m,
+                            None => continue,
+                        };
+                        UserMethod::Reference(MethodRefIndex(m_idx))
                     }
+                    CustomAttributeType::Null => continue,
+                };
+                let blob_idx = if a.value.is_null() { None } else { Some(a.value) };
+                let raw = (constructor, blob_idx);
+                match a.parent {
+                    HasCustomAttribute::TypeDef(i) => by_type.entry(i - 1).or_default().push(raw),
+                    HasCustomAttribute::MethodDef(i) => by_method.entry(i - 1).or_default().push(raw),
+                    HasCustomAttribute::Field(i) => by_field.entry(i - 1).or_default().push(raw),
+                    HasCustomAttribute::Assembly(_) => by_asm.push(raw),
+                    _ => {}
                 }
-                (by_type, by_method, by_field, by_asm)
-            } else {
-                (
-                    HashMap::default(),
-                    HashMap::default(),
-                    HashMap::default(),
-                    Vec::new(),
-                )
-            };
+            }
+            (by_type, by_method, by_field, by_asm)
+        } else {
+            (HashMap::default(), HashMap::default(), HashMap::default(), Vec::new())
+        };
 
         let n = tables.method_def.len();
         let (pending, method_idx_to_def, body_cache) = if opts.lazy_method_bodies {
@@ -2016,25 +2669,35 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             (vec![], HashMap::with_capacity_and_hasher(0, Default::default()), vec![])
         };
 
-        // sig_method_idx_to_def must be built AFTER the event/property semantics phase, which
-        // may reassign MethodIndex::member values. methods[def_idx] here holds the final values.
-        let sig_method_idx_to_def: HashMap<MethodIndex, usize> = if opts.lazy_method_signatures {
-            methods
-                .iter()
-                .enumerate()
-                .map(|(def_idx, &m_idx)| (m_idx, def_idx))
-                .collect()
+        let (
+            method_spec_table,
+            field_map_for_bodies,
+            field_indices_for_bodies,
+            method_indices_for_bodies,
+            method_map_for_bodies,
+        ) = if opts.lazy_method_bodies {
+            (
+                tables.method_spec.clone(),
+                field_map.clone(),
+                fields.clone(),
+                methods.clone(),
+                method_map.clone(),
+            )
         } else {
-            HashMap::with_capacity_and_hasher(0, Default::default())
+            (
+                vec![],
+                HashMap::with_capacity_and_hasher(0, Default::default()),
+                vec![],
+                vec![],
+                HashMap::with_capacity_and_hasher(0, Default::default()),
+            )
         };
 
-        let sig_cache_def: Vec<std::sync::OnceLock<_>> = if opts.lazy_method_signatures {
-            (0..n).map(|_| std::sync::OnceLock::new()).collect()
-        } else {
-            vec![]
-        };
-        let sig_cache_ref: Vec<std::sync::OnceLock<_>> = if opts.lazy_method_signatures {
-            (0..method_ref_count).map(|_| std::sync::OnceLock::new()).collect()
+        // Signature MethodIndex -> method_def_idx map must be built AFTER method semantics,
+        // because semantics may rewrite MethodIndex::member variants. Defer map construction
+        // to first `method_signature` access; keep def-order MethodIndex rows as source data.
+        let sig_method_indices = if opts.lazy_method_signatures && !opts.lazy_method_bodies {
+            methods.clone()
         } else {
             vec![]
         };
@@ -2047,21 +2710,22 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             ref_len,
             specs: tables.type_spec.clone(),
             sigs: tables.stand_alone_sig.clone(),
-            method_spec_table: tables.method_spec.clone(),
+            method_spec_table,
             blobs,
             userstrings,
-            field_map: field_map.clone(),
-            field_indices: fields.clone(),
-            method_indices: methods.clone(),
-            method_map: method_map.clone(),
+            field_map: field_map_for_bodies,
+            field_indices: field_indices_for_bodies,
+            method_indices: method_indices_for_bodies,
+            method_map: method_map_for_bodies,
             pending,
             method_idx_to_def,
             body_cache,
-            sig_method_idx_to_def,
+            sig_method_indices,
+            sig_method_idx_to_def: std::sync::OnceLock::new(),
             sig_pending_def,
-            sig_cache_def,
+            sig_cache_def: std::sync::OnceLock::new(),
             sig_pending_ref,
-            sig_cache_ref,
+            sig_cache_ref: std::sync::OnceLock::new(),
             attr_by_type,
             attr_by_method,
             attr_by_field,

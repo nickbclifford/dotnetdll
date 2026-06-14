@@ -192,10 +192,10 @@ impl<'a> Resolution<'a> {
     ) -> Result<&crate::resolved::signature::ManagedMethod<crate::resolved::types::MethodType>> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_signatures {
-                let def_idx = state.sig_method_idx_to_def.get(&idx).ok_or(
-                    crate::dll::DLLError::Other("method index not found in signature map"),
-                )?;
-                return state.decode_method_def_sig(*def_idx);
+                let def_idx = state
+                    .method_def_idx_for_signature(idx)
+                    .ok_or(crate::dll::DLLError::Other("method index not found in signature map"))?;
+                return state.decode_method_def_sig(def_idx);
             }
         }
         Ok(&self[idx].signature)
