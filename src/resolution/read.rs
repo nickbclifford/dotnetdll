@@ -155,6 +155,11 @@ macro_rules! stage_end {
     };
 }
 
+/// Minimum number of items per rayon task. Tables smaller than this do not split, avoiding
+/// fork/join and work-stealing overhead for the many small framework assemblies that dominate
+/// a typical cold-start working set. Large assemblies (e.g. corlib) still parallelize freely.
+const MIN_PAR_LEN: usize = 256;
+
 // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
 // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
 fn extract_method<'a>(
@@ -316,6 +321,7 @@ fn decode_assembly_refs<'a>(
     tables
         .assembly_ref
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|a| {
             use assembly::*;
             Ok(ExternalAssemblyReference {
@@ -399,6 +405,7 @@ fn decode_files<'a>(
     tables
         .file
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|f| {
             Ok(module::File {
                 attributes: vec![],
@@ -422,6 +429,7 @@ fn decode_resources<'a>(
     tables
         .manifest_resource
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|r| {
             use metadata::index::Implementation as BinImpl;
             use resource::*;
@@ -491,6 +499,7 @@ fn decode_exported_types<'a>(
     tables
         .exported_type
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|e| {
             use metadata::index::Implementation;
             use types::*;
@@ -568,6 +577,7 @@ fn decode_module_refs<'a>(
     tables
         .module_ref
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|r| {
             Ok(module::ExternalModuleReference {
                 attributes: vec![],
@@ -588,6 +598,7 @@ fn decode_type_refs<'a>(
     tables
         .type_ref
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|r| {
             use metadata::index::ResolutionScope as BinRS;
             use types::*;
@@ -679,6 +690,7 @@ fn decode_fields<'a>(
 
     let decoded_fields = owned_fields
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|&(type_idx, start, end)| {
             use crate::binary::signature::kinds::FieldSig;
             use members::*;
@@ -785,6 +797,7 @@ fn decode_methods<'a>(
 
     let decoded_methods = owned_methods
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|&(type_idx, start, end)| {
             use members::*;
 
@@ -947,6 +960,7 @@ fn decode_params<'a>(
 
     let decoded_params = owned_params
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|&(m_idx, start, end)| {
             use members::*;
 
@@ -1034,6 +1048,7 @@ fn decode_properties<'a>(
 
     let decoded_properties = owned_properties
         .par_iter()
+        .with_min_len(MIN_PAR_LEN)
         .map(|&(type_idx, start, end, map_idx)| {
             use crate::binary::signature::kinds::PropertySig;
             use members::*;
@@ -1792,6 +1807,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let field_layout_updates = tables
             .field_layout
             .par_iter()
+            .with_min_len(MIN_PAR_LEN)
             .map(|layout| {
                 let idx = layout.field.0 - 1;
                 match fields.get(idx) {
@@ -1814,6 +1830,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let field_rva_updates = tables
             .field_rva
             .par_iter()
+            .with_min_len(MIN_PAR_LEN)
             .map(|rva| {
                 let idx = rva.field.0 - 1;
                 match fields.get(idx) {
@@ -1864,6 +1881,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let pinvoke_updates = tables
             .impl_map
             .par_iter()
+            .with_min_len(MIN_PAR_LEN)
             .map(|i| {
                 let name = heap_idx!(strings, i.import_name);
 
@@ -2037,6 +2055,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let field_marshal_updates = tables
             .field_marshal
             .par_iter()
+            .with_min_len(MIN_PAR_LEN)
             .filter_map(|marshal| match marshal.parent {
                 HasFieldMarshal::Field(_) => Some(marshal),
                 _ => None,
@@ -2749,6 +2768,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         let bodies: Vec<(MethodIndex, body::Method)> = tables
             .method_def
             .par_iter()
+            .with_min_len(MIN_PAR_LEN)
             .enumerate()
             .filter(|(_, m)| m.rva != 0)
             .map(|(idx, m)| -> Result<(MethodIndex, body::Method)> {
