@@ -106,9 +106,11 @@ pub struct Resolution<'a> {
     pub type_definitions: Vec<TypeDefinition<'a>>,
     /// References to types defined in external assemblies.
     pub type_references: Vec<ExternalTypeReference<'a>>,
-    /// Retained parse state for lazy method body decoding.
-    /// `None` in eager mode or when `skip_method_bodies` is set.
-    /// Shared across clones via `Arc` so a body decoded by one clone is visible to all.
+    /// Retained parse state for lazy/deferred read-path data.
+    ///
+    /// This is `None` only when no lazy read option was enabled. It may contain method-body,
+    /// method-signature, property-signature, and/or custom-attribute state depending on the parse
+    /// options. Shared across clones via `Arc` so data decoded by one clone is visible to all.
     pub(crate) lazy_state: Option<Arc<lazy::LazyParseState<'a>>>,
 }
 
@@ -222,6 +224,38 @@ impl<'a> Resolution<'a> {
             }
         }
         Ok(&self[idx].signature)
+    }
+
+    /// Returns the decoded signature components for the property at `idx`.
+    ///
+    /// The returned tuple is `(static_member, property_type, parameters)`.
+    ///
+    /// **Eager mode** (`lazy_property_signatures: false`, the default): returns values directly
+    /// from the `Property` stored in the resolution.
+    ///
+    /// **Lazy mode** (`lazy_property_signatures: true`): decodes and caches the property
+    /// signature on first call. The cache is shared across all clones of this `Resolution`.
+    /// Decode errors are *not* cached — the next call retries.
+    pub fn property_signature(
+        &self,
+        idx: PropertyIndex,
+    ) -> Result<(
+        bool,
+        &crate::resolved::signature::Parameter<crate::resolved::types::MemberType>,
+        &[crate::resolved::signature::Parameter<crate::resolved::types::MemberType>],
+    )> {
+        if let Some(state) = &self.lazy_state {
+            if state.lazy_property_signatures {
+                let def_idx = state.property_def_idx_for_signature(idx).ok_or(crate::dll::DLLError::Other(
+                    "property index not found in signature map",
+                ))?;
+                let (static_member, property_type, parameters) = state.decode_property_sig(def_idx)?;
+                return Ok((*static_member, property_type, parameters.as_slice()));
+            }
+        }
+
+        let property = &self[idx];
+        Ok((property.static_member, &property.property_type, property.parameters.as_slice()))
     }
 
     /// Returns the custom attributes for the type definition at `idx`.
@@ -733,6 +767,13 @@ mod lazy_attribute_tests {
     static OOP_DLL: &[u8] =
         include_bytes!("../../examples/smolasm/oop.dll");
 
+    fn direct_method_body_count(res: &Resolution<'_>) -> usize {
+        res.enumerate_type_definitions()
+            .flat_map(|(type_idx, _)| res.enumerate_methods(type_idx))
+            .filter(|(_, method)| method.body.is_some())
+            .count()
+    }
+
     #[test]
     fn lazy_attrs_match_eager_for_types() {
         let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
@@ -788,6 +829,61 @@ mod lazy_attribute_tests {
         for (e, l) in eager_asm_attrs.iter().zip(lazy_asm_attrs.iter()) {
             assert_eq!(e.constructor, l.constructor);
             assert_eq!(e.value, l.value);
+        }
+    }
+
+    #[test]
+    fn lazy_method_signatures_preserve_eager_method_bodies() {
+        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let lazy = Resolution::parse(
+            OOP_DLL,
+            ReadOptions {
+                lazy_method_signatures: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let eager_body_count = direct_method_body_count(&eager);
+        assert!(eager_body_count > 0, "fixture should contain eager method bodies");
+        assert_eq!(
+            eager_body_count,
+            direct_method_body_count(&lazy),
+            "lazy_method_signatures must not imply lazy_method_bodies"
+        );
+    }
+
+    #[test]
+    fn lazy_property_signatures_match_eager() {
+        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let lazy = Resolution::parse(
+            OOP_DLL,
+            ReadOptions {
+                lazy_property_signatures: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let eager_body_count = direct_method_body_count(&eager);
+        assert!(eager_body_count > 0, "fixture should contain eager method bodies");
+        assert_eq!(
+            eager_body_count,
+            direct_method_body_count(&lazy),
+            "lazy_property_signatures must not imply lazy_method_bodies"
+        );
+
+        for (type_idx, typedef) in eager.enumerate_type_definitions() {
+            for property_idx in 0..typedef.properties.len() {
+                let p_idx = eager.property_index(type_idx, property_idx).unwrap();
+
+                let (e_static, e_type, e_params) = eager.property_signature(p_idx).unwrap();
+                let (l_static, l_type, l_params) = lazy.property_signature(p_idx).unwrap();
+
+                assert_eq!(e_static, l_static);
+                assert_eq!(e_type, l_type);
+                assert_eq!(e_params, l_params);
+            }
         }
     }
 }

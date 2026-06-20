@@ -11,24 +11,26 @@ use crate::{
             table::{Kind, MethodSpec, StandAloneSig, TypeSpec},
         },
         method,
-        signature::kinds::{CallingConvention, LocalVar, LocalVarSig, MethodRefSig},
+        signature::kinds::{CallingConvention, LocalVar, LocalVarSig, MethodRefSig, PropertySig},
     },
     convert::{self, TypeKind},
     dll::{DLLError::*, Result},
     resolved::{
         body,
-        signature::ManagedMethod,
-        types::{LocalVariable, MethodType},
+        signature::{ManagedMethod, Parameter},
+        types::{LocalVariable, MemberType, MethodType},
     },
 };
 
-use super::{FieldIndex, MethodIndex};
+use super::{FieldIndex, MethodIndex, PropertyIndex};
 
 /// Raw bytes and alignment offset for a single method, captured at parse time.
 pub(crate) struct MethodPendingRaw<'a> {
     pub bytes: &'a [u8],
     pub offset: usize,
 }
+
+type PropertySignatureData = (bool, Parameter<MemberType>, Vec<Parameter<MemberType>>);
 
 /// All context needed to decode method bodies and/or signatures on demand, shared across
 /// `Resolution` clones.
@@ -37,6 +39,8 @@ pub(crate) struct LazyParseState<'a> {
     pub lazy_bodies: bool,
     /// Whether method signatures are decoded lazily (mirrors `ReadOptions::lazy_method_signatures`).
     pub lazy_signatures: bool,
+    /// Whether property signatures are decoded lazily (mirrors `ReadOptions::lazy_property_signatures`).
+    pub lazy_property_signatures: bool,
 
     pub def_len: usize,
     pub ref_len: usize,
@@ -80,6 +84,18 @@ pub(crate) struct LazyParseState<'a> {
     /// [method_ref_idx] -> decoded signature cache; allocated on first signature lookup.
     pub sig_cache_ref: OnceLock<Vec<OnceLock<ManagedMethod<MethodType>>>>,
 
+    // ── Lazy property-signature fields (populated only when lazy_property_signatures is true) ──
+    /// Property indices in Property row order. Used to lazily build
+    /// `sig_property_idx_to_def` on first `property_signature` access.
+    pub sig_property_indices: Vec<PropertyIndex>,
+    /// Lazily-built map from PropertyIndex -> property_def_idx, used by
+    /// `Resolution::property_signature`.
+    pub sig_property_idx_to_def: OnceLock<FxHashMap<PropertyIndex, usize>>,
+    /// [property_def_idx] -> blob index captured from the Property row.
+    pub sig_pending_property: Vec<BlobIndex>,
+    /// [property_def_idx] -> decoded signature cache; allocated on first property lookup.
+    pub sig_cache_property: OnceLock<Vec<OnceLock<PropertySignatureData>>>,
+
     // ── Lazy attribute fields (populated only when lazy_attributes is true) ──────
     /// Whether attributes are decoded lazily (mirrors `ReadOptions::lazy_attributes`).
     pub lazy_attributes: bool,
@@ -111,6 +127,7 @@ impl<'a> std::fmt::Debug for LazyParseState<'a> {
             .field("ref_len", &self.ref_len)
             .field("lazy_bodies", &self.lazy_bodies)
             .field("lazy_signatures", &self.lazy_signatures)
+            .field("lazy_property_signatures", &self.lazy_property_signatures)
             .field("lazy_attributes", &self.lazy_attributes)
             .field("pending_count", &self.pending.iter().filter(|p| p.is_some()).count())
             .field(
@@ -129,6 +146,14 @@ impl<'a> std::fmt::Debug for LazyParseState<'a> {
                 "sig_ref_cached_count",
                 &self
                     .sig_cache_ref
+                    .get()
+                    .map_or(0, |cache| cache.iter().filter(|c| c.get().is_some()).count()),
+            )
+            .field("sig_property_map_built", &self.sig_property_idx_to_def.get().is_some())
+            .field(
+                "sig_property_cached_count",
+                &self
+                    .sig_cache_property
                     .get()
                     .map_or(0, |cache| cache.iter().filter(|c| c.get().is_some()).count()),
             )
@@ -237,6 +262,52 @@ impl<'a> LazyParseState<'a> {
             signature.varargs = Some(varargs);
         }
         Ok(signature)
+    }
+
+    fn property_sig_cache(&self) -> &Vec<OnceLock<PropertySignatureData>> {
+        self.sig_cache_property
+            .get_or_init(|| (0..self.sig_pending_property.len()).map(|_| OnceLock::new()).collect())
+    }
+
+    fn property_sig_map(&self) -> &FxHashMap<PropertyIndex, usize> {
+        self.sig_property_idx_to_def.get_or_init(|| {
+            self.sig_property_indices
+                .iter()
+                .enumerate()
+                .map(|(def_idx, &p_idx)| (p_idx, def_idx))
+                .collect()
+        })
+    }
+
+    pub fn property_def_idx_for_signature(&self, idx: PropertyIndex) -> Option<usize> {
+        self.property_sig_map().get(&idx).copied()
+    }
+
+    /// Decode the signature for property def at `def_idx`, or return a cached result.
+    ///
+    /// On decode failure the `OnceLock` cell is left empty so the next call retries.
+    pub fn decode_property_sig(&self, def_idx: usize) -> Result<&PropertySignatureData> {
+        let cache = self.property_sig_cache();
+        if let Some(cached) = cache[def_idx].get() {
+            return Ok(cached);
+        }
+        let sig = self.decode_property_sig_inner(def_idx)?;
+        let _ = cache[def_idx].set(sig);
+        Ok(cache[def_idx].get().unwrap())
+    }
+
+    fn decode_property_sig_inner(&self, def_idx: usize) -> Result<PropertySignatureData> {
+        let blob_idx = self.sig_pending_property[def_idx];
+        let sig: PropertySig = self.blobs.at_index(blob_idx)?.pread(0).map_err(CLI)?;
+        let ctx = self.make_ctx();
+
+        let property_type = convert::read::parameter(sig.property_type, &ctx)?;
+        let mut parameters = Vec::with_capacity(sig.params.len());
+        for p in sig.params {
+            parameters.push(convert::read::parameter(p, &ctx)?);
+        }
+
+        Ok((!sig.has_this, property_type, parameters))
     }
 
     fn raw_to_attrs(&self, raw: &[AttrRaw]) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {

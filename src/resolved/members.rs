@@ -369,12 +369,25 @@ pub struct Property<'a> {
     /// Other methods associated with the property, typically non-standard accessors.
     pub other: Vec<Method<'a>>,
     /// Specifies if the property is a static member of its owning type.
+    ///
+    /// In [`ReadOptions::lazy_property_signatures`](read::Options::lazy_property_signatures)
+    /// mode this field holds a placeholder value. Use
+    /// [`Resolution::property_signature`](crate::resolution::Resolution::property_signature)
+    /// to retrieve the decoded signature.
     pub static_member: bool,
     /// Type of the property.
+    ///
+    /// In [`ReadOptions::lazy_property_signatures`](read::Options::lazy_property_signatures)
+    /// mode this field holds a placeholder value. Use
+    /// [`Resolution::property_signature`](crate::resolution::Resolution::property_signature)
+    /// to retrieve the decoded signature.
     pub property_type: signature::Parameter<MemberType>,
     /// Parameters the property takes in during access.
     ///
     /// Properties with parameters are typically used to implement indexers (ECMA-335, II.18).
+    /// In lazy property-signature mode this vector is a placeholder and may be empty.
+    /// Use [`Resolution::property_signature`](crate::resolution::Resolution::property_signature)
+    /// to retrieve the decoded signature.
     pub parameters: Vec<signature::Parameter<MemberType>>,
     /// Specifies if the property is named with special meaning for a compiler or tool.
     pub special_name: bool,

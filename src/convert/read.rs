@@ -104,15 +104,23 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
         String => BaseType::String,
         Array(t, shape) => BaseType::Array(T::from_sig(*t, ctx)?, shape),
         SzArray(cmod, t) => BaseType::Vector(
-            cmod.into_iter()
-                .map(|c| custom_modifier(c, ctx))
-                .collect::<Result<_>>()?,
+            if cmod.is_empty() {
+                vec![]
+            } else {
+                cmod.into_iter()
+                    .map(|c| custom_modifier(c, ctx))
+                    .collect::<Result<_>>()?
+            },
             T::from_sig(*t, ctx)?,
         ),
         Ptr(cmod, pt) => BaseType::ValuePointer(
-            cmod.into_iter()
-                .map(|c| custom_modifier(c, ctx))
-                .collect::<Result<_>>()?,
+            if cmod.is_empty() {
+                vec![]
+            } else {
+                cmod.into_iter()
+                    .map(|c| custom_modifier(c, ctx))
+                    .collect::<Result<_>>()?
+            },
             match pt {
                 Some(t) => Some(T::from_sig(*t, ctx)?),
                 None => None,

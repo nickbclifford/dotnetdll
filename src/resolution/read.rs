@@ -1,6 +1,6 @@
 use super::{
     AssemblyRefIndex, EntryPoint, ExportedTypeIndex, FieldIndex, FileIndex, MethodIndex, MethodMemberIndex,
-    MethodRefIndex, ModuleRefIndex, Resolution, TypeIndex, TypeRefIndex, lazy,
+    MethodRefIndex, ModuleRefIndex, PropertyIndex, Resolution, TypeIndex, TypeRefIndex, lazy,
 };
 use crate::binary::{heap::*, metadata};
 use crate::convert::{self, TypeKind};
@@ -51,6 +51,21 @@ pub struct Options {
     ///
     /// [`Default`] value of `false`.
     pub lazy_method_signatures: bool,
+
+    /// If this flag is set, property signatures are decoded on first access via
+    /// [`Resolution::property_signature`] rather than eagerly during parsing.
+    ///
+    /// In lazy mode [`Property::property_type`](members::Property::property_type) and
+    /// [`Property::parameters`](members::Property::parameters) hold placeholder values.
+    /// Use [`Resolution::property_signature`] to retrieve the decoded signature.
+    ///
+    /// Decoding errors are deferred to the first accessor call for that property and are not
+    /// cached — retried on the next call.
+    ///
+    /// This option is independent of all other lazy options and can be combined freely.
+    ///
+    /// [`Default`] value of `false`.
+    pub lazy_property_signatures: bool,
 
     /// If this flag is set, custom attributes are not distributed to their parent elements during
     /// parsing. Instead, they are resolved on demand via the accessor methods
@@ -318,7 +333,7 @@ fn decode_assembly_refs<'a>(
 ) -> Result<Vec<assembly::ExternalAssemblyReference<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let refs = tables
         .assembly_ref
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -334,7 +349,9 @@ fn decode_assembly_refs<'a>(
                 hash_value: optional_idx!(blobs, a.hash_value),
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    refs.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_type_definitions<'a>(
@@ -402,7 +419,7 @@ fn decode_files<'a>(
 ) -> Result<Vec<module::File<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let files = tables
         .file
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -414,7 +431,9 @@ fn decode_files<'a>(
                 hash_value: heap_idx!(blobs, f.hash_value),
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    files.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_resources<'a>(
@@ -426,7 +445,7 @@ fn decode_resources<'a>(
 ) -> Result<Vec<resource::ManifestResource<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let resources = tables
         .manifest_resource
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -485,7 +504,9 @@ fn decode_resources<'a>(
                 name,
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    resources.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_exported_types<'a>(
@@ -496,7 +517,7 @@ fn decode_exported_types<'a>(
 ) -> Result<Vec<types::ExportedType<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let exported_types = tables
         .exported_type
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -549,7 +570,9 @@ fn decode_exported_types<'a>(
                 name,
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    exported_types.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_module<'a>(
@@ -574,7 +597,7 @@ fn decode_module_refs<'a>(
 ) -> Result<Vec<module::ExternalModuleReference<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let module_refs = tables
         .module_ref
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -584,7 +607,9 @@ fn decode_module_refs<'a>(
                 name: heap_idx!(strings, r.name),
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    module_refs.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_type_refs<'a>(
@@ -595,7 +620,7 @@ fn decode_type_refs<'a>(
 ) -> Result<Vec<types::ExternalTypeReference<'a>>> {
     use rayon::prelude::*;
 
-    tables
+    let type_refs = tables
         .type_ref
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
@@ -641,7 +666,9 @@ fn decode_type_refs<'a>(
                 name,
             })
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Vec<Result<_>>>();
+
+    type_refs.into_iter().collect::<Result<Vec<_>>>()
 }
 
 fn decode_interfaces<'a>(
@@ -714,10 +741,13 @@ fn decode_fields<'a>(
                 fields.push(Field {
                     attributes: vec![],
                     name: heap_idx!(strings, f.name),
-                    type_modifiers: cmod
-                        .into_iter()
-                        .map(|c| convert::read::custom_modifier(c, ctx))
-                        .collect::<Result<_>>()?,
+                    type_modifiers: if cmod.is_empty() {
+                        vec![]
+                    } else {
+                        cmod.into_iter()
+                            .map(|c| convert::read::custom_modifier(c, ctx))
+                            .collect::<Result<_>>()?
+                    },
                     by_ref,
                     return_type: MemberType::from_sig(t, ctx)?,
                     accessibility: member_accessibility(f.flags)?,
@@ -745,6 +775,8 @@ fn decode_fields<'a>(
 
             Ok((type_idx, fields, field_idxs))
         })
+        .collect::<Vec<Result<_>>>()
+        .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
     build_vec!(fields = FieldIndex[tables.field.len()], {
@@ -893,6 +925,8 @@ fn decode_methods<'a>(
 
             Ok((type_idx, methods, method_idxs, param_ranges))
         })
+        .collect::<Vec<Result<_>>>()
+        .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
     let mut owned_params = Vec::with_capacity(tables.param.len());
@@ -987,6 +1021,8 @@ fn decode_params<'a>(
 
             Ok((m_idx, decoded))
         })
+        .collect::<Vec<Result<_>>>()
+        .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
     build_vec!(params = (usize, usize)[tables.param.len()], {
@@ -1017,13 +1053,19 @@ fn decode_params<'a>(
     Ok(params)
 }
 
+struct DecodedProperties {
+    properties: Vec<(usize, usize)>,
+    sig_pending_property: Vec<crate::binary::metadata::index::Blob>,
+}
+
 fn decode_properties<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
     strings: &StringsReader<'a>,
     blobs: &BlobReader<'a>,
     ctx: &convert::read::Context<'_, 'a>,
-) -> Result<Vec<(usize, usize)>> {
+    opts: Options,
+) -> Result<DecodedProperties> {
     use rayon::prelude::*;
 
     let owned_properties = tables
@@ -1044,6 +1086,8 @@ fn decode_properties<'a>(
 
             Ok((type_idx, start, end, map_idx))
         })
+        .collect::<Vec<Result<_>>>()
+        .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
     let decoded_properties = owned_properties
@@ -1062,7 +1106,29 @@ fn decode_properties<'a>(
 
             for (offset, prop) in props.iter().enumerate() {
                 let p_idx = start + offset;
-                let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
+
+                let (static_member, property_type, parameters) = if opts.lazy_property_signatures {
+                    (
+                        false,
+                        crate::resolved::signature::Parameter::value(MemberType::from_base(
+                            crate::resolved::types::BaseType::Object,
+                        )),
+                        vec![],
+                    )
+                } else {
+                    let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
+                    (
+                        !sig.has_this,
+                        convert::read::parameter(sig.property_type, ctx)?,
+                        {
+                            let mut ps = Vec::with_capacity(sig.params.len());
+                            for p in sig.params {
+                                ps.push(convert::read::parameter(p, ctx)?);
+                            }
+                            ps
+                        },
+                    )
+                };
 
                 properties.push(Property {
                     attributes: vec![],
@@ -1070,15 +1136,9 @@ fn decode_properties<'a>(
                     getter: None,
                     setter: None,
                     other: vec![],
-                    static_member: !sig.has_this,
-                    property_type: convert::read::parameter(sig.property_type, ctx)?,
-                    parameters: {
-                        let mut ps = Vec::with_capacity(sig.params.len());
-                        for p in sig.params {
-                            ps.push(convert::read::parameter(p, ctx)?);
-                        }
-                        ps
-                    },
+                    static_member,
+                    property_type,
+                    parameters,
                     special_name: check_bitmask!(prop.flags, 0x200),
                     runtime_special_name: check_bitmask!(prop.flags, 0x1000),
                     default: None,
@@ -1089,6 +1149,8 @@ fn decode_properties<'a>(
 
             Ok((type_idx, properties, property_idxs))
         })
+        .collect::<Vec<Result<_>>>()
+        .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
     build_vec!(properties = (usize, usize)[tables.property.len()], {
@@ -1106,7 +1168,16 @@ fn decode_properties<'a>(
         }
     });
 
-    Ok(properties)
+    let sig_pending_property = if opts.lazy_property_signatures {
+        tables.property.iter().map(|p| p.property_type).collect()
+    } else {
+        vec![]
+    };
+
+    Ok(DecodedProperties {
+        properties,
+        sig_pending_property,
+    })
 }
 
 fn decode_events<'a>(
@@ -1573,6 +1644,15 @@ struct DecodedMemberRefs<'a> {
     sig_pending_ref: Vec<crate::binary::metadata::index::Blob>,
 }
 
+enum DecodedMemberRef<'a> {
+    Field(members::ExternalFieldReference<'a>),
+    Method {
+        method_ref: members::ExternalMethodReference<'a>,
+        blob_idx: Option<crate::binary::metadata::index::Blob>,
+    },
+    Skip,
+}
+
 fn decode_member_refs<'a>(
     tables: &metadata::table::Tables,
     strings: &StringsReader<'a>,
@@ -1582,6 +1662,133 @@ fn decode_member_refs<'a>(
     ctx: &convert::read::Context<'_, 'a>,
     opts: Options,
 ) -> Result<DecodedMemberRefs<'a>> {
+    use rayon::prelude::*;
+
+    let decoded = tables
+        .member_ref
+        .par_iter()
+        .with_min_len(MIN_PAR_LEN)
+        .map(|r| {
+            use members::*;
+            use metadata::index::{MemberRefParent, TypeDefOrRef};
+
+            let name = strings.at_index(r.name).map_err(CLI)?.into();
+            let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
+
+            let Some(&sig_kind) = sig_blob.first() else {
+                return Ok(DecodedMemberRef::Skip);
+            };
+
+            if sig_kind == 0x06 {
+                use crate::binary::signature::kinds::FieldSig;
+
+                // NOTE: discarding errors means wasted allocation of formatted messages
+                let field_sig: FieldSig = match sig_blob.pread(0) {
+                    Ok(s) => s,
+                    Err(_) => return Ok(DecodedMemberRef::Skip),
+                };
+
+                let parent = match r.class {
+                    MemberRefParent::TypeDef(i) => {
+                        FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
+                    }
+                    MemberRefParent::TypeRef(i) => {
+                        FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
+                    }
+                    MemberRefParent::TypeSpec(i) => {
+                        FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
+                    }
+                    MemberRefParent::ModuleRef(i) => {
+                        let idx = i - 1;
+                        if idx < module_refs.len() {
+                            FieldReferenceParent::Module(ModuleRefIndex(idx))
+                        } else {
+                            throw!("invalid module reference index {} for field reference {}", idx, name);
+                        }
+                    }
+                    _ => return Ok(DecodedMemberRef::Skip),
+                };
+
+                let field_type = MemberType::from_sig(field_sig.field_type, ctx)?;
+                let mut custom_modifiers = Vec::with_capacity(field_sig.custom_modifiers.len());
+                for c in field_sig.custom_modifiers {
+                    custom_modifiers.push(convert::read::custom_modifier(c, ctx)?);
+                }
+
+                Ok(DecodedMemberRef::Field(ExternalFieldReference {
+                    attributes: vec![],
+                    parent,
+                    name,
+                    custom_modifiers,
+                    field_type,
+                }))
+            } else {
+                use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
+
+                let (signature, blob_idx) = if opts.lazy_method_signatures {
+                    (Default::default(), Some(r.signature))
+                } else {
+                    // NOTE: discarding errors means wasted allocation of formatted messages
+                    let ref_sig: MethodRefSig = match sig_blob.pread(0) {
+                        Ok(s) => s,
+                        Err(_) => return Ok(DecodedMemberRef::Skip),
+                    };
+
+                    let mut sig = convert::read::managed_method(ref_sig.method_def, ctx)?;
+                    if sig.calling_convention == CallingConvention::Vararg {
+                        let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
+                        for p in ref_sig.varargs {
+                            varargs.push(convert::read::parameter(p, ctx)?);
+                        }
+                        sig.varargs = Some(varargs);
+                    }
+                    (sig, None)
+                };
+
+                let parent = match r.class {
+                    MemberRefParent::TypeDef(i) => {
+                        MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
+                    }
+                    MemberRefParent::TypeRef(i) => {
+                        MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
+                    }
+                    MemberRefParent::TypeSpec(i) => {
+                        MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
+                    }
+                    MemberRefParent::ModuleRef(i) => {
+                        let idx = i - 1;
+                        if idx < module_refs.len() {
+                            MethodReferenceParent::Module(ModuleRefIndex(idx))
+                        } else {
+                            throw!("invalid module reference index {} for method reference {}", idx, name);
+                        }
+                    }
+                    MemberRefParent::MethodDef(i) => {
+                        let idx = i - 1;
+                        match methods.get(idx) {
+                            Some(&m) => MethodReferenceParent::VarargMethod(m),
+                            None => throw!("bad method def index {} for method reference {}", idx, name),
+                        }
+                    }
+                    MemberRefParent::Null => {
+                        throw!("invalid null parent index for method reference {}", name)
+                    }
+                };
+
+                Ok(DecodedMemberRef::Method {
+                    method_ref: ExternalMethodReference {
+                        attributes: vec![],
+                        parent,
+                        name,
+                        signature,
+                    },
+                    blob_idx,
+                })
+            }
+        })
+        .collect::<Vec<Result<_>>>();
+    let decoded = decoded.into_iter().collect::<Result<Vec<_>>>()?;
+
     let member_ref_len = tables.member_ref.len();
     let mut field_refs = Vec::with_capacity(member_ref_len);
     let mut field_map = HashMap::with_capacity_and_hasher(member_ref_len, Default::default());
@@ -1593,122 +1800,22 @@ fn decode_member_refs<'a>(
         vec![]
     };
 
-    for (orig_idx, r) in tables.member_ref.iter().enumerate() {
-        use members::*;
-        use metadata::index::{MemberRefParent, TypeDefOrRef};
-
-        let name = strings.at_index(r.name).map_err(CLI)?.into();
-        let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
-
-        let Some(&sig_kind) = sig_blob.first() else {
-            continue;
-        };
-
-        if sig_kind == 0x06 {
-            use crate::binary::signature::kinds::FieldSig;
-
-            // NOTE: discarding errors means wasted allocation of formatted messages
-            let field_sig: FieldSig = match sig_blob.pread(0) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let parent = match r.class {
-                MemberRefParent::TypeDef(i) => {
-                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
-                }
-                MemberRefParent::TypeRef(i) => {
-                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
-                }
-                MemberRefParent::TypeSpec(i) => {
-                    FieldReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
-                }
-                MemberRefParent::ModuleRef(i) => {
-                    let idx = i - 1;
-                    if idx < module_refs.len() {
-                        FieldReferenceParent::Module(ModuleRefIndex(idx))
-                    } else {
-                        throw!("invalid module reference index {} for field reference {}", idx, name);
-                    }
-                }
-                _ => continue,
-            };
-
-            let field_type = MemberType::from_sig(field_sig.field_type, ctx)?;
-            let mut custom_modifiers = Vec::with_capacity(field_sig.custom_modifiers.len());
-            for c in field_sig.custom_modifiers {
-                custom_modifiers.push(convert::read::custom_modifier(c, ctx)?);
+    for (orig_idx, decoded_ref) in decoded.into_iter().enumerate() {
+        match decoded_ref {
+            DecodedMemberRef::Field(field_ref) => {
+                let current_idx = field_refs.len();
+                field_map.insert(orig_idx, current_idx);
+                field_refs.push(field_ref);
             }
-
-            let current_idx = field_refs.len();
-            field_map.insert(orig_idx, current_idx);
-            field_refs.push(ExternalFieldReference {
-                attributes: vec![],
-                parent,
-                name,
-                custom_modifiers,
-                field_type,
-            });
-        } else {
-            use crate::binary::signature::kinds::{CallingConvention, MethodRefSig};
-
-            // NOTE: discarding errors means wasted allocation of formatted messages
-            let ref_sig: MethodRefSig = match sig_blob.pread(0) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let signature = if opts.lazy_method_signatures {
-                sig_pending_ref.push(r.signature);
-                Default::default()
-            } else {
-                let mut sig = convert::read::managed_method(ref_sig.method_def, ctx)?;
-                if sig.calling_convention == CallingConvention::Vararg {
-                    let mut varargs = Vec::with_capacity(ref_sig.varargs.len());
-                    for p in ref_sig.varargs {
-                        varargs.push(convert::read::parameter(p, ctx)?);
-                    }
-                    sig.varargs = Some(varargs);
+            DecodedMemberRef::Method { method_ref, blob_idx } => {
+                let current_idx = method_refs.len();
+                method_map.insert(orig_idx, current_idx);
+                if let Some(blob_idx) = blob_idx {
+                    sig_pending_ref.push(blob_idx);
                 }
-                sig
-            };
-
-            let parent = match r.class {
-                MemberRefParent::TypeDef(i) => {
-                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeDef(i), ctx)?)
-                }
-                MemberRefParent::TypeRef(i) => {
-                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeRef(i), ctx)?)
-                }
-                MemberRefParent::TypeSpec(i) => {
-                    MethodReferenceParent::Type(convert::read::type_idx(TypeDefOrRef::TypeSpec(i), ctx)?)
-                }
-                MemberRefParent::ModuleRef(i) => {
-                    let idx = i - 1;
-                    if idx < module_refs.len() {
-                        MethodReferenceParent::Module(ModuleRefIndex(idx))
-                    } else {
-                        throw!("invalid module reference index {} for method reference {}", idx, name);
-                    }
-                }
-                MemberRefParent::MethodDef(i) => {
-                    let idx = i - 1;
-                    match methods.get(idx) {
-                        Some(&m) => MethodReferenceParent::VarargMethod(m),
-                        None => throw!("bad method def index {} for method reference {}", idx, name),
-                    }
-                }
-                MemberRefParent::Null => throw!("invalid null parent index for method reference {}", name),
-            };
-
-            let current_idx = method_refs.len();
-            method_map.insert(orig_idx, current_idx);
-            method_refs.push(ExternalMethodReference {
-                attributes: vec![],
-                parent,
-                name,
-                signature,
-            });
+                method_refs.push(method_ref);
+            }
+            DecodedMemberRef::Skip => {}
         }
     }
 
@@ -1815,6 +1922,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     None => throw!("bad parent field index {} for field layout specification", idx),
                 }
             })
+            .collect::<Vec<Result<_>>>()
+            .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
         for (field, offset) in field_layout_updates {
@@ -1838,6 +1947,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     None => throw!("bad parent field index {} for field RVA specification", idx),
                 }
             })
+            .collect::<Vec<Result<_>>>()
+            .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
         for (field, initial_value) in field_rva_updates {
@@ -1947,6 +2058,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 Ok((target, value))
             })
+            .collect::<Vec<Result<_>>>()
+            .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
         for (target, value) in pinvoke_updates {
@@ -2070,6 +2183,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     None => throw!("bad field index {} for field marshal", idx),
                 }
             })
+            .collect::<Vec<Result<_>>>()
+            .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
         for (field, marshal) in field_marshal_updates {
@@ -2104,7 +2219,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     stage_start!(stage_timer);
     debug!("properties");
-    let properties = decode_properties(&mut types, &tables, &strings, &blobs, &ctx)?;
+    let DecodedProperties {
+        properties,
+        sig_pending_property,
+    } = decode_properties(&mut types, &tables, &strings, &blobs, &ctx, opts)?;
     stage_end!(stage_timer, "properties");
 
     debug!("constants");
@@ -2625,7 +2743,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
     } // end if !opts.lazy_attributes
     stage_end!(stage_timer, "custom attributes");
 
-    if opts.lazy_method_bodies || opts.lazy_method_signatures || opts.lazy_attributes {
+    if opts.lazy_method_bodies
+        || opts.lazy_method_signatures
+        || opts.lazy_property_signatures
+        || opts.lazy_attributes
+    {
+        stage_start!(stage_timer);
         debug!("building lazy parse state");
 
         // Build sparse attribute maps in one pass before the LazyParseState literal.
@@ -2721,9 +2844,22 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             vec![]
         };
 
+        let sig_property_indices = if opts.lazy_property_signatures {
+            properties
+                .iter()
+                .map(|&(parent, property)| PropertyIndex {
+                    parent_type: TypeIndex(parent),
+                    property,
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
         res.lazy_state = Some(Arc::new(lazy::LazyParseState {
             lazy_bodies: opts.lazy_method_bodies,
             lazy_signatures: opts.lazy_method_signatures,
+            lazy_property_signatures: opts.lazy_property_signatures,
             lazy_attributes: opts.lazy_attributes,
             def_len,
             ref_len,
@@ -2745,6 +2881,10 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             sig_cache_def: std::sync::OnceLock::new(),
             sig_pending_ref,
             sig_cache_ref: std::sync::OnceLock::new(),
+            sig_property_indices,
+            sig_property_idx_to_def: std::sync::OnceLock::new(),
+            sig_pending_property,
+            sig_cache_property: std::sync::OnceLock::new(),
             attr_by_type,
             attr_by_method,
             attr_by_field,
@@ -2760,7 +2900,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 rustc_hash::FxHashMap::default()
             },
         }));
-    } else if !opts.skip_method_bodies {
+        stage_end!(stage_timer, "lazy state construction");
+    }
+
+    if !opts.lazy_method_bodies && !opts.skip_method_bodies {
+        stage_start!(stage_timer);
         debug!("method bodies");
 
         use rayon::prelude::*;
@@ -2776,12 +2920,15 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let body = lazy::decode_body_with_ctx(raw_body, &ctx, &m_ctx)?;
                 Ok((methods[idx], body))
             })
+            .collect::<Vec<Result<_>>>()
+            .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
         for (method_idx, body) in bodies {
             res[method_idx].body = Some(body);
         }
-    } // end else if !opts.skip_method_bodies
+        stage_end!(stage_timer, "method bodies");
+    } // end if !opts.lazy_method_bodies && !opts.skip_method_bodies
 
     debug!("resolved module {}", res.module.name);
 

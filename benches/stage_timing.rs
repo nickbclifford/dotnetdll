@@ -6,9 +6,9 @@ use std::{
 };
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
+    Registry,
     layer::{Context, Layer},
     prelude::*,
-    Registry,
 };
 
 #[path = "../tests/common/env.rs"]
@@ -97,7 +97,7 @@ fn parse_config() -> Config {
         match arg.as_str() {
             "--mode" => {
                 mode = args.next().unwrap_or_else(|| {
-                    panic!("missing value for --mode (expected eager|lazy_bodies|lazy_signatures|lazy_all|all)")
+                    panic!("missing value for --mode (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|all)")
                 });
             }
             "--runs" => {
@@ -115,7 +115,7 @@ fn parse_config() -> Config {
             "--help" | "-h" => {
                 println!(
                     "Usage: cargo bench --features stage-timing --bench stage_timing -- [--mode <mode>] [--runs <n>] [--input <path>]\n\
-                     Modes: eager | lazy_bodies | lazy_signatures | lazy_all | all (default)\n\
+                     Modes: eager | lazy_bodies | lazy_signatures | lazy_all | lazy_production | all (default)\n\
                      Default input: $RUNTIME_ARTIFACTS/.../System.Private.CoreLib.dll"
                 );
                 std::process::exit(0);
@@ -170,6 +170,15 @@ fn modes(mode: &str) -> Vec<(&'static str, ReadOptions)> {
                 ..ReadOptions::default()
             },
         )],
+        "lazy_production" => vec![(
+            "lazy_production",
+            ReadOptions {
+                lazy_method_bodies: true,
+                lazy_method_signatures: true,
+                lazy_attributes: true,
+                ..ReadOptions::default()
+            },
+        )],
         "all" => vec![
             ("eager", ReadOptions::default()),
             (
@@ -194,9 +203,42 @@ fn modes(mode: &str) -> Vec<(&'static str, ReadOptions)> {
                     ..ReadOptions::default()
                 },
             ),
+            (
+                "lazy_production",
+                ReadOptions {
+                    lazy_method_bodies: true,
+                    lazy_method_signatures: true,
+                    lazy_attributes: true,
+                    ..ReadOptions::default()
+                },
+            ),
         ],
-        _ => panic!("invalid mode '{mode}' (expected eager|lazy_bodies|lazy_signatures|lazy_all|all)"),
+        _ => panic!("invalid mode '{mode}' (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|all)"),
     }
+}
+
+fn stage_stats(values: &[f64]) -> (f64, f64, f64, f64, Option<f64>) {
+    let avg = values.iter().sum::<f64>() / values.len() as f64;
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    let stddev = if values.len() <= 1 {
+        0.0
+    } else {
+        let variance = values
+            .iter()
+            .map(|value| {
+                let delta = *value - avg;
+                delta * delta
+            })
+            .sum::<f64>()
+            / (values.len() - 1) as f64;
+        variance.sqrt()
+    };
+
+    let warm_avg = (values.len() > 1).then(|| values[1..].iter().sum::<f64>() / (values.len() - 1) as f64);
+
+    (avg, min, max, stddev, warm_avg)
 }
 
 fn print_stage_table(mode_name: &str, run_samples: &[Vec<StageSample>]) {
@@ -228,13 +270,13 @@ fn print_stage_table(mode_name: &str, run_samples: &[Vec<StageSample>]) {
     for run_idx in 0..run_count {
         print!(" run {} (ms) |", run_idx + 1);
     }
-    println!(" avg (ms) |");
+    println!(" avg (ms) | warm avg (ms) | min (ms) | max (ms) | stddev (ms) |");
 
     print!("|---|");
     for _ in 0..run_count {
         print!("---:|");
     }
-    println!("---:|");
+    println!("---:|---:|---:|---:|---:|");
 
     let mut totals = vec![0.0f64; run_count];
 
@@ -245,16 +287,28 @@ fn print_stage_table(mode_name: &str, run_samples: &[Vec<StageSample>]) {
             totals[run_idx] += *value;
             print!(" {value:.3} |");
         }
-        let avg = row.iter().sum::<f64>() / run_count as f64;
-        println!(" {avg:.3} |");
+
+        let (avg, min, max, stddev, warm_avg) = stage_stats(row);
+        let warm_avg = warm_avg
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_owned());
+
+        println!(" {avg:.3} | {warm_avg} | {min:.3} | {max:.3} | {stddev:.3} |");
     }
 
     print!("| **total** |");
     for total in &totals {
         print!(" **{total:.3}** |");
     }
-    let avg_total = totals.iter().sum::<f64>() / run_count as f64;
-    println!(" **{avg_total:.3}** |");
+
+    let (avg_total, min_total, max_total, stddev_total, warm_avg_total) = stage_stats(&totals);
+    let warm_avg_total = warm_avg_total
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "n/a".to_owned());
+
+    println!(
+        " **{avg_total:.3}** | **{warm_avg_total}** | **{min_total:.3}** | **{max_total:.3}** | **{stddev_total:.3}** |"
+    );
 }
 
 fn main() {
