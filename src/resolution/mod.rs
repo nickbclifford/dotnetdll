@@ -68,7 +68,10 @@ pub mod read;
 pub mod utils;
 pub mod write;
 
-use crate::{dll::Result, prelude::*};
+use crate::{
+    dll::{ResolveError, Result},
+    prelude::*,
+};
 use dotnetdll_macros::From;
 use paste::paste;
 use std::{
@@ -141,6 +144,11 @@ impl<'a> Resolution<'a> {
     /// Parses a .NET DLL from a byte slice.
     ///
     /// This method first parses the PE (Portable Executable) file structure, then resolves the CLI metadata into a high-level `Resolution` struct.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when PE parsing fails, required metadata streams are
+    /// malformed/missing, or metadata resolution/validity checks fail.
     pub fn parse(bytes: &'a [u8], opts: ReadOptions) -> crate::dll::Result<Self> {
         let dll = DLL::parse(bytes)?;
         dll.resolve(opts)
@@ -162,19 +170,27 @@ impl<'a> Resolution<'a> {
     /// In lazy mode `Method::body` is always `None` regardless of whether the method is abstract.
     /// Use `method_body` to access the decoded body; check the method's `abstract_member` flag to
     /// determine whether a body exists at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `idx` has no method body (abstract/zero-RVA) or
+    /// when lazy decoding of the body fails.
     pub fn method_body(&self, idx: MethodIndex) -> Result<&body::Method> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_bodies {
-                let def_idx = state.method_idx_to_def.get(&idx).ok_or(
-                    crate::dll::DLLError::Other("method has no body (abstract or rva == 0)"),
-                )?;
+                let def_idx = state
+                    .method_idx_to_def
+                    .get(&idx)
+                    .ok_or(ResolveError::LazyLookupFailed(
+                        "method has no body (abstract or rva == 0)",
+                    ))?;
                 return state.decode_body(*def_idx);
             }
         }
         self[idx]
             .body
             .as_ref()
-            .ok_or(crate::dll::DLLError::Other("method has no decoded body"))
+            .ok_or(ResolveError::LazyLookupFailed("method has no decoded body").into())
     }
 
     /// Returns the decoded signature for the method definition at `idx`.
@@ -188,6 +204,11 @@ impl<'a> Resolution<'a> {
     ///
     /// Use this accessor (rather than accessing `Method::signature` directly) whenever
     /// `lazy_method_signatures` may be set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when the method cannot be mapped to its
+    /// stored signature blob or that blob fails to decode.
     pub fn method_signature(
         &self,
         idx: MethodIndex,
@@ -196,7 +217,9 @@ impl<'a> Resolution<'a> {
             if state.lazy_signatures {
                 let def_idx = state
                     .method_def_idx_for_signature(idx)
-                    .ok_or(crate::dll::DLLError::Other("method index not found in signature map"))?;
+                    .ok_or(ResolveError::LazyLookupFailed(
+                        "method index not found in signature map",
+                    ))?;
                 return state.decode_method_def_sig(def_idx);
             }
         }
@@ -214,6 +237,11 @@ impl<'a> Resolution<'a> {
     ///
     /// Use this accessor (rather than accessing `ExternalMethodReference::signature` directly)
     /// whenever `lazy_method_signatures` may be set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when signature decoding from the stored
+    /// method-ref blob fails.
     pub fn method_ref_signature(
         &self,
         idx: MethodRefIndex,
@@ -236,6 +264,11 @@ impl<'a> Resolution<'a> {
     /// **Lazy mode** (`lazy_property_signatures: true`): decodes and caches the property
     /// signature on first call. The cache is shared across all clones of this `Resolution`.
     /// Decode errors are *not* cached — the next call retries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when the property cannot be mapped to its
+    /// stored signature blob or that blob fails to decode.
     pub fn property_signature(
         &self,
         idx: PropertyIndex,
@@ -246,16 +279,22 @@ impl<'a> Resolution<'a> {
     )> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_property_signatures {
-                let def_idx = state.property_def_idx_for_signature(idx).ok_or(crate::dll::DLLError::Other(
-                    "property index not found in signature map",
-                ))?;
+                let def_idx = state
+                    .property_def_idx_for_signature(idx)
+                    .ok_or(ResolveError::LazyLookupFailed(
+                        "property index not found in signature map",
+                    ))?;
                 let (static_member, property_type, parameters) = state.decode_property_sig(def_idx)?;
                 return Ok((*static_member, property_type, parameters.as_slice()));
             }
         }
 
         let property = &self[idx];
-        Ok((property.static_member, &property.property_type, property.parameters.as_slice()))
+        Ok((
+            property.static_member,
+            &property.property_type,
+            property.parameters.as_slice(),
+        ))
     }
 
     /// Returns the custom attributes for the type definition at `idx`.
@@ -269,6 +308,11 @@ impl<'a> Resolution<'a> {
     /// each call to reconstruct the `Attribute` values (cheap pointer arithmetic, no heap copy).
     /// Calling this multiple times for the same index is correct but allocates a new `Vec` each
     /// time — cache the result yourself if you need to avoid that.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when attribute constructor/blob metadata
+    /// cannot be resolved or decoded for `idx`.
     pub fn type_attributes(
         &self,
         idx: TypeIndex,
@@ -288,6 +332,11 @@ impl<'a> Resolution<'a> {
     ///
     /// In **lazy mode** constructor/blob-index pairs are cached on the first call per method; blob
     /// bytes are re-read on each call. See [`Resolution::type_attributes`] for the full contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when `idx` is missing from the lazy
+    /// attribute map or when attribute decoding fails.
     pub fn method_attributes(
         &self,
         idx: MethodIndex,
@@ -298,9 +347,7 @@ impl<'a> Resolution<'a> {
                     .attr_method_idx_to_def
                     .get(&idx)
                     .copied()
-                    .ok_or(crate::dll::DLLError::Other(
-                        "method index not found in attr map",
-                    ))?;
+                    .ok_or(ResolveError::LazyLookupFailed("method index not found in attr map"))?;
                 return state.method_attributes(def_idx);
             }
         }
@@ -314,6 +361,11 @@ impl<'a> Resolution<'a> {
     ///
     /// In **lazy mode** constructor/blob-index pairs are cached on the first call per field; blob
     /// bytes are re-read on each call. See [`Resolution::type_attributes`] for the full contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when `idx` is missing from the lazy
+    /// attribute map or when attribute decoding fails.
     pub fn field_attributes(
         &self,
         idx: FieldIndex,
@@ -324,9 +376,7 @@ impl<'a> Resolution<'a> {
                     .attr_field_idx_to_def
                     .get(&idx)
                     .copied()
-                    .ok_or(crate::dll::DLLError::Other(
-                        "field index not found in attr map",
-                    ))?;
+                    .ok_or(ResolveError::LazyLookupFailed("field index not found in attr map"))?;
                 return state.field_attributes(def_idx);
             }
         }
@@ -341,9 +391,12 @@ impl<'a> Resolution<'a> {
     /// In **lazy mode** constructor/blob-index pairs are cached on the first call; blob bytes are
     /// re-read on each call. Returns an empty `Vec` when the module has no assembly entry.
     /// See [`Resolution::type_attributes`] for the full contract.
-    pub fn assembly_attributes(
-        &self,
-    ) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error in lazy mode when assembly-level attribute metadata
+    /// cannot be resolved or decoded.
+    pub fn assembly_attributes(&self) -> crate::dll::Result<Vec<crate::resolved::attribute::Attribute<'_>>> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_attributes {
                 return state.assembly_attributes();
@@ -353,6 +406,10 @@ impl<'a> Resolution<'a> {
     }
 
     /// Writes the `Resolution` to a byte vector in the .NET PE format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when metadata serialization or PE image emission fails.
     pub fn write(&self, opts: WriteOptions) -> crate::dll::Result<Vec<u8>> {
         write::write_impl(self, opts)
     }
@@ -764,8 +821,7 @@ mod lazy_attribute_tests {
     use super::*;
     use crate::prelude::ReadOptions;
 
-    static OOP_DLL: &[u8] =
-        include_bytes!("../../examples/smolasm/oop.dll");
+    static OOP_DLL: &[u8] = include_bytes!("../../examples/smolasm/oop.dll");
 
     fn direct_method_body_count(res: &Resolution<'_>) -> usize {
         res.enumerate_type_definitions()
@@ -779,7 +835,10 @@ mod lazy_attribute_tests {
         let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
             OOP_DLL,
-            ReadOptions { lazy_attributes: true, ..Default::default() },
+            ReadOptions {
+                lazy_attributes: true,
+                ..Default::default()
+            },
         )
         .unwrap();
 
@@ -811,7 +870,10 @@ mod lazy_attribute_tests {
         let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
             OOP_DLL,
-            ReadOptions { lazy_attributes: true, ..Default::default() },
+            ReadOptions {
+                lazy_attributes: true,
+                ..Default::default()
+            },
         )
         .unwrap();
 

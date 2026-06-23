@@ -68,7 +68,7 @@ pub use dotnetdll_macros::msig;
 pub use crate::binary::signature::kinds::{CallingConvention, StandAloneCallingConvention};
 use crate::{
     resolution::Resolution,
-    resolved::{types::CustomTypeModifier, ResolvedDebug},
+    resolved::{ResolvedDebug, types::CustomTypeModifier},
 };
 
 /// Specifies how a method parameter or return value is passed in a signature.

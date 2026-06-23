@@ -1,7 +1,7 @@
 use super::stream;
 use scroll::{
-    ctx::{StrCtx, TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{StrCtx, TryFromCtx, TryIntoCtx},
 };
 
 /// A relative virtual address (RVA) paired with a byte size.

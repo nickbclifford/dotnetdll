@@ -17,7 +17,10 @@ macro_rules! auto_newlines {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        println!("usage: {} <dll_path>", args.get(0).map(|s| s.as_str()).unwrap_or("dump-dll"));
+        println!(
+            "usage: {} <dll_path>",
+            args.get(0).map(|s| s.as_str()).unwrap_or("dump-dll")
+        );
         return Ok(());
     }
 

@@ -1,10 +1,10 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, quote};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Bracket;
-use syn::{bracketed, parenthesized, Ident, LitInt, Token};
+use syn::{Ident, LitInt, Token, bracketed, parenthesized};
 
 #[derive(Debug)]
 pub enum External {

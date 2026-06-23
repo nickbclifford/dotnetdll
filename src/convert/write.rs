@@ -1,6 +1,6 @@
 use super::TypeKind;
 use crate::binary::signature::kinds::PropertySig;
-use crate::dll::DLLError;
+use crate::dll::ResolveError;
 use crate::{
     binary::{
         heap::{BlobWriter, UserStringWriter, Writer},
@@ -26,7 +26,7 @@ use crate::{
     },
 };
 use paste::paste;
-use scroll::{ctx::TryIntoCtx, Pwrite};
+use scroll::{Pwrite, ctx::TryIntoCtx};
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -65,9 +65,10 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
 #[tracing::instrument]
 fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     let Some(value_kind) = value_kind else {
-        return Err(DLLError::CLI(scroll::Error::Custom(
-            "attempted to use type of unknown value kind inside a signature".to_string(),
-        )));
+        return Err(ResolveError::LazyLookupFailed(
+            "attempted to use type of unknown value kind inside a signature",
+        )
+        .into());
     };
     Ok(match t {
         TypeSource::User(u) => match value_kind {
@@ -76,7 +77,10 @@ fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx:
         },
         TypeSource::Generic { base, parameters } => {
             let base = user_index(*base).into();
-            let params = parameters.iter().map(|g| g.as_sig(ctx)).collect::<Result<_>>()?;
+            let params = parameters
+                .iter()
+                .map(|g| g.as_sig(ctx).map_err(Into::into))
+                .collect::<Result<_>>()?;
             match value_kind {
                 ValueKind::Class => SType::GenericInstClass(base, params),
                 ValueKind::ValueType => SType::GenericInstValueType(base, params),
@@ -115,7 +119,7 @@ pub fn into_blob(
 
     ctx.blob_scratch.pwrite(sig, 0)?;
 
-    Ok(ctx.blobs.write(ctx.blob_scratch.get())?)
+    ctx.blobs.write(ctx.blob_scratch.get())
 }
 
 #[tracing::instrument]
@@ -422,7 +426,7 @@ pub fn instruction(
                             MethodSpecSig(
                                 g.parameters
                                     .iter()
-                                    .map(|t| t.as_sig(ctx))
+                                    .map(|t| t.as_sig(ctx).map_err(Into::into))
                                     .collect::<Result<Vec<_>>>()?,
                             ),
                             ctx,

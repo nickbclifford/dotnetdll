@@ -1,7 +1,8 @@
 use super::{compressed, encoded::*};
+use crate::dll::ParseError;
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 use scroll_buffer::DynamicBuffer;
 
@@ -62,7 +63,15 @@ fn build_method_def(
         }
         0x5 => CallingConvention::Vararg,
         0x0 => CallingConvention::Default,
-        _ => throw!("bad method def kind tag {:#04x}", tag),
+        _ => {
+            return Err(scroll::Error::Custom(
+                ParseError::BadSignatureKind {
+                    tag,
+                    context: "method definition calling convention",
+                }
+                .to_string(),
+            ));
+        }
     };
 
     let compressed::Unsigned(param_count) = from.gread(offset)?;
@@ -322,7 +331,15 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
             4 => Fastcall,
             5 => Vararg,
             9 => DefaultUnmanaged,
-            bad => throw!("bad standalone method calling convention {:#03x}", bad),
+            bad => {
+                return Err(scroll::Error::Custom(
+                    ParseError::BadSignatureKind {
+                        tag: bad,
+                        context: "standalone method calling convention",
+                    }
+                    .to_string(),
+                ));
+            }
         };
 
         let compressed::Unsigned(mut param_count) = from.gread(offset)?;
@@ -421,7 +438,13 @@ impl TryFromCtx<'_> for FieldSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x6 {
-            throw!("bad field tag {:#04x}", tag);
+            return Err(scroll::Error::Custom(
+                ParseError::BadSignatureKind {
+                    tag,
+                    context: "field signature prefix",
+                }
+                .to_string(),
+            ));
         }
 
         let mods = all_custom_mods(from, offset);
@@ -435,7 +458,7 @@ impl TryFromCtx<'_> for FieldSig {
             FieldSig {
                 custom_modifiers: mods,
                 by_ref,
-                field_type: from.gread(offset)?,
+                field_type: from.gread(offset).map_err(dll_to_scroll)?,
             },
             *offset,
         ))
@@ -483,7 +506,13 @@ impl TryFromCtx<'_> for PropertySig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag & 0x8 != 0x8 {
-            throw!("bad property signature tag {:#04x}", tag);
+            return Err(scroll::Error::Custom(
+                ParseError::BadSignatureKind {
+                    tag,
+                    context: "property signature prefix",
+                }
+                .to_string(),
+            ));
         }
 
         let has_this = check_bitmask!(tag, 0x20);
@@ -568,7 +597,13 @@ impl TryFromCtx<'_> for LocalVarSig {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x7 {
-            throw!("bad local var signature tag {:#04x}", tag);
+            return Err(scroll::Error::Custom(
+                ParseError::BadSignatureKind {
+                    tag,
+                    context: "local variable signature prefix",
+                }
+                .to_string(),
+            ));
         }
 
         let compressed::Unsigned(var_count) = from.gread(offset)?;
@@ -597,7 +632,7 @@ impl TryFromCtx<'_> for LocalVarSig {
                     custom_modifiers: mods,
                     pinned,
                     by_ref,
-                    var_type: from.gread(offset)?,
+                    var_type: from.gread(offset).map_err(dll_to_scroll)?,
                 }
             });
         }
@@ -667,14 +702,20 @@ impl TryFromCtx<'_> for MethodSpec {
 
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         if tag != 0x0a {
-            throw!("bad method spec tag {:#04x}", tag);
+            return Err(scroll::Error::Custom(
+                ParseError::BadSignatureKind {
+                    tag,
+                    context: "method spec signature prefix",
+                }
+                .to_string(),
+            ));
         }
 
         let compressed::Unsigned(type_count) = from.gread(offset)?;
 
         let mut types = Vec::with_capacity(type_count as usize);
         for _ in 0..type_count {
-            types.push(from.gread(offset)?);
+            types.push(from.gread(offset).map_err(dll_to_scroll)?);
         }
 
         Ok((MethodSpec(types), *offset))
@@ -729,14 +770,14 @@ impl TryFromCtx<'_> for MarshalSpec {
         if from[*offset] == NATIVE_TYPE_ARRAY {
             *offset += 1;
         } else {
-            return Ok((Primitive(from.gread(offset)?), *offset));
+            return Ok((Primitive(from.gread(offset).map_err(dll_to_scroll)?), *offset));
         }
 
         let element_type = if from[*offset] == NATIVE_TYPE_MAX {
             *offset += 1;
             None
         } else {
-            Some(from.gread(offset)?)
+            Some(from.gread(offset).map_err(dll_to_scroll)?)
         };
         let length_parameter = from.gread::<compressed::Unsigned>(offset).ok().map(|u| u.0 as usize);
         let additional_elements = from.gread::<compressed::Unsigned>(offset).ok().map(|u| u.0 as usize);
@@ -769,7 +810,10 @@ try_into_ctx!(MarshalSpec, |self, into| {
             };
 
             if additional_elements.is_some() && length_parameter.is_none() {
-                throw!("length parameter must be specified if additional elements is specified");
+                return Err(scroll::Error::Custom(
+                    ParseError::BadStructure("length parameter must be specified if additional elements is specified")
+                        .to_string(),
+                ));
             }
 
             if let Some(p) = length_parameter {

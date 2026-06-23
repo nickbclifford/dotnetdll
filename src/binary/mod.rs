@@ -20,15 +20,6 @@
 //! - [`method`] and [`il`] — method body structure and IL bytecode encoding
 //! - [`stream`] — metadata stream header entries
 
-#[macro_use]
-mod utils {
-    macro_rules! throw {
-        ($($arg:tt)*) => {
-            return Err(scroll::Error::Custom(format!($($arg)*)))
-        }
-    }
-}
-
 pub mod cli;
 pub mod heap;
 pub mod il;

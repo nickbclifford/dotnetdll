@@ -9,6 +9,7 @@
 //! - `NATIVE_TYPE_*` constants are marshalling descriptor tags.
 //!   See ECMA-335, II.23.4.
 
+use crate::dll::{DLLError, ParseError};
 use paste::paste;
 use scroll::{
     Error, Pread, Pwrite,
@@ -146,7 +147,7 @@ impl From<index::TypeDefOrRef> for TypeDefOrRefOrSpec {
 }
 
 impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
-    type Error = scroll::Error;
+    type Error = DLLError;
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -159,7 +160,13 @@ impl TryFromCtx<'_> for TypeDefOrRefOrSpec {
                     0 => table::Kind::TypeDef,
                     1 => table::Kind::TypeRef,
                     2 => table::Kind::TypeSpec,
-                    _ => throw!("bad token table specifier 0x3"),
+                    bad => {
+                        return Err(ParseError::BadSignatureKind {
+                            tag: bad as u8,
+                            context: "TypeDefOrRefOrSpec coded-index tag",
+                        }
+                        .into());
+                    }
                 }),
                 index: (value >> 2) as usize,
             }),
@@ -174,7 +181,11 @@ try_into_ctx!(TypeDefOrRefOrSpec, |self, into| {
         index::TokenTarget::Table(table::Kind::TypeDef) => 0,
         index::TokenTarget::Table(table::Kind::TypeRef) => 1,
         index::TokenTarget::Table(table::Kind::TypeSpec) => 2,
-        other => throw!("invalid token {:?}, only TypeDef/Ref/Spec allowed", other),
+        _ => {
+            return Err(Error::Custom(
+                ParseError::BadStructure("only TypeDef/Ref/Spec tokens are valid in signatures").to_string(),
+            ));
+        }
     };
 
     let value = (self.0.index << 2) | table;
@@ -276,12 +287,20 @@ impl From<scroll::Error> for FailUnit {
         FailUnit
     }
 }
+impl From<DLLError> for FailUnit {
+    fn from(_: DLLError) -> Self {
+        FailUnit
+    }
+}
 
 impl TryFromCtx<'_> for CustomMod {
     // since all reading is done from all_custom_mods, which discards errors,
     // avoid allocating error messages and just fail with a unit
     type Error = FailUnit;
 
+    /// # Panics
+    /// Panics only if the crate's own CMOD tag guard and match arms diverge
+    /// (internal invariant).
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
 
@@ -297,7 +316,11 @@ impl TryFromCtx<'_> for CustomMod {
             match tag_u8 {
                 ELEMENT_TYPE_CMOD_OPT => CustomMod::Optional(token),
                 ELEMENT_TYPE_CMOD_REQD => CustomMod::Required(token),
-                _ => unreachable!(),
+                _ => {
+                    // Invariant: non-CMOD tags are rejected immediately above.
+                    debug_assert!(false, "unreachable custom modifier tag after CMOD guard");
+                    unreachable!()
+                }
             },
             *offset,
         ))
@@ -337,6 +360,13 @@ pub fn all_custom_mods(from: &[u8], offset: &mut usize) -> Vec<CustomMod> {
             Ok(m) => mods.push(m),
             Err(_) => return mods,
         }
+    }
+}
+
+pub(crate) fn dll_to_scroll(err: DLLError) -> Error {
+    match err {
+        DLLError::Decode(inner) => inner,
+        other => Error::Custom(other.to_string()),
     }
 }
 
@@ -404,7 +434,7 @@ pub enum Type {
 }
 
 impl TryFromCtx<'_> for Type {
-    type Error = scroll::Error;
+    type Error = DLLError;
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -448,7 +478,13 @@ impl TryFromCtx<'_> for Type {
                 match next_tag {
                     ELEMENT_TYPE_CLASS => GenericInstClass(token, types),
                     ELEMENT_TYPE_VALUETYPE => GenericInstValueType(token, types),
-                    _ => throw!("bad generic instantiation tag {:#04x}", next_tag),
+                    _ => {
+                        return Err(ParseError::BadSignatureKind {
+                            tag: next_tag,
+                            context: "generic instantiation",
+                        }
+                        .into());
+                    }
                 }
             }
             ELEMENT_TYPE_MVAR => {
@@ -477,7 +513,7 @@ impl TryFromCtx<'_> for Type {
                 let compressed::Unsigned(number) = from.gread(offset)?;
                 Var(number)
             }
-            _ => throw!("bad type discriminator tag {:#04x}", tag),
+            _ => return Err(ParseError::BadElementType { tag }.into()),
         };
 
         Ok((val, *offset))
@@ -639,10 +675,10 @@ impl TryFromCtx<'_> for Param {
         let tag: u8 = from.gread_with(offset, scroll::LE)?;
         let val = match tag {
             ELEMENT_TYPE_TYPEDBYREF => ParamType::TypedByRef,
-            ELEMENT_TYPE_BYREF => ParamType::ByRef(from.gread(offset)?),
+            ELEMENT_TYPE_BYREF => ParamType::ByRef(from.gread(offset).map_err(dll_to_scroll)?),
             _ => {
                 *offset -= 1;
-                ParamType::Type(from.gread(offset)?)
+                ParamType::Type(from.gread(offset).map_err(dll_to_scroll)?)
             }
         };
 
@@ -710,10 +746,10 @@ impl TryFromCtx<'_> for RetType {
         let val = match tag {
             ELEMENT_TYPE_VOID => RetTypeType::Void,
             ELEMENT_TYPE_TYPEDBYREF => RetTypeType::TypedByRef,
-            ELEMENT_TYPE_BYREF => RetTypeType::ByRef(from.gread(offset)?),
+            ELEMENT_TYPE_BYREF => RetTypeType::ByRef(from.gread(offset).map_err(dll_to_scroll)?),
             _ => {
                 *offset -= 1;
-                RetTypeType::Type(from.gread(offset)?)
+                RetTypeType::Type(from.gread(offset).map_err(dll_to_scroll)?)
             }
         };
 
@@ -870,7 +906,7 @@ native_types! {
 }
 
 impl TryFromCtx<'_> for NativeIntrinsic {
-    type Error = scroll::Error;
+    type Error = DLLError;
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -913,7 +949,7 @@ impl TryFromCtx<'_> for NativeIntrinsic {
             0x2b => LpStruct,
             0x2c => CustomMarshaler,
             0x30 => LPUTF8Str,
-            bad => throw!("bad native instrinsic value {:#04x}", bad),
+            bad => return Err(ParseError::BadNativeIntrinsic { tag: bad }.into()),
         };
 
         Ok((val, *offset))

@@ -1,6 +1,9 @@
 use super::{metadata::index, signature::compressed};
-use crate::utils::hash;
-use scroll::{ctx::StrCtx, Pread, Pwrite, Result};
+use crate::{
+    dll::{DLLError, ParseError},
+    utils::hash,
+};
+use scroll::{Error as ScrollError, Pread, Pwrite, ctx::StrCtx};
 use std::collections::HashMap;
 
 // TODO: seal these traits
@@ -24,7 +27,12 @@ pub trait Reader<'a> {
     fn new(bytes: &'a [u8]) -> Self;
 
     /// Reads and decodes the value stored at `idx`.
-    fn at_index(&self, idx: Self::Index) -> Result<Self::Value>;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `idx` points past the heap bounds or when the
+    /// bytes at that position cannot be decoded as a value for this heap.
+    fn at_index(&self, idx: Self::Index) -> std::result::Result<Self::Value, DLLError>;
 }
 
 macro_rules! heap_reader {
@@ -47,7 +55,7 @@ macro_rules! heap_reader {
                 }
             }
 
-            fn at_index(&$s, $val: Self::Index) -> Result<Self::Value> {
+            fn at_index(&$s, $val: Self::Index) -> std::result::Result<Self::Value, DLLError> {
                 $e
             }
         }
@@ -60,12 +68,22 @@ macro_rules! heap_reader {
     };
 }
 
-fn read_bytes(bytes: &[u8], idx: usize) -> Result<&[u8]> {
+fn map_heap_error(heap: &'static str, error: ScrollError) -> DLLError {
+    match error {
+        ScrollError::BadOffset(offset) => ParseError::HeapOutOfRange { heap, offset }.into(),
+        ScrollError::TooBig { len, .. } => ParseError::Truncated { offset: len }.into(),
+        other => other.into(),
+    }
+}
+
+fn read_bytes<'a>(heap: &'static str, bytes: &'a [u8], idx: usize) -> std::result::Result<&'a [u8], DLLError> {
     let mut offset = idx;
 
-    let compressed::Unsigned(size) = bytes.gread(&mut offset)?;
+    let compressed::Unsigned(size) = bytes.gread(&mut offset).map_err(|error| map_heap_error(heap, error))?;
 
-    bytes.pread_with(offset, size as usize)
+    bytes
+        .pread_with(offset, size as usize)
+        .map_err(|error| map_heap_error(heap, error))
 }
 
 heap_reader!(
@@ -78,7 +96,11 @@ heap_reader!(
     "#Strings",
     index::String,
     &'a str,
-    |self, idx| self.bytes.pread_with(idx.0, StrCtx::Delimiter(0))
+    |self, idx| {
+        self.bytes
+            .pread_with(idx.0, StrCtx::Delimiter(0))
+            .map_err(|error| map_heap_error(Self::NAME, error))
+    }
 );
 heap_reader!(
     /// Reader for the `#Blob` heap.
@@ -90,7 +112,7 @@ heap_reader!(
     "#Blob",
     index::Blob,
     &'a [u8],
-    |self, idx| read_bytes(self.bytes, idx.0)
+    |self, idx| read_bytes(Self::NAME, self.bytes, idx.0)
 );
 heap_reader!(
     /// Reader for the `#GUID` heap.
@@ -105,7 +127,8 @@ heap_reader!(
     |self, idx| {
         let mut buf = [0_u8; 16];
         self.bytes
-            .gread_inout_with(&mut ((idx.0 - 1) * 16), &mut buf, scroll::LE)?;
+            .gread_inout_with(&mut ((idx.0 - 1) * 16), &mut buf, scroll::LE)
+            .map_err(|error| map_heap_error(Self::NAME, error))?;
         Ok(buf)
     }
 );
@@ -121,19 +144,23 @@ heap_reader!(
     usize,
     Vec<u16>,
     |self, idx| {
-        let bytes = read_bytes(self.bytes, idx)?;
+        let bytes = read_bytes(Self::NAME, self.bytes, idx)?;
 
         let num_utf16 = (bytes.len() - 1) / 2;
         let offset = &mut 0;
         let chars = (0..num_utf16)
-            .map(|_| bytes.gread_with::<u16>(offset, scroll::LE))
-            .collect::<Result<_>>()?;
+            .map(|_| {
+                bytes
+                    .gread_with::<u16>(offset, scroll::LE)
+                    .map_err(|error| map_heap_error(Self::NAME, error))
+            })
+            .collect::<std::result::Result<_, DLLError>>()?;
 
         Ok(chars)
     }
 );
 
-fn write_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
+fn write_bytes(bytes: &[u8]) -> scroll::Result<Vec<u8>> {
     let len = bytes.len();
 
     let mut buf = vec![0_u8; len];
@@ -165,7 +192,11 @@ pub trait Writer {
     fn new() -> Self;
 
     /// Writes `value` into the heap (or reuses an interned entry) and returns its index.
-    fn write(&mut self, value: &Self::Value) -> Result<Self::Index>;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the heap-specific encoding fails.
+    fn write(&mut self, value: &Self::Value) -> std::result::Result<Self::Index, DLLError>;
 
     /// Returns the finalized heap stream bytes.
     fn into_vec(self) -> Vec<u8>;
@@ -194,7 +225,7 @@ macro_rules! heap_writer {
                 self.buffer
             }
 
-            fn write(&mut $s, $n: &Self::Value) -> Result<Self::Index> {
+            fn write(&mut $s, $n: &Self::Value) -> std::result::Result<Self::Index, DLLError> {
                 let h = hash($n);
 
                 Ok(match $s.index_cache.get(&h) {
@@ -293,3 +324,23 @@ heap_writer!(
         start
     }
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heap_out_of_range_is_structured_parse_error() {
+        let strings = StringsReader::new(&[0]);
+        let result = std::panic::catch_unwind(|| strings.at_index(index::String(4)))
+            .expect("out-of-range heap index should not panic");
+
+        assert!(matches!(
+            result,
+            Err(DLLError::Parse(ParseError::HeapOutOfRange {
+                heap: "#Strings",
+                offset: 4,
+            }))
+        ));
+    }
+}

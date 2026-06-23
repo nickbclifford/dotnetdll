@@ -4,7 +4,7 @@ use super::{
 };
 use crate::binary::{heap::*, metadata};
 use crate::convert::{self, TypeKind};
-use crate::dll::{DLL, DLLError::*, Result};
+use crate::dll::{DLL, DLLError, ParseError, ResolveError, Result, ValidityError};
 use crate::prelude::generic::{Constraint, Generic, SpecialConstraint, Variance};
 use crate::resolved::{types::MemberType, *};
 use rustc_hash::FxHashMap as HashMap;
@@ -99,12 +99,6 @@ pub struct Options {
     pub lazy_attributes: bool,
 }
 
-macro_rules! throw {
-    ($($arg:tt)*) => {
-        return Err(CLI(scroll::Error::Custom(format!($($arg)*))))
-    }
-}
-
 macro_rules! heap_idx {
     ($heap:ident, $idx:expr) => {
         Cow::Borrowed($heap.at_index($idx)?)
@@ -175,15 +169,45 @@ macro_rules! stage_end {
 /// a typical cold-start working set. Large assemblies (e.g. corlib) still parallelize freely.
 const MIN_PAR_LEN: usize = 256;
 
+#[inline]
+fn resolve_oob(kind: &'static str, index: usize, max: usize) -> DLLError {
+    ResolveError::IndexOutOfRange { kind, index, max }.into()
+}
+
+#[inline]
+fn resolve_bad_target(context: &'static str) -> DLLError {
+    ResolveError::BadTokenTarget { context }.into()
+}
+
+#[inline]
+fn resolve_missing_row(table: &'static str, index: usize) -> DLLError {
+    ResolveError::MissingRow { table, index }.into()
+}
+
+#[inline]
+fn resolve_index_arithmetic(context: &'static str) -> DLLError {
+    ResolveError::IndexArithmetic { context }.into()
+}
+
+#[inline]
+fn validity_bad_flags(context: &'static str, flags: u32) -> DLLError {
+    ValidityError::BadFlags { context, flags }.into()
+}
+
 // since we're dealing with raw indices and not references, we have to think about what the other indices are pointing to
 // if we remove an element, all the indices above it need to be adjusted accordingly for future iterations
+/// # Panics
+/// Panics only if the crate's own `MethodIndex` invariant is violated and a non-method member is
+/// passed to this helper (internal invariant).
 fn extract_method<'a>(
     parent: &mut types::TypeDefinition<'a>,
     idx: MethodIndex,
     methods: &mut [MethodIndex],
     tables: &metadata::table::Tables,
-) -> members::Method<'a> {
+) -> std::result::Result<members::Method<'a>, DLLError> {
     let MethodMemberIndex::Method(internal_idx) = idx.member else {
+        // Invariant: `extract_method` is only called with method-member indices.
+        debug_assert!(false, "unreachable extract_method called with non-method member index");
         unreachable!()
     };
 
@@ -192,7 +216,7 @@ fn extract_method<'a>(
         let mut max_internal: Option<(usize, usize)> = None;
 
         // look for the maximum internal index for all methods in the same type
-        let mut find_max = |start: usize, inc: isize, stop: usize| {
+        let mut find_max = |start: usize, inc: isize, stop: usize| -> Result<()> {
             let mut current_index = start;
             while methods[current_index].parent_type == idx.parent_type {
                 if let MethodMemberIndex::Method(i) = methods[current_index].member {
@@ -206,15 +230,18 @@ fn extract_method<'a>(
                 if current_index == stop {
                     break;
                 }
-                current_index = current_index.checked_add_signed(inc).unwrap();
+                current_index = current_index.checked_add_signed(inc).ok_or(ResolveError::IndexArithmetic {
+                    context: "extract_method walk",
+                })?;
             }
+            Ok(())
         };
 
         // since we only sorted on parent_type, we could land anywhere in the group with the same parent
         // so we need to iterate in both directions to make sure we don't miss anything
-        find_max(start_idx, 1, tables.method_def.len() - 1);
+        find_max(start_idx, 1, tables.method_def.len() - 1)?;
         if start_idx != 0 {
-            find_max(start_idx - 1, -1, 0);
+            find_max(start_idx - 1, -1, 0)?;
         }
 
         // once we have the maximum internal index, this corresponds to the last method in the type
@@ -224,7 +251,7 @@ fn extract_method<'a>(
         }
     }
 
-    parent.methods.swap_remove(internal_idx)
+    Ok(parent.methods.swap_remove(internal_idx))
 }
 
 fn make_generic<'a, T: TypeKind>(
@@ -241,9 +268,7 @@ fn make_generic<'a, T: TypeKind>(
             0x0 => Variance::Invariant,
             0x1 => Variance::Covariant,
             0x2 => Variance::Contravariant,
-            _ => {
-                throw!("invalid variance value 0x3 for generic parameter {}", name)
-            }
+            _ => dll_bail!(ValidityError::BadVarianceFlags { flags: p.flags }),
         },
         name,
         special_constraint: SpecialConstraint {
@@ -293,7 +318,7 @@ fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
         0x4 => Access(Family),
         0x5 => Access(FamilyORAssembly),
         0x6 => Access(Public),
-        _ => throw!("flags value 0x7 has no meaning for member accessibility"),
+        bad => dll_bail!(validity_bad_flags("member accessibility", u32::from(bad))),
     })
 }
 
@@ -312,7 +337,7 @@ fn decode_assembly<'a>(
                 0x0000 => HashAlgorithm::None,
                 0x8003 => HashAlgorithm::ReservedMD5,
                 0x8004 => HashAlgorithm::SHA1,
-                other => throw!("unrecognized assembly hash algorithm {:#06x}", other),
+                _other => dll_bail!(ParseError::BadStructure("unrecognized assembly hash algorithm")),
             },
             version: build_version!(a),
             flags: Flags::new(a.flags),
@@ -354,6 +379,9 @@ fn decode_assembly_refs<'a>(
     refs.into_iter().collect::<Result<Vec<_>>>()
 }
 
+/// # Panics
+/// Panics only if the crate's own layout-flag masking logic becomes inconsistent with the
+/// handled layout values (internal invariant).
 fn decode_type_definitions<'a>(
     tables: &metadata::table::Tables,
     strings: &StringsReader<'a>,
@@ -386,7 +414,11 @@ fn decode_type_definitions<'a>(
                         0x10 => Layout::Explicit(layout.map(|l| ExplicitLayout {
                             class_size: l.class_size as usize,
                         })),
-                        _ => unreachable!(),
+                        _ => {
+                            // Invariant: `layout_flags` is masked by `t.flags & 0x18` above.
+                            debug_assert!(false, "unreachable type layout flags outside 0x00/0x08/0x10");
+                            unreachable!()
+                        },
                     }
                 },
             ),
@@ -461,7 +493,7 @@ fn decode_resources<'a>(
                 visibility: match r.flags & 0x7 {
                     0x1 => Visibility::Public,
                     0x2 => Visibility::Private,
-                    bad => throw!("invalid visibility {:#03x} for manifest resource {}", bad, name),
+                    bad => dll_bail!(validity_bad_flags("manifest resource visibility", bad)),
                 },
                 implementation: match r.implementation {
                     BinImpl::File(f) => {
@@ -472,7 +504,11 @@ fn decode_resources<'a>(
                                 offset,
                             }
                         } else {
-                            throw!("invalid file index {} for manifest resource {}", idx, name)
+                            dll_bail!(resolve_oob(
+                                "manifest resource file",
+                                idx,
+                                files.len().saturating_sub(1),
+                            ));
                         }
                     }
                     BinImpl::AssemblyRef(a) => {
@@ -484,17 +520,18 @@ fn decode_resources<'a>(
                                 offset,
                             }
                         } else {
-                            throw!(
-                                "invalid assembly reference index {} for manifest resource {}",
+                            dll_bail!(resolve_oob(
+                                "manifest resource assembly reference",
                                 idx,
-                                name
-                            )
+                                assembly_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
-                    BinImpl::ExportedType(_) => throw!(
-                        "exported type indices are invalid in manifest resource implementations (found in resource {})",
-                        name
-                    ),
+                    BinImpl::ExportedType(_) => {
+                        dll_bail!(resolve_bad_target(
+                            "manifest resource implementation cannot target ExportedType",
+                        ));
+                    }
                     BinImpl::Null => {
                         let rva_data = dll.at_rva(&dll.cli.resources)?;
                         let len: u32 = rva_data.gread_with(&mut offset, scroll::LE)?;
@@ -540,12 +577,16 @@ fn decode_exported_types<'a>(
                                 type_def: if t_idx < tables.type_def.len() {
                                     TypeIndex(t_idx)
                                 } else {
-                                    throw!("invalid type definition index {} in exported type {}", t_idx, name)
+                                    dll_bail!(resolve_oob(
+                                        "exported type definition",
+                                        t_idx,
+                                        tables.type_def.len().saturating_sub(1),
+                                    ));
                                 },
                                 file: FileIndex(idx),
                             }
                         } else {
-                            throw!("invalid file index {} in exported type {}", idx, name)
+                            dll_bail!(resolve_oob("exported type file", idx, files.len().saturating_sub(1)));
                         }
                     }
                     Implementation::AssemblyRef(a) => {
@@ -554,7 +595,11 @@ fn decode_exported_types<'a>(
                         if idx < assembly_refs.len() {
                             TypeImplementation::TypeForwarder(AssemblyRefIndex(idx))
                         } else {
-                            throw!("invalid assembly reference index {} in exported type {}", idx, name)
+                            dll_bail!(resolve_oob(
+                                "exported type assembly reference",
+                                idx,
+                                assembly_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
                     Implementation::ExportedType(t) => {
@@ -562,10 +607,16 @@ fn decode_exported_types<'a>(
                         if idx < tables.exported_type.len() {
                             TypeImplementation::Nested(ExportedTypeIndex(idx))
                         } else {
-                            throw!("invalid nested type index {} in exported type {}", idx, name);
+                            dll_bail!(resolve_oob(
+                                "exported type nested exported type",
+                                idx,
+                                tables.exported_type.len().saturating_sub(1),
+                            ));
                         }
                     }
-                    Implementation::Null => throw!("invalid null implementation index for exported type {}", name),
+                    Implementation::Null => {
+                        dll_bail!(resolve_bad_target("exported type implementation cannot be null"));
+                    }
                 },
                 name,
             })
@@ -583,7 +634,7 @@ fn decode_module<'a>(
     let module_row = tables
         .module
         .first()
-        .ok_or_else(|| scroll::Error::Custom("missing required module metadata table".to_string()))?;
+        .ok_or(ParseError::BadStructure("missing required module metadata table"))?;
     Ok(module::Module {
         attributes: vec![],
         name: heap_idx!(strings, module_row.name),
@@ -641,7 +692,11 @@ fn decode_type_refs<'a>(
                         if idx < module_refs.len() {
                             ResolutionScope::ExternalModule(ModuleRefIndex(idx))
                         } else {
-                            throw!("invalid module reference index {} for type reference {}", idx, name)
+                            dll_bail!(resolve_oob(
+                                "type reference module reference",
+                                idx,
+                                module_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
                     BinRS::AssemblyRef(a) => {
@@ -650,7 +705,11 @@ fn decode_type_refs<'a>(
                         if idx < assembly_refs.len() {
                             ResolutionScope::Assembly(AssemblyRefIndex(idx))
                         } else {
-                            throw!("invalid assembly reference index {} for type reference {}", idx, name)
+                            dll_bail!(resolve_oob(
+                                "type reference assembly reference",
+                                idx,
+                                assembly_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
                     BinRS::TypeRef(t) => {
@@ -658,7 +717,11 @@ fn decode_type_refs<'a>(
                         if idx < tables.type_ref.len() {
                             ResolutionScope::Nested(TypeRefIndex(idx))
                         } else {
-                            throw!("invalid nested type index {} for type reference {}", idx, name);
+                            dll_bail!(resolve_oob(
+                                "type reference nested type reference",
+                                idx,
+                                tables.type_ref.len().saturating_sub(1),
+                            ));
                         }
                     }
                     BinRS::Null => ResolutionScope::Exported,
@@ -685,7 +748,13 @@ fn decode_interfaces<'a>(
                     .push((vec![], convert::read::type_source(i.interface, ctx)?));
                 interface_idxs.push((idx, t.implements.len() - 1));
             }
-            None => throw!("invalid type index {} for interface implementation", idx),
+            None => {
+                dll_bail!(resolve_oob(
+                    "interface implementation parent type",
+                    idx,
+                    types.len().saturating_sub(1),
+                ));
+            }
         }
     }
     Ok(interface_idxs)
@@ -723,7 +792,7 @@ fn decode_fields<'a>(
             use members::*;
 
             let Some(type_fields) = tables.field.get(start..end) else {
-                throw!("invalid field range in type_def {}", type_idx)
+                dll_bail!(ParseError::BadStructure("invalid field range in TypeDef row"));
             };
 
             let mut fields = Vec::with_capacity(type_fields.len());
@@ -802,6 +871,9 @@ struct DecodedMethods {
     sig_pending_def: Vec<(crate::binary::metadata::index::Blob, bool)>,
 }
 
+/// # Panics
+/// Panics only if internal flag/variant narrowing assumptions in method decoding are violated
+/// by inconsistent crate logic (internal invariant).
 fn decode_methods<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
@@ -834,7 +906,7 @@ fn decode_methods<'a>(
             use members::*;
 
             let Some(type_methods) = tables.method_def.get(start..end) else {
-                throw!("invalid method_def range in type_def {}", type_idx)
+                dll_bail!(ParseError::BadStructure("invalid method range in TypeDef row"));
             };
 
             let mut methods = Vec::with_capacity(type_methods.len());
@@ -870,7 +942,11 @@ fn decode_methods<'a>(
                     vtable_layout: match m.flags & 0x100 {
                         0x000 => VtableLayout::ReuseSlot,
                         0x100 => VtableLayout::NewSlot,
-                        _ => unreachable!(),
+                        _ => {
+                            // Invariant: `m.flags & 0x100` can only be 0x000 or 0x100.
+                            debug_assert!(false, "unreachable method vtable layout flags");
+                            unreachable!()
+                        }
                     },
                     strict: check_bitmask!(m.flags, 0x200),
                     abstract_member: check_bitmask!(m.flags, 0x400),
@@ -882,15 +958,25 @@ fn decode_methods<'a>(
                     body_format: match m.impl_flags & 0x3 {
                         0x0 => BodyFormat::IL,
                         0x1 => BodyFormat::Native,
-                        0x2 => throw!("invalid code type value OPTIL (0x2) for method {}", name),
+                        0x2 => {
+                            dll_bail!(validity_bad_flags("method implementation code type (OPTIL)", 0x2));
+                        }
                         0x3 => BodyFormat::Runtime,
-                        _ => unreachable!(),
+                        _ => {
+                            // Invariant: `m.impl_flags & 0x3` can only yield 0x0..=0x3.
+                            debug_assert!(false, "unreachable method body format flags");
+                            unreachable!()
+                        }
                     },
                     name,
                     body_management: match m.impl_flags & 0x4 {
                         0x0 => BodyManagement::Unmanaged,
                         0x4 => BodyManagement::Managed,
-                        _ => unreachable!(),
+                        _ => {
+                            // Invariant: `m.impl_flags & 0x4` can only yield 0x0 or 0x4.
+                            debug_assert!(false, "unreachable method body-management flags");
+                            unreachable!()
+                        }
                     },
                     forward_ref: check_bitmask!(m.impl_flags, 0x10),
                     preserve_sig: check_bitmask!(m.impl_flags, 0x80),
@@ -915,7 +1001,7 @@ fn decode_methods<'a>(
                 } - 1;
 
                 if tables.param.get(param_start..param_end).is_none() {
-                    throw!("invalid param range in method_def {}", m_idx)
+                    dll_bail!(ParseError::BadStructure("invalid parameter range in MethodDef row"));
                 }
 
                 if param_start != param_end {
@@ -949,6 +1035,8 @@ fn decode_methods<'a>(
 
             for (m_idx, mut method_idx) in decoded_type_method_idxs {
                 let MethodMemberIndex::Method(member_idx) = &mut method_idx.member else {
+                    // Invariant: `decode_type_methods` produces only `Method` member variants here.
+                    debug_assert!(false, "unreachable decoded method index contained non-method member variant");
                     unreachable!()
                 };
                 *member_idx += method_offset;
@@ -970,8 +1058,13 @@ fn get_field_mut<'a, 'r>(types: &'r mut [types::TypeDefinition<'a>], idx: FieldI
     &mut types[idx.parent_type.0].fields[idx.field]
 }
 
+/// # Panics
+/// Panics only if callers violate the crate invariant that this helper is invoked with
+/// `MethodMemberIndex::Method` (internal invariant).
 fn get_method_mut<'a, 'r>(types: &'r mut [types::TypeDefinition<'a>], idx: MethodIndex) -> &'r mut members::Method<'a> {
     let MethodMemberIndex::Method(member_idx) = idx.member else {
+        // Invariant: callers pass method indices that still reference method members.
+        debug_assert!(false, "unreachable get_method_mut called with non-method member index");
         unreachable!()
     };
     &mut types[idx.parent_type.0].methods[member_idx]
@@ -1075,7 +1168,11 @@ fn decode_properties<'a>(
         .map(|(map_idx, map)| {
             let type_idx = map.parent.0 - 1;
             if type_idx >= types.len() {
-                throw!("invalid parent type index {} for property map {}", type_idx, map_idx)
+                dll_bail!(resolve_oob(
+                    "property map parent type",
+                    type_idx,
+                    types.len().saturating_sub(1),
+                ));
             }
 
             let start = map.property_list.0 - 1;
@@ -1093,12 +1190,12 @@ fn decode_properties<'a>(
     let decoded_properties = owned_properties
         .par_iter()
         .with_min_len(MIN_PAR_LEN)
-        .map(|&(type_idx, start, end, map_idx)| {
+        .map(|&(type_idx, start, end, _map_idx)| {
             use crate::binary::signature::kinds::PropertySig;
             use members::*;
 
             let Some(props) = tables.property.get(start..end) else {
-                throw!("invalid property range in property_map {}", map_idx)
+                dll_bail!(ParseError::BadStructure("invalid property range in PropertyMap row"));
             };
 
             let mut properties = Vec::with_capacity(props.len());
@@ -1117,17 +1214,13 @@ fn decode_properties<'a>(
                     )
                 } else {
                     let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
-                    (
-                        !sig.has_this,
-                        convert::read::parameter(sig.property_type, ctx)?,
-                        {
-                            let mut ps = Vec::with_capacity(sig.params.len());
-                            for p in sig.params {
-                                ps.push(convert::read::parameter(p, ctx)?);
-                            }
-                            ps
-                        },
-                    )
+                    (!sig.has_this, convert::read::parameter(sig.property_type, ctx)?, {
+                        let mut ps = Vec::with_capacity(sig.params.len());
+                        for p in sig.params {
+                            ps.push(convert::read::parameter(p, ctx)?);
+                        }
+                        ps
+                    })
                 };
 
                 properties.push(Property {
@@ -1192,12 +1285,10 @@ fn decode_events<'a>(
         for (map_idx, map) in tables.event_map.iter().enumerate() {
             let type_idx = map.parent.0 - 1;
 
-            let parent = types.get_mut(type_idx).ok_or_else(|| {
-                scroll::Error::Custom(format!(
-                    "invalid parent type index {} for event map {}",
-                    type_idx, map_idx
-                ))
-            })?;
+            let max_type_idx = types.len().saturating_sub(1);
+            let Some(parent) = types.get_mut(type_idx) else {
+                dll_bail!(resolve_oob("event map parent type", type_idx, max_type_idx));
+            };
 
             let start = map.event_list.0 - 1;
             let end = match tables.event_map.get(map_idx + 1) {
@@ -1206,7 +1297,7 @@ fn decode_events<'a>(
             } - 1;
 
             let Some(type_events) = tables.event.get(start..end) else {
-                throw!("invalid event range in event_map {}", map_idx)
+                dll_bail!(ParseError::BadStructure("invalid event range in EventMap row"));
             };
 
             for (offset, event) in type_events.iter().enumerate() {
@@ -1220,26 +1311,25 @@ fn decode_events<'a>(
                 macro_rules! get_listener {
                     ($l_name:literal, $flag:literal, $variant:ident) => {{
                         let Some(entries) = sem_by_event.get_mut(&e_idx) else {
-                            throw!("could not find {} listener for event {}", $l_name, name)
+                            dll_bail!(resolve_missing_row("event listener", e_idx));
                         };
                         let Some(position) = entries
                             .iter()
                             .position(|(semantics, _)| check_bitmask!(*semantics, $flag))
                         else {
-                            throw!("could not find {} listener for event {}", $l_name, name)
+                            dll_bail!(resolve_missing_row("event listener", e_idx));
                         };
                         let (_, m_idx) = entries.swap_remove(position);
                         if m_idx < tables.method_def.len() {
-                            let method = extract_method(parent, methods[m_idx], methods, tables);
+                            let method = extract_method(parent, methods[m_idx], methods, tables)?;
                             methods[m_idx].member = MethodMemberIndex::$variant(internal_idx);
                             method
                         } else {
-                            throw!(
-                                "invalid method index {} in {} index for event {}",
+                            dll_bail!(resolve_oob(
+                                "event listener method",
                                 m_idx,
-                                $l_name,
-                                name
-                            );
+                                tables.method_def.len().saturating_sub(1),
+                            ));
                         }
                     }};
                 }
@@ -1299,21 +1389,18 @@ fn apply_method_semantics_for_type<'a>(
     for (local_raw_idx, method_idx) in methods_for_type.iter().enumerate() {
         if let MethodMemberIndex::Method(internal_idx) = method_idx.member {
             let Some(slot) = raw_by_internal.get_mut(internal_idx) else {
-                throw!(
-                    "invalid method internal index {} for type {} in method semantics",
+                dll_bail!(resolve_oob(
+                    "method semantics internal method",
                     internal_idx,
-                    parent_type
-                )
+                    raw_by_internal.len().saturating_sub(1),
+                ));
             };
             *slot = local_raw_idx;
         }
     }
 
     if raw_by_internal.contains(&usize::MAX) {
-        throw!(
-            "incomplete method index map for type {} in method semantics",
-            parent_type
-        )
+        dll_bail!(resolve_missing_row("method semantics mapping", parent_type));
     }
 
     let mut extraction_order = Vec::with_capacity(actions.len());
@@ -1323,11 +1410,15 @@ fn apply_method_semantics_for_type<'a>(
             .checked_sub(method_start)
             .filter(|idx| *idx < methods_for_type.len())
         else {
-            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+            dll_bail!(resolve_oob(
+                "method semantics method",
+                action.raw_method_idx,
+                method_start + methods_for_type.len().saturating_sub(1),
+            ));
         };
 
         let MethodMemberIndex::Method(internal_idx) = methods_for_type[local_raw_idx].member else {
-            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+            dll_bail!(resolve_bad_target("method semantics expects method member"));
         };
 
         extraction_order.push((internal_idx, action_idx, local_raw_idx));
@@ -1338,18 +1429,15 @@ fn apply_method_semantics_for_type<'a>(
 
     for (internal_idx, action_idx, expected_local_raw_idx) in extraction_order {
         let Some(&removed_local_raw_idx) = raw_by_internal.get(internal_idx) else {
-            throw!(
-                "invalid method internal index {} for type {} in method semantics",
+            dll_bail!(resolve_oob(
+                "method semantics internal method",
                 internal_idx,
-                parent_type
-            )
+                raw_by_internal.len().saturating_sub(1),
+            ));
         };
 
         if removed_local_raw_idx != expected_local_raw_idx {
-            throw!(
-                "method semantics extraction mismatch for method {}",
-                actions[action_idx].raw_method_idx
-            )
+            dll_bail!(resolve_index_arithmetic("method semantics extraction order mismatch"));
         }
 
         let moved_local_raw_idx = raw_by_internal[raw_by_internal.len() - 1];
@@ -1374,16 +1462,20 @@ fn apply_method_semantics_for_type<'a>(
             .checked_sub(method_start)
             .filter(|idx| *idx < methods_for_type.len())
         else {
-            throw!("invalid method index {} for method semantics", action.raw_method_idx)
+            dll_bail!(resolve_oob(
+                "method semantics method",
+                action.raw_method_idx,
+                method_start + methods_for_type.len().saturating_sub(1),
+            ));
         };
 
         let member_idx = &mut methods_for_type[local_raw_idx].member;
 
         match action.association {
             SemanticsAssociation::Event(idx) => {
-                let &(_, internal_idx) = events.get(idx).ok_or_else(|| {
-                    scroll::Error::Custom(format!("invalid event index {} for method semantics", idx))
-                })?;
+                let &(_, internal_idx) = events
+                    .get(idx)
+                    .ok_or_else(|| resolve_oob("method semantics event", idx, events.len().saturating_sub(1)))?;
                 let event = &mut parent.events[internal_idx];
 
                 if check_bitmask!(action.semantics, 0x20) {
@@ -1399,7 +1491,11 @@ fn apply_method_semantics_for_type<'a>(
             }
             SemanticsAssociation::Property(idx) => {
                 let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
-                    scroll::Error::Custom(format!("invalid property index {} for method semantics", idx))
+                    resolve_oob(
+                        "method semantics property",
+                        idx,
+                        properties.len().saturating_sub(1),
+                    )
                 })?;
                 let property = &mut parent.properties[internal_idx];
 
@@ -1441,7 +1537,11 @@ fn apply_method_semantics_work<'a>(
     if works.len() <= SEQUENTIAL_WORK_THRESHOLD {
         for work in works {
             let Some(type_local_idx) = work.parent_type.checked_sub(type_base).filter(|idx| *idx < types.len()) else {
-                throw!("invalid parent type index {} for method semantics", work.parent_type)
+                dll_bail!(resolve_oob(
+                    "method semantics parent type",
+                    work.parent_type,
+                    type_base + types.len().saturating_sub(1),
+                ));
             };
 
             let Some(method_start) = work
@@ -1449,7 +1549,11 @@ fn apply_method_semantics_work<'a>(
                 .checked_sub(method_base)
                 .filter(|idx| *idx <= methods.len())
             else {
-                throw!("invalid method start index {} for method semantics", work.method_start)
+                dll_bail!(resolve_oob(
+                    "method semantics start index",
+                    work.method_start,
+                    method_base + methods.len(),
+                ));
             };
 
             let Some(method_end) = work
@@ -1457,16 +1561,17 @@ fn apply_method_semantics_work<'a>(
                 .checked_sub(method_base)
                 .filter(|idx| *idx <= methods.len())
             else {
-                throw!("invalid method end index {} for method semantics", work.method_end)
+                dll_bail!(resolve_oob(
+                    "method semantics end index",
+                    work.method_end,
+                    method_base + methods.len(),
+                ));
             };
 
             let parent = &mut types[type_local_idx];
-            let methods_for_type = methods.get_mut(method_start..method_end).ok_or_else(|| {
-                scroll::Error::Custom(format!(
-                    "invalid method range {}..{} for method semantics",
-                    work.method_start, work.method_end
-                ))
-            })?;
+            let methods_for_type = methods
+                .get_mut(method_start..method_end)
+                .ok_or_else(|| resolve_index_arithmetic("invalid method range for method semantics"))?;
 
             apply_method_semantics_for_type(
                 work.parent_type,
@@ -1483,18 +1588,14 @@ fn apply_method_semantics_work<'a>(
     }
 
     let mid = works.len() / 2;
-    let split_type = works[mid].parent_type.checked_sub(type_base).ok_or_else(|| {
-        scroll::Error::Custom(format!(
-            "invalid type split for method semantics at {}",
-            works[mid].parent_type
-        ))
-    })?;
-    let split_method = works[mid].method_start.checked_sub(method_base).ok_or_else(|| {
-        scroll::Error::Custom(format!(
-            "invalid method split for method semantics at {}",
-            works[mid].method_start
-        ))
-    })?;
+    let split_type = works[mid]
+        .parent_type
+        .checked_sub(type_base)
+        .ok_or_else(|| resolve_index_arithmetic("invalid type split for method semantics"))?;
+    let split_method = works[mid]
+        .method_start
+        .checked_sub(method_base)
+        .ok_or_else(|| resolve_index_arithmetic("invalid method split for method semantics"))?;
 
     let (left_types, right_types) = types.split_at_mut(split_type);
     let (left_methods, right_methods) = methods.split_at_mut(split_method);
@@ -1595,7 +1696,9 @@ fn apply_method_semantics<'a>(
                 };
                 (SemanticsAssociation::Property(idx), include)
             }
-            HasSemantics::Null => throw!("invalid null index for method semantics",),
+            HasSemantics::Null => {
+                dll_bail!(resolve_bad_target("method semantics association cannot be null"));
+            }
         };
 
         if !include {
@@ -1603,7 +1706,11 @@ fn apply_method_semantics<'a>(
         }
 
         let Some(&method_idx) = methods.get(raw_method_idx) else {
-            throw!("invalid method index {} for method semantics", raw_method_idx)
+            dll_bail!(resolve_oob(
+                "method semantics method",
+                raw_method_idx,
+                methods.len().saturating_sub(1),
+            ));
         };
 
         semantics_by_type
@@ -1653,6 +1760,9 @@ enum DecodedMemberRef<'a> {
     Skip,
 }
 
+/// # Panics
+/// Panics only if internal metadata-routing invariants are broken (for example, impossible null
+/// generic/security owners after prior validation), indicating inconsistent crate logic.
 fn decode_member_refs<'a>(
     tables: &metadata::table::Tables,
     strings: &StringsReader<'a>,
@@ -1672,8 +1782,8 @@ fn decode_member_refs<'a>(
             use members::*;
             use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-            let name = strings.at_index(r.name).map_err(CLI)?.into();
-            let sig_blob = blobs.at_index(r.signature).map_err(CLI)?;
+            let name = strings.at_index(r.name)?.into();
+            let sig_blob = blobs.at_index(r.signature)?;
 
             let Some(&sig_kind) = sig_blob.first() else {
                 return Ok(DecodedMemberRef::Skip);
@@ -1703,7 +1813,11 @@ fn decode_member_refs<'a>(
                         if idx < module_refs.len() {
                             FieldReferenceParent::Module(ModuleRefIndex(idx))
                         } else {
-                            throw!("invalid module reference index {} for field reference {}", idx, name);
+                            dll_bail!(resolve_oob(
+                                "field reference module reference",
+                                idx,
+                                module_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
                     _ => return Ok(DecodedMemberRef::Skip),
@@ -1760,18 +1874,28 @@ fn decode_member_refs<'a>(
                         if idx < module_refs.len() {
                             MethodReferenceParent::Module(ModuleRefIndex(idx))
                         } else {
-                            throw!("invalid module reference index {} for method reference {}", idx, name);
+                            dll_bail!(resolve_oob(
+                                "method reference module reference",
+                                idx,
+                                module_refs.len().saturating_sub(1),
+                            ));
                         }
                     }
                     MemberRefParent::MethodDef(i) => {
                         let idx = i - 1;
                         match methods.get(idx) {
                             Some(&m) => MethodReferenceParent::VarargMethod(m),
-                            None => throw!("bad method def index {} for method reference {}", idx, name),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "method reference method definition",
+                                    idx,
+                                    methods.len().saturating_sub(1),
+                                ));
+                            }
                         }
                     }
                     MemberRefParent::Null => {
-                        throw!("invalid null parent index for method reference {}", name)
+                        dll_bail!(resolve_bad_target("method reference parent cannot be null"));
                     }
                 };
 
@@ -1869,14 +1993,20 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 if enclose_idx < tables.type_def.len() {
                     t.encloser = Some(TypeIndex(enclose_idx));
                 } else {
-                    throw!(
-                        "invalid enclosing type index {} for nested class declaration of type {}",
-                        nest_idx,
-                        t.name
-                    );
+                    dll_bail!(resolve_oob(
+                        "nested class enclosing type",
+                        enclose_idx,
+                        tables.type_def.len().saturating_sub(1),
+                    ));
                 }
             }
-            None => throw!("invalid type index {} for nested class declaration", nest_idx),
+            None => {
+                dll_bail!(resolve_oob(
+                    "nested class type",
+                    nest_idx,
+                    types.len().saturating_sub(1),
+                ));
+            }
         }
     }
 
@@ -1919,7 +2049,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let idx = layout.field.0 - 1;
                 match fields.get(idx) {
                     Some(&field) => Ok((field, layout.offset as usize)),
-                    None => throw!("bad parent field index {} for field layout specification", idx),
+                    None => Err(resolve_oob(
+                        "field layout parent field",
+                        idx,
+                        fields.len().saturating_sub(1),
+                    )),
                 }
             })
             .collect::<Vec<Result<_>>>()
@@ -1944,7 +2078,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let idx = rva.field.0 - 1;
                 match fields.get(idx) {
                     Some(&field) => Ok((field, dll.raw_rva(rva.rva)?.into())),
-                    None => throw!("bad parent field index {} for field RVA specification", idx),
+                    None => Err(resolve_oob(
+                        "field RVA parent field",
+                        idx,
+                        fields.len().saturating_sub(1),
+                    )),
                 }
             })
             .collect::<Vec<Result<_>>>()
@@ -1972,7 +2110,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             let MethodIndex { parent_type, member } = $unwrap;
             &mut types[parent_type.0].methods[match member {
                 MethodMemberIndex::Method(i) => i,
-                _ => unreachable!(),
+                _ => {
+                    // Invariant: this helper is only used before semantics rewriting, while
+                    // all entries are still `MethodMemberIndex::Method`.
+                    debug_assert!(false, "unreachable get_method! saw non-method member variant");
+                    unreachable!()
+                }
             }]
         }};
     }
@@ -2003,11 +2146,9 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         0x2 => CharacterSet::Ansi,
                         0x4 => CharacterSet::Unicode,
                         0x6 => CharacterSet::Auto,
-                        bad => throw!(
-                            "invalid character set specifier {:#03x} for PInvoke import {}",
-                            bad,
-                            name
-                        ),
+                        bad => {
+                            dll_bail!(validity_bad_flags("PInvoke character set specifier", u32::from(bad)));
+                        }
                     },
                     supports_last_error: check_bitmask!(i.mapping_flags, 0x40),
                     calling_convention: match i.mapping_flags & 0x700 {
@@ -2016,11 +2157,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         0x300 => UnmanagedCallingConvention::Stdcall,
                         0x400 => UnmanagedCallingConvention::Thiscall,
                         0x500 => UnmanagedCallingConvention::Fastcall,
-                        bad => throw!(
-                            "invalid calling convention specifier {:#05x} for PInvoke import {}",
-                            bad,
-                            name
-                        ),
+                        bad => {
+                            dll_bail!(validity_bad_flags(
+                                "PInvoke calling convention specifier",
+                                u32::from(bad),
+                            ));
+                        }
                     },
                     import_name: name.clone(),
                     import_scope: {
@@ -2029,7 +2171,11 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         if idx < module_refs.len() {
                             ModuleRefIndex(idx)
                         } else {
-                            throw!("invalid module reference index {} for PInvoke import {}", idx, name)
+                            dll_bail!(resolve_oob(
+                                "PInvoke import scope module reference",
+                                idx,
+                                module_refs.len().saturating_sub(1),
+                            ));
                         }
                     },
                 };
@@ -2040,7 +2186,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                         match fields.get(idx) {
                             Some(&i) => PInvokeTarget::Field(i),
-                            None => throw!("invalid field index {} for PInvoke import {}", idx, name),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "PInvoke forwarded field",
+                                    idx,
+                                    fields.len().saturating_sub(1),
+                                ));
+                            }
                         }
                     }
                     MemberForwarded::MethodDef(i) => {
@@ -2048,11 +2200,17 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                         match methods.get(idx) {
                             Some(&m) => PInvokeTarget::Method(m),
-                            None => throw!("invalid method index {} for PInvoke import {}", idx, name),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "PInvoke forwarded method",
+                                    idx,
+                                    methods.len().saturating_sub(1),
+                                ));
+                            }
                         }
                     }
                     MemberForwarded::Null => {
-                        throw!("invalid null member index for PInvoke import {}", name)
+                        dll_bail!(resolve_bad_target("PInvoke member_forwarded cannot be null"));
                     }
                 };
 
@@ -2072,7 +2230,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("security");
 
-    for (idx, s) in tables.decl_security.iter().enumerate() {
+    for s in &tables.decl_security {
         use attribute::*;
         use metadata::index::HasDeclSecurity;
 
@@ -2081,24 +2239,35 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 let t_idx = t - 1;
                 match types.get_mut(t_idx) {
                     Some(t) => &mut t.security,
-                    None => throw!("invalid type parent index {} for security declaration {}", t_idx, idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "security declaration type parent",
+                            t_idx,
+                            types.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
             HasDeclSecurity::MethodDef(m) => {
                 let m_idx = m - 1;
                 match methods.get(m_idx) {
                     Some(&m) => &mut get_method!(m).security,
-                    None => throw!("invalid method parent index {} for security declaration {}", m_idx, idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "security declaration method parent",
+                            m_idx,
+                            methods.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
             HasDeclSecurity::Assembly(_) => match &mut assembly {
                 Some(a) => &mut a.security,
-                None => throw!(
-                    "invalid assembly parent index for security declaration {} when no assembly exists in the current module",
-                    idx
-                ),
+                None => dll_bail!(resolve_missing_row("Assembly", 0)),
             },
-            HasDeclSecurity::Null => throw!("invalid null parent index for security declaration {}", idx),
+            HasDeclSecurity::Null => {
+                dll_bail!(resolve_bad_target("security declaration parent cannot be null"));
+            }
         };
 
         *parent = Some(SecurityDeclaration {
@@ -2134,14 +2303,26 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             &ctx,
                         )?);
                     }
-                    None => throw!("invalid type index {} for generic parameter {}", idx, name),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "generic parameter type owner",
+                            idx,
+                            types.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
             TypeOrMethodDef::MethodDef(i) => {
                 let idx = i - 1;
                 let method = match methods.get(idx) {
                     Some(&m) => get_method!(m),
-                    None => throw!("invalid method index {} for generic parameter {}", idx, name),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "generic parameter method owner",
+                            idx,
+                            methods.len().saturating_sub(1),
+                        ));
+                    }
                 };
 
                 method
@@ -2149,7 +2330,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     .push(make_generic(name, p, param_idx, &mut constraint_map, &tables, &ctx)?);
             }
             TypeOrMethodDef::Null => {
-                throw!("invalid null owner index for generic parameter {}", name)
+                dll_bail!(resolve_bad_target("generic parameter owner cannot be null"));
             }
         }
     }
@@ -2176,11 +2357,15 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             .map(|marshal| {
                 let idx = match marshal.parent {
                     HasFieldMarshal::Field(i) => i - 1,
-                    _ => unreachable!(),
+                    _ => {
+                        // Invariant: the iterator is filtered to `HasFieldMarshal::Field` above.
+                        debug_assert!(false, "unreachable field_marshal update with non-field parent");
+                        unreachable!()
+                    }
                 };
                 match fields.get(idx) {
                     Some(&field) => Ok((field, heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?)),
-                    None => throw!("bad field index {} for field marshal", idx),
+                    None => Err(resolve_oob("field marshal field", idx, fields.len().saturating_sub(1))),
                 }
             })
             .collect::<Vec<Result<_>>>()
@@ -2207,12 +2392,26 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                                 &mut method.parameter_metadata[p_idx - 1]
                             };
 
-                            param_meta.as_mut().unwrap().marshal = value;
+                            param_meta
+                                .as_mut()
+                                .ok_or(ResolveError::MissingRow {
+                                    table: "Param",
+                                    index: idx,
+                                })?
+                                .marshal = value;
                         }
-                        None => throw!("bad parameter index {} for field marshal", idx),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "field marshal parameter",
+                                idx,
+                                params.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
-                HasFieldMarshal::Null => throw!("invalid null parent index for field marshal"),
+                HasFieldMarshal::Null => {
+                    dll_bail!(resolve_bad_target("field marshal parent cannot be null"));
+                }
             }
         }
     }
@@ -2227,7 +2426,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
     debug!("constants");
 
-    for (idx, c) in tables.constant.iter().enumerate() {
+    for c in &tables.constant {
         use crate::binary::signature::encoded::*;
         use members::Constant::*;
         use metadata::index::HasConstant;
@@ -2260,14 +2459,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 if t == 0 {
                     Null
                 } else {
-                    throw!(
-                        "invalid class reference {:#010x} for constant {}, only null references allowed",
-                        t,
-                        idx
-                    )
+                    dll_bail!(
+                        ParseError::BadStructure("constant ELEMENT_TYPE_CLASS payload must be null reference"),
+                    );
                 }
             }
-            bad => throw!("unrecognized element type {:#04x} for constant {}", bad, idx),
+            bad => dll_bail!(ParseError::BadElementType { tag: bad }),
         });
 
         match c.parent {
@@ -2276,7 +2473,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                 match fields.get(f_idx) {
                     Some(&i) => get_field_mut(&mut types, i).default = value,
-                    None => throw!("invalid field parent index {} for constant {}", f_idx, idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "constant field parent",
+                            f_idx,
+                            fields.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
             HasConstant::Param(i) => {
@@ -2292,9 +2495,21 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             &mut method.parameter_metadata[internal - 1]
                         };
 
-                        param_meta.as_mut().unwrap().default = value;
+                        param_meta
+                            .as_mut()
+                            .ok_or(ResolveError::MissingRow {
+                                table: "Param",
+                                index: p_idx,
+                            })?
+                            .default = value;
                     }
-                    None => throw!("invalid parameter parent index {} for constant {}", p_idx, idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "constant parameter parent",
+                            p_idx,
+                            params.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
             HasConstant::Property(i) => {
@@ -2304,10 +2519,18 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     Some(&(parent, internal)) => {
                         types[parent].properties[internal].default = value;
                     }
-                    None => throw!("invalid property parent index {} for constant {}", f_idx, idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "constant property parent",
+                            f_idx,
+                            properties.len().saturating_sub(1),
+                        ));
+                    }
                 }
             }
-            HasConstant::Null => throw!("invalid null parent index for constant {}", idx),
+            HasConstant::Null => {
+                dll_bail!(resolve_bad_target("constant parent cannot be null"));
+            }
         }
     }
 
@@ -2381,7 +2604,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 implementation: convert::read::user_method(i.method_body, &m_ctx)?,
                 declaration: convert::read::user_method(i.method_declaration, &m_ctx)?,
             }),
-            None => throw!("invalid parent type index {} for method override", idx),
+            None => {
+                dll_bail!(resolve_oob(
+                    "method override parent type",
+                    idx,
+                    types.len().saturating_sub(1),
+                ));
+            }
         }
     }
 
@@ -2402,16 +2631,26 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             Some(match entry_token.target {
                 TokenTarget::Table(Kind::MethodDef) => match methods.get(entry_idx) {
                     Some(&m) => EntryPoint::Method(m),
-                    None => throw!("invalid method index {} for entry point", entry_idx),
+                    None => {
+                        dll_bail!(resolve_oob(
+                            "entry point method",
+                            entry_idx,
+                            methods.len().saturating_sub(1),
+                        ));
+                    }
                 },
                 TokenTarget::Table(Kind::File) => {
                     if entry_idx < files.len() {
                         EntryPoint::File(FileIndex(entry_idx))
                     } else {
-                        throw!("invalid file index {} for entry point", entry_idx)
+                        dll_bail!(resolve_oob(
+                            "entry point file",
+                            entry_idx,
+                            files.len().saturating_sub(1),
+                        ));
                     }
                 }
-                bad => throw!("invalid entry point metadata token {:?}", bad),
+                _ => dll_bail!(resolve_bad_target("entry point token must target MethodDef or File")),
             })
         },
         exported_types: exports,
@@ -2441,26 +2680,30 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         let m_idx = i - 1;
                         match methods.get(m_idx) {
                             Some(&m) => UserMethod::Definition(m),
-                            None => throw!(
-                                "invalid method index {} for constructor of custom attribute {}",
-                                m_idx,
-                                idx
-                            ),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "custom attribute constructor method",
+                                    m_idx,
+                                    methods.len().saturating_sub(1),
+                                ));
+                            }
                         }
                     }
                     CustomAttributeType::MemberRef(i) => {
                         let r_idx = i - 1;
                         match method_map.get(&r_idx) {
                             Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
-                            None => throw!(
-                                "invalid member reference index {} for constructor of custom attribute {}",
-                                r_idx,
-                                idx
-                            ),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "custom attribute constructor member reference",
+                                    r_idx,
+                                    method_map.len().saturating_sub(1),
+                                ));
+                            }
                         }
                     }
                     CustomAttributeType::Null => {
-                        throw!("invalid null index for constructor of custom attribute {}", idx)
+                        dll_bail!(resolve_bad_target("custom attribute constructor cannot be null"));
                     }
                 },
                 value: optional_idx!(blobs, a.value),
@@ -2482,7 +2725,12 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             let $capt = &mut res[methods[m - 1]].generic_parameters[g.number as usize];
                             $do;
                         }
-                        TypeOrMethodDef::Null => unreachable!(),
+                        TypeOrMethodDef::Null => {
+                            // Invariant: GenericParam owner rows are resolved to concrete type/method
+                            // definitions before this point.
+                            debug_assert!(false, "unreachable custom attribute generic owner is null");
+                            unreachable!()
+                        },
                     }
                 }};
             }
@@ -2492,36 +2740,52 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     let m_idx = i - 1;
                     match methods.get(m_idx) {
                         Some(&m) => res[m].attributes.push(attr),
-                        None => throw!("invalid method index {} for parent of custom attribute {}", m_idx, idx),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent method",
+                                m_idx,
+                                methods.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 Field(i) => {
                     let f_idx = i - 1;
                     match fields.get(f_idx) {
                         Some(&i) => res[i].attributes.push(attr),
-                        None => throw!("invalid field index {} for parent of custom attribute {}", f_idx, idx),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent field",
+                                f_idx,
+                                fields.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 TypeRef(i) => {
                     let r_idx = i - 1;
                     match res.type_references.get_mut(r_idx) {
                         Some(r) => r.attributes.push(attr),
-                        None => throw!(
-                            "invalid type reference index {} for parent of custom attribute {}",
-                            r_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent type reference",
+                                r_idx,
+                                res.type_references.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 TypeDef(i) => {
                     let t_idx = i - 1;
                     match res.type_definitions.get_mut(t_idx) {
                         Some(t) => t.attributes.push(attr),
-                        None => throw!(
-                            "invalid type definition index {} for parent of custom attribute {}",
-                            t_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent type definition",
+                                t_idx,
+                                res.type_definitions.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 Param(i) => {
@@ -2536,13 +2800,22 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                                 &mut method.parameter_metadata[internal - 1]
                             };
 
-                            param_meta.as_mut().unwrap().attributes.push(attr);
+                            param_meta
+                                .as_mut()
+                                .ok_or(ResolveError::MissingRow {
+                                    table: "Param",
+                                    index: p_idx,
+                                })?
+                                .attributes
+                                .push(attr);
                         }
-                        None => throw!(
-                            "invalid parameter index {} for parent of custom attribute {}",
-                            p_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent parameter",
+                                p_idx,
+                                params.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 InterfaceImpl(i) => {
@@ -2550,11 +2823,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match interface_idxs.get(i_idx) {
                         Some(&(parent, internal)) => res.type_definitions[parent].implements[internal].0.push(attr),
-                        None => throw!(
-                            "invalid interface implementation index {} for parent of custom attribute {}",
-                            i_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent interface implementation",
+                                i_idx,
+                                interface_idxs.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 MemberRef(i) => {
@@ -2564,11 +2839,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         Some(&f) => res.field_references[f].attributes.push(attr),
                         None => match method_map.get(&m_idx) {
                             Some(&m) => res.method_references[m].attributes.push(attr),
-                            None => throw!(
-                                "invalid member reference index {} for parent of custom attribute {}",
-                                m_idx,
-                                idx
-                            ),
+                            None => {
+                                dll_bail!(resolve_oob(
+                                    "custom attribute parent member reference",
+                                    m_idx,
+                                    tables.member_ref.len().saturating_sub(1),
+                                ));
+                            }
                         },
                     }
                 }
@@ -2583,26 +2860,45 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             HasDeclSecurity::TypeDef(t) => res.type_definitions[t - 1]
                                 .security
                                 .as_mut()
-                                .unwrap()
+                                .ok_or(ResolveError::MissingRow {
+                                    table: "DeclSecurity",
+                                    index: s_idx,
+                                })?
                                 .attributes
                                 .push(attr),
-                            HasDeclSecurity::MethodDef(m) => {
-                                res[methods[m - 1]].security.as_mut().unwrap().attributes.push(attr)
-                            }
+                            HasDeclSecurity::MethodDef(m) => res[methods[m - 1]]
+                                .security
+                                .as_mut()
+                                .ok_or(ResolveError::MissingRow {
+                                    table: "DeclSecurity",
+                                    index: s_idx,
+                                })?
+                                .attributes
+                                .push(attr),
                             HasDeclSecurity::Assembly(_) => res
                                 .assembly
                                 .as_mut()
                                 .and_then(|a| a.security.as_mut())
-                                .unwrap()
+                                .ok_or(ResolveError::MissingRow {
+                                    table: "DeclSecurity",
+                                    index: s_idx,
+                                })?
                                 .attributes
                                 .push(attr),
-                            HasDeclSecurity::Null => unreachable!(),
+                            HasDeclSecurity::Null => {
+                                // Invariant: custom attributes over DeclSecurity rows must target a
+                                // concrete security owner (TypeDef/MethodDef/Assembly).
+                                debug_assert!(false, "unreachable custom attribute DeclSecurity owner is null");
+                                unreachable!()
+                            },
                         },
-                        None => throw!(
-                            "invalid security declaration index {} for parent of custom attribute {}",
-                            s_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent security declaration",
+                                s_idx,
+                                tables.decl_security.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 Property(i) => {
@@ -2612,11 +2908,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         Some(&(parent, internal)) => {
                             res.type_definitions[parent].properties[internal].attributes.push(attr)
                         }
-                        None => throw!(
-                            "invalid property index {} for parent of custom attribute {}",
-                            p_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent property",
+                                p_idx,
+                                properties.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 Event(i) => {
@@ -2626,7 +2924,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         Some(&(parent, internal)) => {
                             res.type_definitions[parent].events[internal].attributes.push(attr)
                         }
-                        None => throw!("invalid event index {} for parent of custom attribute {}", e_idx, idx),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent event",
+                                e_idx,
+                                events.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 ModuleRef(i) => {
@@ -2634,30 +2938,31 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match res.module_references.get_mut(m_idx) {
                         Some(m) => m.attributes.push(attr),
-                        None => throw!(
-                            "invalid module reference index {} for parent of custom attribute {}",
-                            m_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent module reference",
+                                m_idx,
+                                res.module_references.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 Assembly(_) => match res.assembly.as_mut() {
                     Some(a) => a.attributes.push(attr),
-                    None => throw!(
-                        "custom attribute {} has the module assembly as a parent, but this module does not have an assembly",
-                        idx
-                    ),
+                    None => dll_bail!(resolve_missing_row("Assembly", 0)),
                 },
                 AssemblyRef(i) => {
                     let r_idx = i - 1;
 
                     match res.assembly_references.get_mut(r_idx) {
                         Some(a) => a.attributes.push(attr),
-                        None => throw!(
-                            "invalid assembly reference index {} for parent of custom attribute {}",
-                            r_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent assembly reference",
+                                r_idx,
+                                res.assembly_references.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 File(i) => {
@@ -2665,7 +2970,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match res.files.get_mut(f_idx) {
                         Some(f) => f.attributes.push(attr),
-                        None => throw!("invalid file index {} for parent of custom attribute {}", f_idx, idx),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent file",
+                                f_idx,
+                                res.files.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 ExportedType(i) => {
@@ -2673,11 +2984,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match res.exported_types.get_mut(e_idx) {
                         Some(e) => e.attributes.push(attr),
-                        None => throw!(
-                            "invalid exported type index {} for parent of custom attribute {}",
-                            e_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent exported type",
+                                e_idx,
+                                res.exported_types.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 ManifestResource(i) => {
@@ -2685,11 +2998,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match res.manifest_resources.get_mut(r_idx) {
                         Some(r) => r.attributes.push(attr),
-                        None => throw!(
-                            "invalid manifest resource index {} for parent of custom attribute {}",
-                            r_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent manifest resource",
+                                r_idx,
+                                res.manifest_resources.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 GenericParam(i) => {
@@ -2697,11 +3012,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
                     match tables.generic_param.get(g_idx) {
                         Some(g) => do_at_generic!(g, |rg| rg.attributes.push(attr)),
-                        None => throw!(
-                            "invalid generic parameter index {} for parent of custom attribute {}",
-                            g_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent generic parameter",
+                                g_idx,
+                                tables.generic_param.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 GenericParamConstraint(i) => {
@@ -2712,11 +3029,13 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             .type_constraints[internal]
                             .attributes
                             .push(attr)),
-                        None => throw!(
-                            "invalid generic constraint index {} for parent of custom attribute {}",
-                            g_idx,
-                            idx
-                        ),
+                        None => {
+                            dll_bail!(resolve_oob(
+                                "custom attribute parent generic parameter constraint",
+                                g_idx,
+                                tables.generic_param_constraint.len().saturating_sub(1),
+                            ));
+                        }
                     }
                 }
                 MethodSpec(_) => {
@@ -2737,17 +3056,15 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                         idx
                     );
                 }
-                Null => throw!("invalid null index for parent of custom attribute {}", idx),
+                Null => {
+                    dll_bail!(resolve_bad_target("custom attribute parent cannot be null"));
+                }
             }
         }
     } // end if !opts.lazy_attributes
     stage_end!(stage_timer, "custom attributes");
 
-    if opts.lazy_method_bodies
-        || opts.lazy_method_signatures
-        || opts.lazy_property_signatures
-        || opts.lazy_attributes
-    {
+    if opts.lazy_method_bodies || opts.lazy_method_signatures || opts.lazy_property_signatures || opts.lazy_attributes {
         stage_start!(stage_timer);
         debug!("building lazy parse state");
 

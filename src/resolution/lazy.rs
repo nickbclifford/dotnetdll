@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use rustc_hash::FxHashMap;
-use scroll::Pread;
+use scroll::{Pread, ctx::TryFromCtx};
 
 use crate::{
     binary::{
@@ -14,7 +14,7 @@ use crate::{
         signature::kinds::{CallingConvention, LocalVar, LocalVarSig, MethodRefSig, PropertySig},
     },
     convert::{self, TypeKind},
-    dll::{DLLError::*, Result},
+    dll::{DLLError::*, ResolveError, Result, ValidityError},
     resolved::{
         body,
         signature::{ManagedMethod, Parameter},
@@ -177,7 +177,10 @@ impl<'a> LazyParseState<'a> {
         }
         let body = self.decode_body_inner(def_idx)?;
         let _ = self.body_cache[def_idx].set(body);
-        Ok(self.body_cache[def_idx].get().unwrap())
+        // Invariant: this slot was just initialized via `set` above.
+        let cached = self.body_cache[def_idx].get();
+        debug_assert!(cached.is_some(), "OnceLock body cache must be initialized after set");
+        Ok(cached.unwrap())
     }
 
     fn sig_def_cache(&self) -> &Vec<OnceLock<ManagedMethod<MethodType>>> {
@@ -222,13 +225,16 @@ impl<'a> LazyParseState<'a> {
         }
         let sig = self.decode_method_def_sig_inner(def_idx)?;
         let _ = cache[def_idx].set(sig);
-        Ok(cache[def_idx].get().unwrap())
+        // Invariant: this slot was just initialized via `set` above.
+        let cached = cache[def_idx].get();
+        debug_assert!(cached.is_some(), "OnceLock method-def signature cache must be initialized after set");
+        Ok(cached.unwrap())
     }
 
     fn decode_method_def_sig_inner(&self, def_idx: usize) -> Result<ManagedMethod<MethodType>> {
         let (blob_idx, is_static) = self.sig_pending_def[def_idx];
         let ctx = self.make_ctx();
-        let mut sig = convert::read::managed_method(self.blobs.at_index(blob_idx)?.pread(0).map_err(CLI)?, &ctx)?;
+        let mut sig = convert::read::managed_method(self.blobs.at_index(blob_idx)?.pread(0).map_err(Decode)?, &ctx)?;
         if is_static {
             sig.instance = false;
         }
@@ -245,13 +251,16 @@ impl<'a> LazyParseState<'a> {
         }
         let sig = self.decode_method_ref_sig_inner(ref_idx)?;
         let _ = cache[ref_idx].set(sig);
-        Ok(cache[ref_idx].get().unwrap())
+        // Invariant: this slot was just initialized via `set` above.
+        let cached = cache[ref_idx].get();
+        debug_assert!(cached.is_some(), "OnceLock method-ref signature cache must be initialized after set");
+        Ok(cached.unwrap())
     }
 
     fn decode_method_ref_sig_inner(&self, ref_idx: usize) -> Result<ManagedMethod<MethodType>> {
         let blob_idx = self.sig_pending_ref[ref_idx];
         let sig_blob = self.blobs.at_index(blob_idx)?;
-        let ref_sig: MethodRefSig = sig_blob.pread(0).map_err(CLI)?;
+        let ref_sig: MethodRefSig = sig_blob.pread(0).map_err(Decode)?;
         let ctx = self.make_ctx();
         let mut signature = convert::read::managed_method(ref_sig.method_def, &ctx)?;
         if signature.calling_convention == CallingConvention::Vararg {
@@ -293,12 +302,15 @@ impl<'a> LazyParseState<'a> {
         }
         let sig = self.decode_property_sig_inner(def_idx)?;
         let _ = cache[def_idx].set(sig);
-        Ok(cache[def_idx].get().unwrap())
+        // Invariant: this slot was just initialized via `set` above.
+        let cached = cache[def_idx].get();
+        debug_assert!(cached.is_some(), "OnceLock property signature cache must be initialized after set");
+        Ok(cached.unwrap())
     }
 
     fn decode_property_sig_inner(&self, def_idx: usize) -> Result<PropertySignatureData> {
         let blob_idx = self.sig_pending_property[def_idx];
-        let sig: PropertySig = self.blobs.at_index(blob_idx)?.pread(0).map_err(CLI)?;
+        let sig: PropertySig = self.blobs.at_index(blob_idx)?.pread(0).map_err(Decode)?;
         let ctx = self.make_ctx();
 
         let property_type = convert::read::parameter(sig.property_type, &ctx)?;
@@ -323,24 +335,15 @@ impl<'a> LazyParseState<'a> {
             .collect()
     }
 
-    pub fn type_attributes(
-        &self,
-        type_def_idx: usize,
-    ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
+    pub fn type_attributes(&self, type_def_idx: usize) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
         self.raw_to_attrs(self.attr_by_type.get(&type_def_idx).map_or(&[], Vec::as_slice))
     }
 
-    pub fn method_attributes(
-        &self,
-        method_def_idx: usize,
-    ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
+    pub fn method_attributes(&self, method_def_idx: usize) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
         self.raw_to_attrs(self.attr_by_method.get(&method_def_idx).map_or(&[], Vec::as_slice))
     }
 
-    pub fn field_attributes(
-        &self,
-        field_def_idx: usize,
-    ) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
+    pub fn field_attributes(&self, field_def_idx: usize) -> Result<Vec<crate::resolved::attribute::Attribute<'a>>> {
         self.raw_to_attrs(self.attr_by_field.get(&field_def_idx).map_or(&[], Vec::as_slice))
     }
 
@@ -360,14 +363,11 @@ impl<'a> LazyParseState<'a> {
     }
 
     fn decode_body_inner(&self, def_idx: usize) -> Result<body::Method> {
-        let pending = self.pending[def_idx].as_ref().ok_or_else(|| {
-            CLI(scroll::Error::Custom(format!(
-                "method_def[{}] has no body (rva == 0)",
-                def_idx
-            )))
-        })?;
+        let pending = self.pending[def_idx]
+            .as_ref()
+            .ok_or(ResolveError::LazyLookupFailed("method has no body (rva == 0)"))?;
 
-        let raw_body: method::Method = pending.bytes.pread(pending.offset).map_err(CLI)?;
+        let raw_body: method::Method = pending.bytes.pread(pending.offset).map_err(Decode)?;
 
         let ctx = self.make_ctx();
         let m_ctx = convert::read::MethodContext {
@@ -404,15 +404,14 @@ pub(crate) fn decode_body_with_ctx(
             let local_variables = if local_var_sig_tok == 0 {
                 vec![]
             } else {
-                let tok: Token = local_var_sig_tok.to_le_bytes().pread(0).map_err(CLI)?;
-                if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig))
-                    && tok.index <= ctx.sigs.len()
-                {
+                let (tok, _): (Token, usize) =
+                    <Token as TryFromCtx>::try_from_ctx(&local_var_sig_tok.to_le_bytes(), ())?;
+                if matches!(tok.target, TokenTarget::Table(Kind::StandAloneSig)) && tok.index <= ctx.sigs.len() {
                     let vars: LocalVarSig = ctx
                         .blobs
                         .at_index(ctx.sigs[tok.index - 1].signature)?
                         .pread(0)
-                        .map_err(CLI)?;
+                        .map_err(Decode)?;
 
                     let mut lv = Vec::with_capacity(vars.0.len());
                     for v in vars.0 {
@@ -439,10 +438,10 @@ pub(crate) fn decode_body_with_ctx(
                     }
                     lv
                 } else {
-                    return Err(CLI(scroll::Error::Custom(format!(
-                        "invalid local variable signature token {:?}",
-                        tok
-                    ))));
+                    return Err(ResolveError::BadTokenTarget {
+                        context: "local variable signature token must target StandAloneSig",
+                    }
+                    .into());
                 }
             };
             body::Header {
@@ -467,19 +466,29 @@ pub(crate) fn decode_body_with_ctx(
 
     macro_rules! get_offset {
         ($byte:expr, $name:literal) => {{
-            let max = instr_offsets.iter().max().unwrap();
-            if $byte as usize == max + 1 {
+            if instr_offsets.is_empty() {
+                return Err(ResolveError::IndexOutOfRange {
+                    kind: "instruction offset",
+                    index: $byte as usize,
+                    max: 0,
+                }
+                .into());
+            }
+            let max = instr_offsets.iter().max().ok_or(ResolveError::IndexOutOfRange {
+                kind: "instruction offset",
+                index: $byte as usize,
+                max: 0,
+            })?;
+            if $byte as usize == *max + 1 {
                 instr_offsets.len()
             } else {
-                instr_offsets
-                    .iter()
-                    .position(|&i| i == $byte as usize)
-                    .ok_or_else(|| {
-                        CLI(scroll::Error::Custom(format!(
-                            "could not find corresponding instruction for {} offset {}",
-                            $name, $byte
-                        )))
-                    })?
+                instr_offsets.iter().position(|&i| i == $byte as usize).ok_or_else(|| {
+                    ResolveError::IndexOutOfRange {
+                        kind: $name,
+                        index: $byte as usize,
+                        max: *max + 1,
+                    }
+                })?
             }
         }};
     }
@@ -493,10 +502,7 @@ pub(crate) fn decode_body_with_ctx(
                 for h in e {
                     let kind = match h.flags {
                         0 => body::ExceptionKind::TypedException(convert::read::type_token(
-                            h.class_token_or_filter
-                                .to_le_bytes()
-                                .pread::<Token>(0)
-                                .map_err(CLI)?,
+                            <Token as TryFromCtx>::try_from_ctx(&h.class_token_or_filter.to_le_bytes(), ())?.0,
                             ctx,
                         )?),
                         1 => body::ExceptionKind::Filter {
@@ -505,10 +511,7 @@ pub(crate) fn decode_body_with_ctx(
                         2 => body::ExceptionKind::Finally,
                         4 => body::ExceptionKind::Fault,
                         bad => {
-                            return Err(CLI(scroll::Error::Custom(format!(
-                                "invalid exception clause type {:#06x}",
-                                bad
-                            ))))
+                            return Err(ValidityError::BadExceptionClauseFlags { flags: bad }.into());
                         }
                     };
 
@@ -520,8 +523,7 @@ pub(crate) fn decode_body_with_ctx(
                         try_offset,
                         try_length: get_offset!(h.try_offset + h.try_length, "try") - try_offset,
                         handler_offset,
-                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler")
-                            - handler_offset,
+                        handler_length: get_offset!(h.handler_offset + h.handler_length, "handler") - handler_offset,
                     });
                 }
                 body::DataSection::ExceptionHandlers(exceptions)
@@ -543,4 +545,71 @@ pub(crate) fn decode_body_with_ctx(
         instructions: instrs,
         data_sections,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::binary::{
+        heap::{BlobReader, Reader, UserStringReader},
+        method::{DataSection, Exception, Header, Method, SectionKind},
+    };
+    use rustc_hash::FxHashMap;
+
+    #[test]
+    fn empty_instruction_exception_offsets_return_structured_error_without_panic() {
+        let blobs = BlobReader::new(&[]);
+        let userstrings = UserStringReader::new(&[]);
+        let specs = [];
+        let sigs = [];
+        let ctx = convert::read::Context {
+            def_len: 0,
+            ref_len: 0,
+            specs: &specs,
+            sigs: &sigs,
+            blobs: &blobs,
+            userstrings: &userstrings,
+        };
+
+        let field_map = FxHashMap::default();
+        let field_indices = [];
+        let method_specs = [];
+        let method_indices = [];
+        let method_map = FxHashMap::default();
+        let m_ctx = convert::read::MethodContext {
+            field_map: &field_map,
+            field_indices: &field_indices,
+            method_specs: &method_specs,
+            method_indices: &method_indices,
+            method_map: &method_map,
+        };
+
+        let raw_body = Method {
+            header: Header::Tiny { size: 0 },
+            body: vec![],
+            data_sections: vec![DataSection {
+                more_sections: false,
+                section: SectionKind::Exceptions(vec![Exception {
+                    flags: 1,
+                    try_offset: 0,
+                    try_length: 0,
+                    handler_offset: 0,
+                    handler_length: 0,
+                    class_token_or_filter: 0,
+                }]),
+            }],
+        };
+
+        let result = std::panic::catch_unwind(|| decode_body_with_ctx(raw_body, &ctx, &m_ctx))
+            .expect("empty instruction exception offsets should not panic");
+
+        assert!(matches!(
+            result,
+            Err(crate::dll::DLLError::Resolve(ResolveError::IndexOutOfRange {
+                kind: "instruction offset",
+                index: 0,
+                max: 0,
+            }))
+        ));
+    }
 }

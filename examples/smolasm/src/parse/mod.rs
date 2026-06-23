@@ -1,6 +1,6 @@
 use combinators::Combinators;
-use pest::iterators::Pair;
 use pest::Parser;
+use pest::iterators::Pair;
 use pest_derive::Parser;
 
 use super::ast;

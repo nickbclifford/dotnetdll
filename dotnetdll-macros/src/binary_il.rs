@@ -4,7 +4,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, Field, Fields, Result, Token, Variant};
+use syn::{Field, Fields, Result, Token, Variant, braced};
 
 // separate prefix and normal instruction declarations
 pub struct Instructions {
@@ -254,7 +254,13 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                     // check all valid suffixes
                     #(#normal_suffixes,)*
                     #(#composed_suffixes,)*
-                    bad => throw!("bad suffix instruction {:?} for prefix {}", bad, stringify!(#prefix_name))
+                    bad => {
+                        return Err(scroll::Error::Custom(format!(
+                            "bad suffix instruction {:?} for prefix {}",
+                            bad,
+                            stringify!(#prefix_name)
+                        )))
+                    }
                 }
             }
         }
@@ -374,7 +380,10 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
         impl InstructionField for Token {
             fn parse(from: &[u8], offset: &mut usize) -> scroll::Result<Self> {
-                from.gread(offset)
+                let (tok, size) = <Token as scroll::ctx::TryFromCtx>::try_from_ctx(&from[*offset..], ())
+                    .map_err(|e| scroll::Error::Custom(e.to_string()))?;
+                *offset += size;
+                Ok(tok)
             }
 
             fn write(self, into: &mut scroll_buffer::DynamicBuffer, offset: &mut usize) -> scroll::Result<()> {
@@ -438,9 +447,16 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
                         #(#extended_parses,)*
                         // constructed prefixed instructions
                         #(#prefix_parses,)*
-                        bad => throw!("unknown extended opcode 0xFE {:#04x}", bad)
+                        bad => {
+                            return Err(scroll::Error::Custom(format!(
+                                "unknown extended opcode 0xFE {:#04x}",
+                                bad
+                            )))
+                        }
                     },
-                    bad => throw!("unknown opcode {:#04x}", bad)
+                    bad => {
+                        return Err(scroll::Error::Custom(format!("unknown opcode {:#04x}", bad)))
+                    }
                 };
 
                 Ok((val, *offset))

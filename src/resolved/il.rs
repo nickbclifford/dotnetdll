@@ -141,7 +141,7 @@
 //! # let _ = describe;
 //! ```
 
-use super::{members::*, signature, types::*, ResolvedDebug};
+use super::{ResolvedDebug, members::*, signature, types::*};
 use crate::resolution::Resolution;
 
 use dotnetdll_macros::r_instructions;
@@ -282,11 +282,7 @@ impl InstructionFlag for Option<Alignment> {
 }
 impl InstructionFlag for (&'static str, bool) {
     fn show(self) -> Flag {
-        if self.1 {
-            Some(self.0.to_string())
-        } else {
-            None
-        }
+        if self.1 { Some(self.0.to_string()) } else { None }
     }
 }
 fn show_flags(flags: impl IntoIterator<Item = Flag>) -> String {

@@ -3,7 +3,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::token::Paren;
-use syn::{parenthesized, Attribute, Ident, Token, Type};
+use syn::{Attribute, Ident, Token, Type, parenthesized};
 
 pub struct Instruction {
     flags: Vec<String>,
@@ -195,29 +195,40 @@ pub fn r_instructions(Instructions(is): Instructions) -> TokenStream {
             },
         );
 
-    let name_arms = is.iter().map(|Instruction { flags, name, fields, .. }| {
-        if flags.is_empty() {
-            if fields.is_empty() {
-                quote! { Instruction::#name => stringify!(#name) }
+    let name_arms = is.iter().map(
+        |Instruction {
+             flags, name, fields, ..
+         }| {
+            if flags.is_empty() {
+                if fields.is_empty() {
+                    quote! { Instruction::#name => stringify!(#name) }
+                } else {
+                    quote! { Instruction::#name(..) => stringify!(#name) }
+                }
             } else {
-                quote! { Instruction::#name(..) => stringify!(#name) }
+                quote! { Instruction::#name { .. } => stringify!(#name) }
             }
-        } else {
-            quote! { Instruction::#name { .. } => stringify!(#name) }
-        }
-    });
+        },
+    );
 
-    let opcode_arms = is.iter().enumerate().map(|(i, Instruction { flags, name, fields, .. })| {
-        if flags.is_empty() {
-            if fields.is_empty() {
-                quote! { Instruction::#name => #i }
+    let opcode_arms = is.iter().enumerate().map(
+        |(
+            i,
+            Instruction {
+                flags, name, fields, ..
+            },
+        )| {
+            if flags.is_empty() {
+                if fields.is_empty() {
+                    quote! { Instruction::#name => #i }
+                } else {
+                    quote! { Instruction::#name(..) => #i }
+                }
             } else {
-                quote! { Instruction::#name(..) => #i }
+                quote! { Instruction::#name { .. } => #i }
             }
-        } else {
-            quote! { Instruction::#name { .. } => #i }
-        }
-    });
+        },
+    );
 
     let from_name_arms = is.iter().enumerate().map(|(i, Instruction { name, .. })| {
         let name_str = name.to_string();

@@ -15,8 +15,8 @@ use super::index;
 use bitvec::{order::Lsb0, view::BitView};
 use num_derive::{FromPrimitive, ToPrimitive};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 
 // paste!

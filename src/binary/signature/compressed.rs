@@ -1,7 +1,8 @@
+use crate::dll::ParseError;
 use bitvec::{order::Lsb0, view::BitView};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 
 /// A compressed unsigned integer used in signature and metadata blob encodings.
@@ -37,6 +38,12 @@ impl TryFromCtx<'_> for Unsigned {
             Unsigned(if b1 >> 7 == 0 {
                 b1 as u32
             } else {
+                if b1 >> 5 == 0b111 {
+                    return Err(scroll::Error::Custom(
+                        ParseError::BadCompressedInt { offset: 0 }.to_string(),
+                    ));
+                }
+
                 let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
                     u16::from_be_bytes([b1 & 0b0011_1111, b2]) as u32
@@ -58,10 +65,9 @@ try_into_ctx!(Unsigned, |self, into| {
     } else if 0x80 <= self.0 && self.0 <= 0x3FFF {
         into.gwrite_with(self.0 as u16 | (1 << 15), offset, scroll::BE)?;
     } else if self.0 > 0x1FFF_FFFF {
-        throw!(
-            "invalid unsigned compressed integer {:#010x}, range is 0..=0x1FFFFFFF",
-            self.0
-        );
+        return Err(scroll::Error::Custom(
+            ParseError::BadStructure("invalid unsigned compressed integer, range is 0..=0x1FFFFFFF").to_string(),
+        ));
     } else {
         into.gwrite_with(self.0 | (0b11 << 30), offset, scroll::BE)?;
     }
@@ -115,6 +121,12 @@ impl TryFromCtx<'_> for Signed {
                 let value = (b1 & 0b0111_1111) as u32;
                 from_twos_complement(7, (value >> 1) | (value << 6))
             } else {
+                if b1 >> 5 == 0b111 {
+                    return Err(scroll::Error::Custom(
+                        ParseError::BadCompressedInt { offset: 0 }.to_string(),
+                    ));
+                }
+
                 let b2: u8 = from.gread_with(offset, scroll::LE)?;
                 if b1 >> 6 == 0b10 {
                     let value = u16::from_be_bytes([b1 & 0b0011_1111, b2]) as u32;
@@ -174,10 +186,9 @@ try_into_ctx!(Signed, |self, into| {
         view.set(29, false);
         into.gwrite_with(rotated, offset, scroll::BE)?;
     } else {
-        throw!(
-            "invalid signed compressed integer {}, range is (-2^28)..=(2^28 - 1)",
-            self.0
-        );
+        return Err(scroll::Error::Custom(
+            ParseError::BadStructure("invalid signed compressed integer, range is (-2^28)..=(2^28 - 1)").to_string(),
+        ));
     }
     Ok(*offset)
 });
@@ -212,5 +223,24 @@ mod tests {
         case!(Signed(-8192) => [0x80, 0x01]);
         case!(Signed(268_435_455) => [0xDF, 0xFF, 0xFF, 0xFE]);
         case!(Signed(-268_435_456) => [0xC0, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn invalid_lead_byte_is_structured_error_without_panic() {
+        let unsigned = std::panic::catch_unwind(|| [0xE0, 0, 0, 0].pread::<Unsigned>(0))
+            .expect("invalid unsigned compressed integer should not panic");
+        assert!(matches!(
+            unsigned,
+            Err(scroll::Error::Custom(message))
+                if message == ParseError::BadCompressedInt { offset: 0 }.to_string()
+        ));
+
+        let signed = std::panic::catch_unwind(|| [0xE0, 0, 0, 0].pread::<Signed>(0))
+            .expect("invalid signed compressed integer should not panic");
+        assert!(matches!(
+            signed,
+            Err(scroll::Error::Custom(message))
+                if message == ParseError::BadCompressedInt { offset: 0 }.to_string()
+        ));
     }
 }

@@ -142,7 +142,10 @@ fn field_reference(decl: ast::FieldRef, ctx: &mut Context) -> FieldRefIndex {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        println!("usage: {} <input_filename>", args.get(0).map(|s| s.as_str()).unwrap_or("smolasm"));
+        println!(
+            "usage: {} <input_filename>",
+            args.get(0).map(|s| s.as_str()).unwrap_or("smolasm")
+        );
         return;
     }
 

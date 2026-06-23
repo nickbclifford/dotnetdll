@@ -12,18 +12,12 @@ use crate::{
             kinds::{MethodDefSig, MethodSpec as MethodSpecSig, StandAloneCallingConvention, StandAloneMethodSig},
         },
     },
-    dll::{DLLError, Result},
+    dll::{ParseError, ResolveError, Result},
     resolution::*,
     resolved::{self, members::*, signature, types::*},
 };
-use scroll::Pread;
 use rustc_hash::FxHashMap as HashMap;
-
-macro_rules! throw {
-    ($($arg:tt)*) => {
-        return Err(DLLError::CLI(scroll::Error::Custom(format!($($arg)*))))
-    }
-}
+use scroll::Pread;
 
 #[derive(Debug)]
 pub struct Context<'r, 'data: 'r> {
@@ -44,19 +38,31 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -
             if idx < ctx.def_len {
                 Ok(UserType::Definition(TypeIndex(idx)))
             } else {
-                Err(format!("invalid type definition index {} for user type", idx))
+                Err(ResolveError::IndexOutOfRange {
+                    kind: "type definition",
+                    index: idx,
+                    max: ctx.def_len.saturating_sub(1),
+                }
+                .into())
             }
         }
         Table(Kind::TypeRef) => {
             if idx < ctx.ref_len {
                 Ok(UserType::Reference(TypeRefIndex(idx)))
             } else {
-                Err(format!("invalid type reference index {} for user type", idx))
+                Err(ResolveError::IndexOutOfRange {
+                    kind: "type reference",
+                    index: idx,
+                    max: ctx.ref_len.saturating_sub(1),
+                }
+                .into())
             }
         }
-        bad => Err(format!("bad metadata token target {:?} for a user type", bad)),
+        _ => Err(ResolveError::BadTokenTarget {
+            context: "user type token must target TypeDef or TypeRef",
+        }
+        .into()),
     }
-    .map_err(|e| DLLError::CLI(scroll::Error::Custom(e)))
 }
 
 #[tracing::instrument]
@@ -137,7 +143,7 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
         FnPtr(s) => BaseType::FunctionPointer(maybe_unmanaged_method(*s, ctx)?),
         GenericInstClass(tok, types) => generic_inst(tok, types, ValueKind::Class)?,
         GenericInstValueType(tok, types) => generic_inst(tok, types, ValueKind::ValueType)?,
-        bad => throw!("invalid type signature for base type {:?}", bad),
+        _ => dll_bail!(ParseError::BadStructure("invalid type signature for base type")),
     })
 }
 
@@ -152,7 +158,12 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
                     source: TypeIndex(idx).into(),
                 }))
             } else {
-                throw!("invalid type definition index {} while parsing a type", idx)
+                Err(ResolveError::IndexOutOfRange {
+                    kind: "type definition",
+                    index: idx,
+                    max: ctx.def_len.saturating_sub(1),
+                }
+                .into())
             }
         }
         TypeDefOrRef::TypeRef(i) => {
@@ -163,17 +174,30 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
                     source: TypeRefIndex(idx).into(),
                 }))
             } else {
-                throw!("invalid type reference index {} while parsing a type", idx)
+                Err(ResolveError::IndexOutOfRange {
+                    kind: "type reference",
+                    index: idx,
+                    max: ctx.ref_len.saturating_sub(1),
+                }
+                .into())
             }
         }
         TypeDefOrRef::TypeSpec(i) => {
             let idx = i - 1;
             match ctx.specs.get(idx) {
-                Some(s) => T::from_sig(ctx.blobs.at_index(s.signature)?.pread(0)?, ctx),
-                None => throw!("invalid type spec index {} while parsing a type", idx),
+                Some(s) => Ok(T::from_sig(ctx.blobs.at_index(s.signature)?.pread(0)?, ctx)?),
+                None => Err(ResolveError::IndexOutOfRange {
+                    kind: "type spec",
+                    index: idx,
+                    max: ctx.specs.len().saturating_sub(1),
+                }
+                .into()),
             }
         }
-        TypeDefOrRef::Null => throw!("invalid null type index"),
+        TypeDefOrRef::Null => Err(ResolveError::BadTokenTarget {
+            context: "type index cannot be null",
+        }
+        .into()),
     }
 }
 
@@ -194,7 +218,12 @@ pub fn idx_with_mod<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<(Ve
                     T::from_sig(blob.pread(offset)?, ctx)?,
                 ))
             }
-            None => throw!("invalid type spec index {} while parsing a type", t_idx),
+            None => Err(ResolveError::IndexOutOfRange {
+                kind: "type spec",
+                index: t_idx,
+                max: ctx.specs.len().saturating_sub(1),
+            }
+            .into()),
         }
     } else {
         Ok((vec![], type_idx(idx, ctx)?))
@@ -205,8 +234,14 @@ pub fn idx_with_mod<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<(Ve
 pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<TypeSource<T>> {
     match type_idx::<T>(idx, ctx)?.into_base() {
         Some(BaseType::Type { source, .. }) => Ok(source),
-        Some(b) => throw!("invalid type source {:?}", b),
-        None => throw!("invalid type source - {:?} refers to generic", idx),
+        Some(_) => Err(ResolveError::BadTokenTarget {
+            context: "type source does not point to a user type",
+        }
+        .into()),
+        None => Err(ResolveError::BadTokenTarget {
+            context: "type source refers to a generic parameter",
+        }
+        .into()),
     }
 }
 
@@ -274,7 +309,10 @@ pub fn type_token(tok: Token, ctx: &Context) -> Result<MethodType> {
         Table(Kind::TypeDef) => type_idx(TypeDefOrRef::TypeDef(tok.index), ctx),
         Table(Kind::TypeRef) => type_idx(TypeDefOrRef::TypeRef(tok.index), ctx),
         Table(Kind::TypeSpec) => type_idx(TypeDefOrRef::TypeSpec(tok.index), ctx),
-        bad => throw!("invalid token {:?} for method type", bad),
+        _ => Err(ResolveError::BadTokenTarget {
+            context: "method type token must target TypeDef, TypeRef, or TypeSpec",
+        }
+        .into()),
     }
 }
 
@@ -294,17 +332,34 @@ pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMetho
             let m_idx = i - 1;
             match ctx.method_indices.get(m_idx) {
                 Some(&m) => UserMethod::Definition(m),
-                None => throw!("invalid method index {} for user method", m_idx),
+                None => {
+                    dll_bail!(ResolveError::IndexOutOfRange {
+                        kind: "method",
+                        index: m_idx,
+                        max: ctx.method_indices.len().saturating_sub(1),
+                    }
+                    );
+                }
             }
         }
         MethodDefOrRef::MemberRef(i) => {
             let r_idx = i - 1;
             match ctx.method_map.get(&r_idx) {
                 Some(&m_idx) => UserMethod::Reference(MethodRefIndex(m_idx)),
-                None => throw!("invalid member reference index {} for user method", r_idx),
+                None => {
+                    dll_bail!(ResolveError::BadTokenTarget {
+                        context: "user method token member reference is not callable",
+                    }
+                    );
+                }
             }
         }
-        MethodDefOrRef::Null => throw!("invalid null index for user method"),
+        MethodDefOrRef::Null => {
+            dll_bail!(ResolveError::BadTokenTarget {
+                context: "user method index cannot be null",
+            }
+            );
+        }
     })
 }
 
@@ -314,7 +369,10 @@ fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     match tok.target {
         Table(Kind::MethodDef) => user_method(MethodDefOrRef::MethodDef(tok.index), ctx),
         Table(Kind::MemberRef) => user_method(MethodDefOrRef::MemberRef(tok.index), ctx),
-        bad => throw!("invalid token {:?} for user method", bad),
+        _ => Err(ResolveError::BadTokenTarget {
+            context: "user method token must target MethodDef or MemberRef",
+        }
+        .into()),
     }
 }
 
@@ -336,7 +394,14 @@ fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r
                         parameters,
                     })
                 }
-                None => throw!("invalid method spec index {} for method source", idx),
+                None => {
+                    dll_bail!(ResolveError::IndexOutOfRange {
+                        kind: "method spec",
+                        index: idx,
+                        max: m_ctx.method_specs.len().saturating_sub(1),
+                    }
+                    );
+                }
             }
         }
         _ => MethodSource::User(user_method_token(tok, m_ctx)?),
@@ -350,13 +415,30 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
     Ok(match tok.target {
         Table(Kind::Field) => match ctx.field_indices.get(idx) {
             Some(&i) => FieldSource::Definition(i),
-            None => throw!("bad field index {} for field source", idx),
+            None => {
+                dll_bail!(ResolveError::IndexOutOfRange {
+                    kind: "field",
+                    index: idx,
+                    max: ctx.field_indices.len().saturating_sub(1),
+                }
+                );
+            }
         },
         Table(Kind::MemberRef) => match ctx.field_map.get(&idx) {
             Some(&i) => FieldSource::Reference(FieldRefIndex(i)),
-            None => throw!("bad member reference index {} for field source", idx),
+            None => {
+                dll_bail!(ResolveError::BadTokenTarget {
+                    context: "field source member reference is not a field",
+                }
+                );
+            }
         },
-        bad => throw!("invalid token {:?} for field source", bad),
+        _ => {
+            dll_bail!(ResolveError::BadTokenTarget {
+                context: "field source token must target Field or MemberRef",
+            }
+            );
+        }
     })
 }
 
@@ -376,7 +458,7 @@ pub fn instruction<'r>(
     macro_rules! alignment {
         ($i:expr) => {
             match Alignment::from_u8($i) {
-                None => throw!("invalid alignment {}", $i),
+                None => dll_bail!(ParseError::BadStructure("invalid IL alignment prefix")),
                 s => s,
             }
         };
@@ -434,10 +516,22 @@ pub fn instruction<'r>(
                                 param0: parsed,
                             }
                         }
-                        None => throw!("invalid signature index {} for calli instruction", idx),
+                        None => {
+                            dll_bail!(ResolveError::IndexOutOfRange {
+                                kind: "standalone signature",
+                                index: idx,
+                                max: ctx.sigs.len().saturating_sub(1),
+                            }
+                            );
+                        }
                     }
                 }
-                bad => throw!("invalid metadata token {:?} for calli instruction", bad),
+                _ => {
+                    dll_bail!(ResolveError::BadTokenTarget {
+                        context: "calli token must target StandAloneSig",
+                    }
+                    )
+                }
             }
         };
     }
@@ -626,11 +720,17 @@ pub fn instruction<'r>(
     let bytesize = instruction.bytesize();
 
     let convert_offset = |i: i32| -> Result<usize> {
-        ((offset + bytesize) as i32 + i)
-            .try_into()
-            .ok()
-            .and_then(|other: usize| all_offsets.iter().position(|&o| o == other))
-            .ok_or_else(|| DLLError::CLI(scroll::Error::Custom(format!("invalid instruction offset {}", i))))
+        let target = offset
+            .checked_add(bytesize)
+            .and_then(|base| base.checked_add_signed(i as isize))
+            .ok_or(ResolveError::IndexArithmetic {
+                context: "instruction branch target offset arithmetic",
+            })?;
+
+        all_offsets
+            .iter()
+            .position(|&o| o == target)
+            .ok_or(ParseError::BadStructure("invalid instruction branch target offset").into())
     };
 
     Ok(match instruction {
@@ -794,7 +894,12 @@ pub fn instruction<'r>(
         Ldsflda(t) => Instruction::LoadStaticFieldAddress(field_source(t, m_ctx)?),
         Ldstr(t) => match t.target {
             TokenTarget::UserString => Instruction::LoadString(ctx.userstrings.at_index(t.index)?),
-            bad => throw!("invalid metadata token {:?} for ldstr instruction", bad),
+            _ => {
+                dll_bail!(ResolveError::BadTokenTarget {
+                    context: "ldstr token must target UserString",
+                }
+                );
+            }
         },
         Ldtoken(t) => {
             use TokenTarget::*;
@@ -814,7 +919,12 @@ pub fn instruction<'r>(
                         Instruction::LoadTokenMethod(method_source(t, ctx, m_ctx)?)
                     }
                 }
-                bad => throw!("invalid metadata token {:?} for ldtoken instruction", bad),
+                _ => {
+                    dll_bail!(ResolveError::BadTokenTarget {
+                        context: "ldtoken token target is invalid",
+                    }
+                    );
+                }
             }
         }
         Ldvirtftn(t) => ldvirtftn!(t | nullcheck false),

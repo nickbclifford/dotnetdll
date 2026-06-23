@@ -1,9 +1,10 @@
 use std::borrow::Cow;
 
 use super::encoded::*;
+use crate::dll::{ParseError, ValidityError};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 
 /// `SerString` payload used inside custom-attribute blobs.
@@ -121,9 +122,15 @@ impl<'a> TryFromCtx<'a> for FieldOrPropType<'a> {
             0x50 => Type,
             0x51 => Object,
             0x55 => Enum(from.gread::<SerString>(offset)?.0.ok_or_else(|| {
-                scroll::Error::Custom("null enum name encountered when parsing custom attribute".to_string())
+                scroll::Error::Custom(
+                    ParseError::BadStructure("null enum name encountered when parsing custom attribute").to_string(),
+                )
             })?),
-            bad => throw!("bad custom attribute type tag {:#04x}", bad),
+            bad => {
+                return Err(scroll::Error::Custom(
+                    ValidityError::BadCustomAttributeType { tag: bad }.to_string(),
+                ));
+            }
         };
 
         Ok((val, *offset))
@@ -480,10 +487,10 @@ mod tests {
 
     #[test]
     fn attr_args_write() -> Result<(), Box<dyn std::error::Error>> {
-        use scroll::Pwrite;
         use FixedArg::*;
         use IntegralParam::*;
         use NamedArg::*;
+        use scroll::Pwrite;
 
         const SIZE: usize = 119;
         // retrieved from ildasm

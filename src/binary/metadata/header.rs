@@ -2,12 +2,13 @@ use super::{
     index::{Sizes, TableRowCounts},
     table::{Kind, Tables},
 };
+use crate::dll::{DLLError, ParseError};
 use bitvec::access::BitSafeU8;
 use bitvec::{order::Lsb0, store::BitStore, view::BitView};
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 use scroll_buffer::DynamicBuffer;
 use std::collections::HashMap;
@@ -48,7 +49,7 @@ pub struct Header {
 }
 
 impl TryFromCtx<'_> for Header {
-    type Error = scroll::Error;
+    type Error = DLLError;
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -66,7 +67,10 @@ impl TryFromCtx<'_> for Header {
         let mut kinds = vec![];
         for (num, exists) in valid.view_bits::<Lsb0>().into_iter().enumerate() {
             if *exists {
-                kinds.push(Kind::from_usize(num).unwrap());
+                match Kind::from_usize(num) {
+                    Some(kind) => kinds.push(kind),
+                    None => return Err(ParseError::UnknownTableBit { bit: num as u8 }.into()),
+                }
             }
         }
         let pairs: Vec<(Kind, u32)> = kinds.into_iter().zip(rows).collect();
@@ -153,7 +157,7 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
         });
 
         // sizes_arr is indexed by discriminant value, so iterating 0..45 is already sorted
-        for &size in sizes_arr.iter() {
+        for &size in &sizes_arr {
             if size != 0 {
                 into.gwrite_with(size, offset, scroll::LE)?;
             }
@@ -166,5 +170,26 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
         }
 
         Ok(*offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Header;
+    use crate::dll::{DLLError, ParseError};
+    use scroll::ctx::TryFromCtx;
+
+    #[test]
+    fn returns_unknown_table_bit_error_for_out_of_range_valid_mask_bit() {
+        let mut bytes = vec![0_u8; 28];
+        bytes[8..16].copy_from_slice(&(1_u64 << 63).to_le_bytes());
+
+        let result = std::panic::catch_unwind(|| <Header as TryFromCtx>::try_from_ctx(&bytes, ()))
+            .expect("out-of-range valid bit should not panic");
+
+        assert!(matches!(
+            result,
+            Err(DLLError::Parse(ParseError::UnknownTableBit { bit: 63 }))
+        ));
     }
 }

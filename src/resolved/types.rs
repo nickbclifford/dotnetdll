@@ -102,8 +102,6 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter, Write};
 
-use thiserror::Error;
-
 /// Construct a [`MemberType`] or [`MethodType`] using ILAsm-style type syntax.
 ///
 /// This macro is intended for ergonomics when building metadata by hand.
@@ -142,6 +140,7 @@ pub use dotnetdll_macros::ctype;
 /// a name programmatically while keeping the same escaping/formatting rules.
 pub use dotnetdll_macros::type_name;
 
+use dotnetdll_macros::From;
 /// Construct an [`ExternalTypeReference`] using ILAsm-style syntax.
 ///
 /// ```rust
@@ -153,14 +152,14 @@ pub use dotnetdll_macros::type_name;
 /// # let _ = object;
 /// ```
 pub use dotnetdll_macros::type_ref;
-use dotnetdll_macros::From;
 
 use crate::{binary::signature::encoded::ArrayShape, convert::TypeKind, prelude::MaybeUnmanagedMethod, resolution::*};
 
 use super::{
+    ResolvedDebug,
     attribute::{Attribute, SecurityDeclaration},
-    generic::{show_constraints, Type},
-    members, ResolvedDebug,
+    generic::{Type, show_constraints},
+    members,
 };
 
 /// Specifies whether a type is a class or an interface.
@@ -281,6 +280,11 @@ impl Default for TypeFlags {
 }
 
 impl TypeFlags {
+    /// Decodes type-definition flags from a raw metadata bitmask.
+    ///
+    /// # Panics
+    /// Panics only if the crate's own bitmask-narrowing logic is inconsistent with the
+    /// matched masks (internal invariant).
     pub(crate) fn from_mask(bitmask: u32, layout: Layout) -> TypeFlags {
         use Accessibility::*;
 
@@ -294,13 +298,21 @@ impl TypeFlags {
                 0x5 => Nested(super::Accessibility::Assembly),
                 0x6 => Nested(super::Accessibility::FamilyANDAssembly),
                 0x7 => Nested(super::Accessibility::FamilyORAssembly),
-                _ => unreachable!(),
+                _ => {
+                    // Invariant: `bitmask & 0x7` can only yield 0x0..=0x7, all handled above.
+                    debug_assert!(false, "unreachable TypeFlags::accessibility after 0x7 mask");
+                    unreachable!()
+                },
             },
             layout,
             kind: match bitmask & 0x20 {
                 0x00 => Kind::Class,
                 0x20 => Kind::Interface,
-                _ => unreachable!(),
+                _ => {
+                    // Invariant: `bitmask & 0x20` can only yield 0x00 or 0x20.
+                    debug_assert!(false, "unreachable TypeFlags::kind after 0x20 mask");
+                    unreachable!()
+                }
             },
             abstract_type: check_bitmask!(bitmask, 0x80),
             sealed: check_bitmask!(bitmask, 0x100),
@@ -312,7 +324,11 @@ impl TypeFlags {
                 0x10000 => StringFormatting::Unicode,
                 0x20000 => StringFormatting::Automatic,
                 0x30000 => StringFormatting::Custom(bitmask & 0x00C0_0000),
-                _ => unreachable!(),
+                _ => {
+                    // Invariant: `bitmask & 0x30000` can only yield the four values covered above.
+                    debug_assert!(false, "unreachable TypeFlags::string_formatting after 0x30000 mask");
+                    unreachable!()
+                }
             },
             before_field_init: check_bitmask!(bitmask, 0x0010_0000),
             runtime_special_name: check_bitmask!(bitmask, 0x800),
@@ -877,8 +893,8 @@ pub enum BaseType<EnclosingType> {
 }
 impl<T: ResolvedDebug> ResolvedDebug for BaseType<T> {
     fn show(&self, res: &Resolution) -> String {
-        use BaseType::*;
         use super::signature::StandAloneCallingConvention::*;
+        use BaseType::*;
         match self {
             Type {
                 value_kind: value_type,
@@ -1166,13 +1182,25 @@ pub trait Resolver<'a> {
     type Error: std::error::Error;
 
     /// Finds a type by fully qualified name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Self::Error` when no matching type can be found or the
+    /// implementation's lookup backend fails.
     fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error>;
 }
 
 /// Error returned by [`AlwaysFailsResolver`].
-#[derive(Debug, Error)]
-#[error("AlwaysFailsResolver always fails (asked to find {0:?})")]
-pub struct AlwaysFails(String);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlwaysFails;
+
+impl Display for AlwaysFails {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AlwaysFailsResolver always fails")
+    }
+}
+
+impl std::error::Error for AlwaysFails {}
 
 /// [`Resolver`] implementation that always returns an error.
 ///
@@ -1183,7 +1211,7 @@ pub struct AlwaysFails(String);
 pub struct AlwaysFailsResolver;
 impl<'a> Resolver<'a> for AlwaysFailsResolver {
     type Error = AlwaysFails;
-    fn find_type(&self, name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error> {
-        Err(AlwaysFails(name.to_string()))
+    fn find_type(&self, _name: &str) -> Result<(&TypeDefinition<'a>, &Resolution<'a>), Self::Error> {
+        Err(AlwaysFails)
     }
 }

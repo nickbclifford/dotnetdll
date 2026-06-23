@@ -1,10 +1,11 @@
 use super::table::{HasKind, Kind};
+use crate::dll::{DLLError, ParseError};
 use bitvec::access::BitSafeU8;
 use bitvec::slice::BitSlice;
 use num_traits::{FromPrimitive, ToPrimitive};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 use std::{cmp::Ordering, marker::PhantomData};
 
@@ -40,7 +41,7 @@ pub struct Token {
 }
 
 impl TryFromCtx<'_> for Token {
-    type Error = scroll::Error;
+    type Error = DLLError;
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         let offset = &mut 0;
@@ -50,17 +51,16 @@ impl TryFromCtx<'_> for Token {
 
         let index = (num & 0x00FF_FFFF) as usize;
 
-        Ok((
-            Token {
-                target: if tag == 0x70 {
-                    TokenTarget::UserString
-                } else {
-                    TokenTarget::Table(Kind::from_u8(tag).unwrap())
-                },
-                index,
-            },
-            *offset,
-        ))
+        let target = if tag == 0x70 {
+            TokenTarget::UserString
+        } else {
+            match Kind::from_u8(tag) {
+                Some(kind) => TokenTarget::Table(kind),
+                None => return Err(ParseError::BadTokenTag { tag }.into()),
+            }
+        };
+
+        Ok((Token { target, index }, *offset))
     }
 }
 try_into_ctx!(Token, |self, into| {
@@ -426,3 +426,23 @@ coded_index!(
         MethodDef
     }
 );
+
+#[cfg(test)]
+mod tests {
+    use super::Token;
+    use crate::dll::{DLLError, ParseError};
+    use scroll::ctx::TryFromCtx;
+
+    #[test]
+    fn returns_bad_token_tag_error_for_unknown_tag() {
+        let bytes = ((0xFF_u32 << 24) | 1).to_le_bytes();
+
+        let result = std::panic::catch_unwind(|| <Token as TryFromCtx>::try_from_ctx(&bytes, ()))
+            .expect("unknown token tag should not panic");
+
+        assert!(matches!(
+            result,
+            Err(DLLError::Parse(ParseError::BadTokenTag { tag: 0xFF }))
+        ));
+    }
+}

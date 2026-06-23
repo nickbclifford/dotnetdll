@@ -2,7 +2,7 @@ use proc_macro2::Ident;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, Attribute, Result, Token};
+use syn::{Attribute, Result, Token, braced};
 
 pub struct CodedIndex {
     attrs: Vec<Attribute>,
@@ -58,11 +58,7 @@ pub fn coded_index(CodedIndex { attrs, name, tables }: CodedIndex) -> proc_macro
         }
     });
 
-    let target_tables = variants
-        .iter()
-        .map(|n| format!("`{n}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let target_tables = variants.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
 
     let tag_mappings = tables
         .iter()
@@ -115,7 +111,13 @@ pub fn coded_index(CodedIndex { attrs, name, tables }: CodedIndex) -> proc_macro
 
                 let val = match (coded & mask) as usize {
                     #(#from_match_arms,)*
-                    bad_tag => throw!("bad {} coded index tag {}", stringify!(#name), bad_tag)
+                    bad_tag => {
+                        return Err(scroll::Error::Custom(format!(
+                            "bad {} coded index tag {}",
+                            stringify!(#name),
+                            bad_tag
+                        )))
+                    }
                 };
 
                 Ok((val, *offset))

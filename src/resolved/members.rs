@@ -101,12 +101,12 @@
 //! ```
 
 use super::{
+    ResolvedDebug,
     attribute::{Attribute, SecurityDeclaration},
     body,
     generic::{self, show_constraints},
     signature,
     types::{CustomTypeModifier, MemberType, MethodType},
-    ResolvedDebug,
 };
 use crate::resolution::*;
 use dotnetdll_macros::From;

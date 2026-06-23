@@ -1,4 +1,4 @@
-use super::{attribute::Attribute, types, ResolvedDebug};
+use super::{ResolvedDebug, attribute::Attribute, types};
 use crate::resolution::Resolution;
 use std::borrow::Cow;
 

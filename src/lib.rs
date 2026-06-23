@@ -148,11 +148,17 @@
 //!
 //! ## Error Handling
 //!
-//! Operations that can fail return [`Result<T, DLLError>`](dll::DLLError). Common errors include:
+//! Operations that can fail return [`Result<T, DLLError>`](dll::DLLError).
+//! The crate uses a typed, layered error hierarchy:
 //!
-//! - Invalid PE format
-//! - Malformed metadata tables
-//! - Invalid signatures or IL bytecode
+//! - [`dll::DLLError::PERead`] for PE/container read failures from `object`
+//! - [`dll::DLLError::Parse`] for physical ECMA-335 decode failures (`ParseError`)
+//! - [`dll::DLLError::Validity`] for metadata that decodes but violates validity rules (`ValidityError`)
+//! - [`dll::DLLError::Resolve`] for cross-table/semantic lookup failures (`ResolveError`)
+//! - [`dll::DLLError::Decode`] for low-level `scroll` decode errors at remaining binary boundaries
+//!
+//! Internally, crate modules use the crate-local `dll_bail!` helper for typed early-returns.
+//! Legacy stringly `throw!` macro paths have been removed.
 //!
 //! ## Examples
 //!
@@ -185,8 +191,6 @@
     clippy::enum_glob_use,
     clippy::items_after_statements,
     clippy::match_wildcard_for_single_variants,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
     clippy::must_use_candidate,
     clippy::struct_excessive_bools,
     clippy::uninlined_format_args,
@@ -195,6 +199,13 @@
 
 #[macro_use]
 mod utils {
+    //! Internal utility macros and helpers shared across crate modules.
+    //!
+    //! Error-hierarchy note: `dll_bail!` is intentionally crate-local (not
+    //! `#[macro_export]`) and is the only Phase-6 structured-error helper macro.
+    //! Public/global macros remain in the semantic API layer (`access!`, `asm!`) and
+    //! are not part of the internal error-construction pipeline.
+
     macro_rules! check_bitmask {
         ($mask:expr, $val:literal) => {
             $mask & $val == $val
@@ -244,6 +255,21 @@ mod utils {
         };
     }
 
+    /// Early-return helper for the internal structured error hierarchy.
+    ///
+    /// Expands to `return Err($error.into())` so call sites can return
+    /// `ParseError`, `ResolveError`, or `ValidityError` without repeating the
+    /// conversion boilerplate.
+    ///
+    /// This macro is intentionally minimal and crate-local: it is not
+    /// `#[macro_export]`, and we intentionally do not macro-ize `ok_or(...)`,
+    /// `ok_or_else(...)`, or semantic constructor helpers.
+    macro_rules! dll_bail {
+        ($error:expr $(,)?) => {
+            return Err(::core::convert::Into::into($error))
+        };
+    }
+
     use std::hash::*;
 
     pub fn hash(val: impl Hash) -> u64 {
@@ -278,9 +304,10 @@ pub mod resolved;
 pub mod prelude {
     pub use crate::{
         access, asm,
-        dll::{DLLError, DLL},
+        dll::{DLL, DLLError},
         resolution::{read::Options as ReadOptions, utils::*, write::Options as WriteOptions, *},
         resolved::{
+            Accessibility, ResolvedDebug,
             assembly::*,
             attribute::*,
             body, generic,
@@ -290,7 +317,6 @@ pub mod prelude {
             resource,
             signature::*,
             types::{Accessibility as TypeAccessibility, *},
-            Accessibility, ResolvedDebug,
         },
     };
 }

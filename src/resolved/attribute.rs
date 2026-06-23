@@ -2,11 +2,14 @@ use scroll::{Pread, Pwrite, Result};
 use scroll_buffer::DynamicBuffer;
 use std::borrow::Cow;
 
-use crate::binary::signature::{
-    attribute::{self, *},
-    compressed::Unsigned,
+use crate::{
+    binary::signature::{
+        attribute::{self, *},
+        compressed::Unsigned,
+    },
+    dll::{ParseError, ResolveError},
+    resolution::Resolution,
 };
-use crate::resolution::Resolution;
 
 pub use attribute::{CustomAttributeData, FixedArg, IntegralParam, NamedArg};
 
@@ -16,10 +19,12 @@ use super::{
     types::*,
 };
 
-macro_rules! throw {
-    ($($arg:tt)*) => {
-        return Err(scroll::Error::Custom(format!($($arg)*)))
-    }
+fn parse_error(error: ParseError) -> scroll::Error {
+    scroll::Error::Custom(error.to_string())
+}
+
+fn resolve_error(error: ResolveError) -> scroll::Error {
+    scroll::Error::Custom(error.to_string())
 }
 
 fn parse_from_type<'def, 'inst>(
@@ -35,7 +40,11 @@ fn parse_from_type<'def, 'inst>(
             let value = src.gread_with::<u16>(offset, scroll::LE)? as u32;
             match char::from_u32(value) {
                 Some(c) => FixedArg::Char(c),
-                None => throw!("invalid UTF-32 character {:#06x}", value),
+                None => {
+                    dll_bail!(parse_error(ParseError::BadStructure(
+                        "invalid UTF-32 character in custom attribute",
+                    )));
+                }
             }
         }
         Int8 => FixedArg::Integral(IntegralParam::Int8(src.gread_with(offset, scroll::LE)?)),
@@ -51,7 +60,11 @@ fn parse_from_type<'def, 'inst>(
         String => FixedArg::String(src.gread::<SerString>(offset)?.0),
         Type => match src.gread::<SerString>(offset)?.0 {
             Some(s) => FixedArg::Type(s),
-            None => throw!("invalid null type name"),
+            None => {
+                dll_bail!(parse_error(ParseError::BadStructure(
+                    "invalid null type name in custom attribute",
+                )));
+            }
         },
         Object => FixedArg::Object(Box::new(parse_from_type(src.gread(offset)?, src, offset, resolve)?)),
         Vector(t) => {
@@ -73,7 +86,11 @@ fn parse_from_type<'def, 'inst>(
             let t = process_def(resolve(&name)?)?;
             match parse_from_type(t, src, offset, resolve)? {
                 FixedArg::Enum(name, i) => FixedArg::Enum(name, i),
-                bad => throw!("bad value {:?} for enum {}", bad, name),
+                _ => {
+                    dll_bail!(parse_error(ParseError::BadStructure(
+                        "bad enum value in custom attribute",
+                    )));
+                }
             }
         }
     })
@@ -85,13 +102,16 @@ fn process_def<'def, 'inst>(
     let Some(supertype) = &def.extends else {
         return Ok(FieldOrPropType::Object);
     };
+
     match supertype {
-        TypeSource::User(u) if u.type_name(res) == "System.Enum" => def
-            .fields
-            .iter()
-            .find(|f| f.name == "value__")
-            .ok_or(format!("cannot find underlying type for enum {}", def.type_name()))
-            .and_then(|f| match &f.return_type {
+        TypeSource::User(u) if u.type_name(res) == "System.Enum" => {
+            let value_field = def.fields.iter().find(|f| f.name == "value__").ok_or_else(|| {
+                parse_error(ParseError::BadStructure(
+                    "cannot find underlying enum field for custom attribute",
+                ))
+            })?;
+
+            match &value_field.return_type {
                 MemberType::Base(b) => match &**b {
                     BaseType::Int8 => Ok(FieldOrPropType::Int8),
                     BaseType::UInt8 => Ok(FieldOrPropType::UInt8),
@@ -101,17 +121,19 @@ fn process_def<'def, 'inst>(
                     BaseType::UInt32 => Ok(FieldOrPropType::UInt32),
                     BaseType::Int64 => Ok(FieldOrPropType::Int64),
                     BaseType::UInt64 => Ok(FieldOrPropType::UInt64),
-                    bad => Err(format!("invalid type {:?} in enum", bad)),
+                    _ => Err(parse_error(ParseError::BadStructure(
+                        "invalid enum underlying type in custom attribute",
+                    ))),
                 },
-                MemberType::TypeGeneric(_) => Err("invalid generic type in enum".to_string()),
-            }),
-        bad => Err(format!(
-            "type {} must extend System.Enum for custom attributes, not {:?}",
-            def.type_name(),
-            bad
-        )),
+                MemberType::TypeGeneric(_) => Err(parse_error(ParseError::BadStructure(
+                    "invalid generic enum underlying type in custom attribute",
+                ))),
+            }
+        }
+        _ => Err(parse_error(ParseError::BadStructure(
+            "custom attribute enum type must extend System.Enum",
+        ))),
     }
-    .map_err(scroll::Error::Custom)
 }
 
 fn method_to_type<'def, 'inst>(
@@ -133,7 +155,9 @@ fn method_to_type<'def, 'inst>(
                         }
                     }
                     TypeSource::Generic { .. } => {
-                        throw!("bad type {:?} in custom attribute constructor", ts)
+                        dll_bail!(parse_error(ParseError::BadStructure(
+                            "bad type in custom attribute constructor",
+                        )));
                     }
                 },
                 Boolean => FieldOrPropType::Boolean,
@@ -151,17 +175,21 @@ fn method_to_type<'def, 'inst>(
                 String => FieldOrPropType::String,
                 Object => FieldOrPropType::Object,
                 Vector(_, v) => FieldOrPropType::Vector(Box::new(method_to_type(v, resolution, resolve)?)),
-                bad => throw!("bad type {:?} in custom attribute constructor", bad),
+                _ => {
+                    dll_bail!(parse_error(ParseError::BadStructure(
+                        "bad type in custom attribute constructor",
+                    )));
+                }
             };
 
             Ok(t)
         }
-        MethodType::TypeGeneric(_) => {
-            throw!("type generic parameters are not allowed in custom attributes")
-        }
-        MethodType::MethodGeneric(_) => {
-            throw!("method generic parameters are not allowed in custom attributes")
-        }
+        MethodType::TypeGeneric(_) => Err(parse_error(ParseError::BadStructure(
+            "type generic parameters are not allowed in custom attributes",
+        ))),
+        MethodType::MethodGeneric(_) => Err(parse_error(ParseError::BadStructure(
+            "method generic parameters are not allowed in custom attributes",
+        ))),
     }
 }
 
@@ -176,17 +204,23 @@ fn parse_named<'def, 'inst>(
         .map(|_| {
             let kind: u8 = src.gread_with(offset, scroll::LE)?;
             let f_type: FieldOrPropType = src.gread(offset)?;
-            let name = src
-                .gread::<SerString>(offset)?
-                .0
-                .ok_or_else(|| scroll::Error::Custom("null string name found when parsing".to_string()))?;
+            let name = src.gread::<SerString>(offset)?.0.ok_or_else(|| {
+                parse_error(ParseError::BadStructure(
+                    "null string name in custom attribute named argument",
+                ))
+            })?;
 
             let value = parse_from_type(f_type, src, offset, resolve)?;
 
             Ok(match kind {
                 0x53 => NamedArg::Field(name, value),
                 0x54 => NamedArg::Property(name, value),
-                bad => throw!("bad named argument tag {:#04x}", bad),
+                bad => {
+                    dll_bail!(parse_error(ParseError::BadSignatureKind {
+                        tag: bad,
+                        context: "custom attribute named argument",
+                    }));
+                }
             })
         })
         .collect()
@@ -209,6 +243,11 @@ impl<'def, 'inst> Attribute<'inst> {
     /// Decodes the binary blob of the custom attribute into structured [`CustomAttributeData`].
     ///
     /// This requires a [`Resolver`] to find the types of enum values and named arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when attribute blob data is missing/malformed or when a
+    /// referenced enum/type name cannot be resolved through `resolver`.
     pub fn instantiation_data(
         &'inst self,
         resolver: &impl Resolver<'def>,
@@ -217,13 +256,15 @@ impl<'def, 'inst> Attribute<'inst> {
         let bytes = self
             .value
             .as_ref()
-            .ok_or_else(|| scroll::Error::Custom("null data for custom attribute".to_string()))?;
+            .ok_or_else(|| parse_error(ParseError::BadStructure("null data for custom attribute")))?;
 
         let offset = &mut 0;
 
         let prolog: u16 = bytes.gread_with(offset, scroll::LE)?;
         if prolog != 0x0001 {
-            throw!("bad custom attribute data prolog {:#06x}", prolog);
+            dll_bail!(parse_error(ParseError::BadStructure(
+                "bad custom attribute data prolog",
+            )));
         }
 
         use members::UserMethod;
@@ -233,7 +274,13 @@ impl<'def, 'inst> Attribute<'inst> {
             UserMethod::Reference(r) => &resolution[*r].signature,
         };
 
-        let resolve = |s: &str| resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()));
+        let resolve = |s: &str| {
+            resolver.find_type(s).map_err(|_| {
+                resolve_error(ResolveError::LazyLookupFailed(
+                    "failed to resolve custom attribute type",
+                ))
+            })
+        };
 
         let fixed = sig
             .parameters
@@ -242,12 +289,12 @@ impl<'def, 'inst> Attribute<'inst> {
                 ParameterType::Value(p_type) => {
                     parse_from_type(method_to_type(p_type, resolution, &resolve)?, bytes, offset, &resolve)
                 }
-                ParameterType::Ref(_) => {
-                    throw!("ref parameters are not allowed in custom attributes")
-                }
-                ParameterType::TypedReference => {
-                    throw!("TypedReference parameters are not allowed in custom attributes",)
-                }
+                ParameterType::Ref(_) => Err(parse_error(ParseError::BadStructure(
+                    "ref parameters are not allowed in custom attributes",
+                ))),
+                ParameterType::TypedReference => Err(parse_error(ParseError::BadStructure(
+                    "TypedReference parameters are not allowed in custom attributes",
+                ))),
             })
             .collect::<Result<_>>()?;
 
@@ -259,6 +306,14 @@ impl<'def, 'inst> Attribute<'inst> {
         })
     }
 
+    /// Creates a custom attribute from already-resolved constructor data.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if serializing `data` into the crate's growable in-memory
+    /// buffer fails. This is an internal invariant: `CustomAttributeData`'s
+    /// writer currently has no semantic error paths, and the destination buffer
+    /// expands as needed.
     pub fn new(constructor: members::UserMethod, data: CustomAttributeData<'inst>) -> Self {
         let mut buffer = DynamicBuffer::with_increment(8);
 
@@ -316,6 +371,11 @@ impl<'a> SecurityDeclaration<'a> {
     /// Decodes the declaration's serialized `PermissionSet` blob.
     ///
     /// The decoded output is a list of [`Permission`] values in metadata order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the permission-set blob is malformed or when a
+    /// referenced permission type cannot be resolved through `resolver`.
     pub fn requested_permissions(&'a self, resolver: &'a impl Resolver<'a>) -> Result<Vec<Permission<'a>>> {
         let offset = &mut 0;
 
@@ -323,7 +383,9 @@ impl<'a> SecurityDeclaration<'a> {
 
         let period: u8 = value.gread_with(offset, scroll::LE)?;
         if period != b'.' {
-            throw!("bad security permission set sentinel {:#04x}", period);
+            dll_bail!(parse_error(ParseError::BadStructure(
+                "bad security permission set sentinel",
+            )));
         }
 
         let Unsigned(num_attributes) = value.gread(offset)?;
@@ -334,12 +396,18 @@ impl<'a> SecurityDeclaration<'a> {
                     .gread::<SerString>(offset)?
                     .0
                     .ok_or_else(|| {
-                        scroll::Error::Custom("null attribute type name found when parsing security".to_string())
+                        parse_error(ParseError::BadStructure(
+                            "null attribute type name in security declaration",
+                        ))
                     })?
                     .into();
 
                 let fields = parse_named(value, offset, &|s| {
-                    resolver.find_type(s).map_err(|e| scroll::Error::Custom(e.to_string()))
+                    resolver.find_type(s).map_err(|_| {
+                        resolve_error(ResolveError::LazyLookupFailed(
+                            "failed to resolve security declaration type",
+                        ))
+                    })
                 })?;
 
                 Ok(Permission { type_name, fields })
@@ -347,6 +415,12 @@ impl<'a> SecurityDeclaration<'a> {
             .collect()
     }
 
+    /// Builds a new declarative security payload from decoded permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload cannot be encoded into the serialized
+    /// `PermissionSet` blob format.
     pub fn new(attributes: Vec<Attribute<'a>>, action: u16, attrs: Vec<Permission<'a>>) -> Result<Self> {
         let mut buffer = DynamicBuffer::with_increment(8);
         let offset = &mut 0;
