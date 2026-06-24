@@ -15,20 +15,21 @@ Implements the [ECMA-335](https://www.ecma-international.org/publications-and-st
 - **Inspect** types, methods, fields, IL bytecode, custom attributes, and resources
 - **Type-safe** navigation using typed indices instead of raw integers
 - **Ergonomic** macros for constructing types, signatures, and IL code
+- **Lazy reading** options to defer decoding of method bodies, signatures, and custom attributes for faster parsing of large assemblies (see [`ReadOptions`](https://docs.rs/dotnetdll/latest/dotnetdll/resolution/read/struct.Options.html))
 
 ## Quick Start
 
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-dotnetdll = "0.1"
+dotnetdll = "0.3"
 ```
 
 ### Reading a DLL
 ```rust
 use dotnetdll::prelude::*;
 
-fn main() -> Result<(), DLLError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = std::fs::read("MyLibrary.dll")?;
     let res = Resolution::parse(&bytes, ReadOptions::default())?;
 
@@ -47,7 +48,7 @@ fn main() -> Result<(), DLLError> {
 ```rust
 use dotnetdll::prelude::*;
 
-fn main() -> Result<(), DLLError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut res = Resolution::new(Module::new("HelloWorld.dll"));
     res.assembly = Some(Assembly::new("HelloWorld"));
 

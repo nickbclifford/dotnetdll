@@ -1,6 +1,6 @@
 [package]
 name = "dotnetdll"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Nick Clifford <nick@nickclifford.me>"]
 edition = "2024"
 rust-version = "1.85.1"
@@ -27,7 +27,7 @@ stage-timing = []
 [dependencies]
 bitfield = "0.19"
 bitvec = "1"
-dotnetdll-macros = { path = "dotnetdll-macros", version = "0.1.0" }
+dotnetdll-macros = { path = "dotnetdll-macros", version = "0.2.0" }
 num-traits = "0.2"
 num-derive = "0.4"
 rayon = "1"
