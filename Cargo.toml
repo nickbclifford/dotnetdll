@@ -32,7 +32,7 @@ num-traits = "0.2"
 num-derive = "0.4"
 rayon = "1"
 rustc-hash = "2"
-object = { version = "0.38", features = ['write'] }
+object = { version = "0.38", default-features = false, features = ["read", "write"] }
 paste = "1"
 scroll = { version = "0.13", features = ['derive'] }
 scroll-buffer = "0.3.2"

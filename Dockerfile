@@ -27,8 +27,8 @@ RUN curl -OL https://packages.microsoft.com/config/ubuntu/22.04/packages-microso
 
 ENV CARGO_HOME=/cargo
 
-# Install Rust (CARGO_HOME var)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain nightly
+# Install the minimum supported Rust version (CARGO_HOME var)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain 1.85.1
 
 WORKDIR /dotnetdll
-CMD ["/cargo/bin/cargo", "-Z", "sparse-registry", "test"]
+CMD ["/cargo/bin/cargo", "test", "--locked"]
