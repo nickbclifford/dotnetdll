@@ -817,11 +817,78 @@ impl<'a> Resolution<'a> {
 }
 
 #[cfg(test)]
-mod lazy_attribute_tests {
+mod lazy_read_tests {
     use super::*;
     use crate::prelude::ReadOptions;
+    use std::sync::OnceLock;
 
-    static OOP_DLL: &[u8] = include_bytes!("../../examples/smolasm/oop.dll");
+    fn test_dll() -> &'static [u8] {
+        static TEST_DLL: OnceLock<Vec<u8>> = OnceLock::new();
+
+        TEST_DLL.get_or_init(|| {
+            let mut resolution = Resolution::new(Module::new("lazy-tests.dll"));
+            resolution.assembly = Some(Assembly::new("lazy-tests"));
+
+            let attribute_type = resolution.push_type_definition(TypeDefinition::new(None, "TestAttribute"));
+            let attribute_ctor = resolution.push_method(
+                attribute_type,
+                Method::constructor(
+                    Accessibility::Public,
+                    vec![],
+                    Some(body::Method::new(asm! {
+                        Return;
+                    })),
+                ),
+            );
+
+            let subject = resolution.push_type_definition(TypeDefinition::new(None, "Subject"));
+            resolution[subject].attributes.push(Attribute::new(
+                attribute_ctor.into(),
+                CustomAttributeData {
+                    constructor_args: vec![],
+                    named_args: vec![],
+                },
+            ));
+            resolution.assembly.as_mut().unwrap().attributes.push(Attribute::new(
+                attribute_ctor.into(),
+                CustomAttributeData {
+                    constructor_args: vec![],
+                    named_args: vec![],
+                },
+            ));
+
+            resolution.push_method(
+                subject,
+                Method::new(
+                    Accessibility::Public,
+                    msig! { static void () },
+                    "Run",
+                    Some(body::Method::new(asm! {
+                        Return;
+                    })),
+                ),
+            );
+
+            let property = resolution.push_property(
+                subject,
+                Property::new(false, "Answer", Parameter::value(ctype! { int })),
+            );
+            resolution.set_property_getter(
+                property,
+                Method::new(
+                    Accessibility::Public,
+                    msig! { int () },
+                    "get_Answer",
+                    Some(body::Method::new(asm! {
+                        LoadConstantInt32 42;
+                        Return;
+                    })),
+                ),
+            );
+
+            resolution.write(WriteOptions::default()).unwrap()
+        })
+    }
 
     fn direct_method_body_count(res: &Resolution<'_>) -> usize {
         res.enumerate_type_definitions()
@@ -832,9 +899,10 @@ mod lazy_attribute_tests {
 
     #[test]
     fn lazy_attrs_match_eager_for_types() {
-        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let dll = test_dll();
+        let eager = Resolution::parse(dll, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
-            OOP_DLL,
+            dll,
             ReadOptions {
                 lazy_attributes: true,
                 ..Default::default()
@@ -842,6 +910,7 @@ mod lazy_attribute_tests {
         )
         .unwrap();
 
+        let mut attribute_count = 0;
         for (idx, _typedef) in eager.enumerate_type_definitions() {
             // In lazy mode, .attributes is always empty.
             assert!(
@@ -852,6 +921,7 @@ mod lazy_attribute_tests {
 
             let eager_attrs = eager.type_attributes(idx).unwrap();
             let lazy_attrs = lazy.type_attributes(idx).unwrap();
+            attribute_count += eager_attrs.len();
             assert_eq!(
                 eager_attrs.len(),
                 lazy_attrs.len(),
@@ -863,13 +933,15 @@ mod lazy_attribute_tests {
                 assert_eq!(e.value, l.value);
             }
         }
+        assert!(attribute_count > 0, "fixture should contain a type attribute");
     }
 
     #[test]
     fn lazy_assembly_attrs_match_eager() {
-        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let dll = test_dll();
+        let eager = Resolution::parse(dll, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
-            OOP_DLL,
+            dll,
             ReadOptions {
                 lazy_attributes: true,
                 ..Default::default()
@@ -887,6 +959,10 @@ mod lazy_attribute_tests {
 
         let eager_asm_attrs = eager.assembly_attributes().unwrap();
         let lazy_asm_attrs = lazy.assembly_attributes().unwrap();
+        assert!(
+            !eager_asm_attrs.is_empty(),
+            "fixture should contain an assembly attribute"
+        );
         assert_eq!(eager_asm_attrs.len(), lazy_asm_attrs.len());
         for (e, l) in eager_asm_attrs.iter().zip(lazy_asm_attrs.iter()) {
             assert_eq!(e.constructor, l.constructor);
@@ -896,9 +972,10 @@ mod lazy_attribute_tests {
 
     #[test]
     fn lazy_method_signatures_preserve_eager_method_bodies() {
-        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let dll = test_dll();
+        let eager = Resolution::parse(dll, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
-            OOP_DLL,
+            dll,
             ReadOptions {
                 lazy_method_signatures: true,
                 ..Default::default()
@@ -917,9 +994,10 @@ mod lazy_attribute_tests {
 
     #[test]
     fn lazy_property_signatures_match_eager() {
-        let eager = Resolution::parse(OOP_DLL, ReadOptions::default()).unwrap();
+        let dll = test_dll();
+        let eager = Resolution::parse(dll, ReadOptions::default()).unwrap();
         let lazy = Resolution::parse(
-            OOP_DLL,
+            dll,
             ReadOptions {
                 lazy_property_signatures: true,
                 ..Default::default()
@@ -935,8 +1013,10 @@ mod lazy_attribute_tests {
             "lazy_property_signatures must not imply lazy_method_bodies"
         );
 
+        let mut property_count = 0;
         for (type_idx, typedef) in eager.enumerate_type_definitions() {
             for property_idx in 0..typedef.properties.len() {
+                property_count += 1;
                 let p_idx = eager.property_index(type_idx, property_idx).unwrap();
 
                 let (e_static, e_type, e_params) = eager.property_signature(p_idx).unwrap();
@@ -947,5 +1027,6 @@ mod lazy_attribute_tests {
                 assert_eq!(e_params, l_params);
             }
         }
+        assert!(property_count > 0, "fixture should contain a property");
     }
 }
