@@ -12,7 +12,6 @@
 //! metadata layout rules in `ECMA-335, II.24.2.6`.
 
 use super::index;
-use bitvec::{order::Lsb0, view::BitView};
 use num_derive::{FromPrimitive, ToPrimitive};
 use scroll::{
     Pread, Pwrite,
@@ -96,11 +95,9 @@ macro_rules! tables {
                 pub fn valid_mask(&self) -> u64 {
                     let mut mask = 0;
 
-                    let slice = mask.view_bits_mut::<Lsb0>();
-
                     $(
                         if !self.[<$name:snake>].is_empty() {
-                            slice.set($val, true);
+                            mask |= 1u64 << $val;
                         }
                     )*
 
@@ -118,13 +115,11 @@ macro_rules! tables {
                 pub fn sorted_mask() -> u64 {
                     let mut mask = 0;
 
-                    let slice = mask.view_bits_mut::<Lsb0>();
-
                     $(
                         $(
                             // need to expand the $sort_field to only match on sorted tables
                             _ = stringify!($($sort_field),+);
-                            slice.set($val, true);
+                            mask |= 1u64 << $val;
                         )?
                     )*
 
