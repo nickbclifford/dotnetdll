@@ -29,7 +29,7 @@ pub struct Context<'r, 'data: 'r> {
     pub userstrings: &'r UserStringReader<'data>,
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -> Result<UserType> {
     use TokenTarget::*;
     let idx = token.index - 1;
@@ -65,7 +65,7 @@ pub fn user_type(TypeDefOrRefOrSpec(token): TypeDefOrRefOrSpec, ctx: &Context) -
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn custom_modifier(src: CustomMod, ctx: &Context) -> Result<CustomTypeModifier> {
     Ok(match src {
         CustomMod::Required(t) => CustomTypeModifier::Required(user_type(t, ctx)?),
@@ -73,7 +73,7 @@ pub fn custom_modifier(src: CustomMod, ctx: &Context) -> Result<CustomTypeModifi
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<BaseType<T>> {
     use Type::*;
 
@@ -147,7 +147,7 @@ pub(super) fn base_type_sig<T: TypeKind>(sig: Type, ctx: &Context) -> Result<Bas
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
     match idx {
         TypeDefOrRef::TypeDef(i) => {
@@ -201,7 +201,7 @@ pub fn type_idx<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<T> {
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn idx_with_mod<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<(Vec<CustomTypeModifier>, T)> {
     if let TypeDefOrRef::TypeSpec(i) = idx {
         let t_idx = i - 1;
@@ -230,7 +230,7 @@ pub fn idx_with_mod<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<(Ve
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<TypeSource<T>> {
     match type_idx::<T>(idx, ctx)?.into_base() {
         Some(BaseType::Type { source, .. }) => Ok(source),
@@ -245,7 +245,7 @@ pub fn type_source<T: TypeKind>(idx: TypeDefOrRef, ctx: &Context) -> Result<Type
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn parameter<T: TypeKind>(p: Param, ctx: &Context) -> Result<signature::Parameter<T>> {
     use signature::ParameterType::*;
 
@@ -265,7 +265,7 @@ pub fn parameter<T: TypeKind>(p: Param, ctx: &Context) -> Result<signature::Para
 
 macro_rules! def_method_sig {
     (fn $name:ident($type:ty) -> $sig:ident) => {
-        #[tracing::instrument]
+        #[tracing::instrument(level = "trace", skip_all)]
         pub fn $name<T: TypeKind>(sig: $type, ctx: &Context) -> Result<signature::$sig<T>> {
             use signature::*;
             {
@@ -301,7 +301,7 @@ macro_rules! def_method_sig {
 def_method_sig!(fn managed_method(MethodDefSig) -> ManagedMethod);
 def_method_sig!(fn maybe_unmanaged_method(StandAloneMethodSig) -> MaybeUnmanagedMethod);
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 
 pub fn type_token(tok: Token, ctx: &Context) -> Result<MethodType> {
     use TokenTarget::*;
@@ -325,7 +325,7 @@ pub struct MethodContext<'r> {
     pub method_map: &'r HashMap<usize, usize>,
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMethod> {
     Ok(match idx {
         MethodDefOrRef::MethodDef(i) => {
@@ -363,7 +363,7 @@ pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMetho
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     use TokenTarget::*;
     match tok.target {
@@ -376,7 +376,7 @@ fn user_method_token(tok: Token, ctx: &MethodContext) -> Result<UserMethod> {
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r>) -> Result<MethodSource> {
     use TokenTarget::*;
     Ok(match tok.target {
@@ -408,7 +408,7 @@ fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
     use TokenTarget::*;
     let idx = tok.index - 1;
@@ -442,7 +442,7 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
     })
 }
 
-#[tracing::instrument]
+#[tracing::instrument(level = "trace", skip_all)]
 #[allow(clippy::too_many_lines)]
 pub fn instruction<'r>(
     instruction: il::Instruction,
