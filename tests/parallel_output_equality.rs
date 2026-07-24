@@ -5,7 +5,57 @@ use dotnetdll::{
 
 mod common;
 
-static OOP_DLL: &[u8] = include_bytes!("../examples/smolasm/oop.dll");
+fn representative_dll() -> Vec<u8> {
+    let mut resolution = Resolution::new(Module::new("parallel-output-equality.dll"));
+    resolution.assembly = Some(Assembly::new("parallel-output-equality"));
+
+    let mscorlib = resolution.push_assembly_reference(ExternalAssemblyReference::new("mscorlib"));
+    let object = resolution.push_type_reference(type_ref! { System.Object in #mscorlib });
+    let console = resolution.push_type_reference(type_ref! { System.Console in #mscorlib });
+    let console_type: MethodType = BaseType::class(console).into();
+    let write_line = resolution.push_method_reference(method_ref! { static void #console_type::WriteLine(string) });
+
+    let subject = resolution.push_type_definition(TypeDefinition::new(None, "Subject"));
+    resolution[subject].set_extends(object);
+    let message = resolution.push_field(
+        subject,
+        Field::instance(Accessibility::Private, "message", ctype! { string }),
+    );
+
+    resolution.push_method(
+        subject,
+        Method::new(
+            Accessibility::Public,
+            msig! { static void () },
+            "Print",
+            Some(body::Method::new(asm! {
+                load_string "hello";
+                call write_line;
+                Return;
+            })),
+        ),
+    );
+
+    let property = resolution.push_property(
+        subject,
+        Property::new(false, "Message", Parameter::value(ctype! { string })),
+    );
+    resolution.set_property_getter(
+        property,
+        Method::new(
+            Accessibility::Public,
+            msig! { string () },
+            "get_Message",
+            Some(body::Method::new(asm! {
+                LoadArgument 0;
+                load_field message;
+                Return;
+            })),
+        ),
+    );
+
+    resolution.write(WriteOptions::default()).unwrap()
+}
 
 fn debug_digest<T: std::fmt::Debug>(value: &T) -> (u64, usize) {
     use std::fmt::Write;
@@ -168,8 +218,8 @@ fn assert_eager_and_lazy_all_public_fields_match(bytes: &[u8]) -> Result<(), Box
 }
 
 #[test]
-fn oop_fixture_public_resolution_fields_match() -> Result<(), Box<dyn std::error::Error>> {
-    assert_eager_and_lazy_all_public_fields_match(OOP_DLL)
+fn representative_fixture_public_resolution_fields_match() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eager_and_lazy_all_public_fields_match(&representative_dll())
 }
 
 #[test]
