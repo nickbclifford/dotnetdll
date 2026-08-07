@@ -65,9 +65,9 @@ impl TryFromCtx<'_> for Header {
         from.gread_inout_with(offset, &mut rows, scroll::LE)?;
 
         let mut kinds = vec![];
-        for (num, exists) in valid.view_bits::<Lsb0>().into_iter().enumerate() {
-            if *exists {
-                match Kind::from_usize(num) {
+        for num in 0..u64::BITS {
+            if valid & (1u64 << num) != 0 {
+                match Kind::from_usize(num as usize) {
                     Some(kind) => kinds.push(kind),
                     None => return Err(ParseError::UnknownTableBit { bit: num as u8 }.into()),
                 }
