@@ -9,6 +9,13 @@ While the crate is pre-1.0, the public API may change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated workspace dependencies, including Syn 3.0.9, Bitfield 0.20,
+  num-derive 0.5, and Criterion 0.7, while preserving the public API and
+  Rust 1.85.1 support. Object remains on 0.38 because its error type is
+  exposed in `DLLError::PERead`; Criterion 0.8 requires Rust 1.86.
+
 ## [0.3.0] - 2026-06-23
 
 ### Added

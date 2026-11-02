@@ -1,5 +1,6 @@
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dotnetdll::prelude::*;
+use std::hint::black_box;
 
 #[path = "../tests/common/env.rs"]
 mod env;
