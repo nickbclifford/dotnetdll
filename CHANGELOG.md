@@ -9,7 +9,22 @@ While the crate is pre-1.0, the public API may change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `ReadOptions::own_heap_values` and `with_own_heap_values`: optionally copy retained
+  metadata heap strings and blobs into existing `Cow::Owned` fields, reducing
+  alias-tracking costs under Miri Tree Borrows. Zero-copy parsing remains the default;
+  lazy attribute accessors honor the selected ownership policy.
+- Builder methods for all `ReadOptions` flags and a const `ReadOptions::new()` constructor.
+
 ### Changed
+
+- Store deferred method bodies as validated ranges into one shared input slice,
+  reducing live input borrows without copying IL or changing public lifetimes.
+- **Breaking:** `ReadOptions` is now `#[non_exhaustive]`. Replace downstream struct
+  literals (including those with `..Default::default()`) with `ReadOptions::default()`
+  followed by builder calls or field assignments. Resolved field types and lifetimes
+  are unchanged.
 
 - Updated workspace dependencies, including Syn 3.0.9, Bitfield 0.20,
   num-derive 0.5, and Criterion 0.7, while preserving the public API and

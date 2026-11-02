@@ -85,19 +85,21 @@ struct Config {
     mode: String,
     runs: usize,
     input: PathBuf,
+    own_heap_values: bool,
 }
 
 fn parse_config() -> Config {
     let mut mode = String::from("all");
     let mut runs = 1usize;
     let mut input: Option<PathBuf> = None;
+    let mut own_heap_values = false;
 
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--mode" => {
                 mode = args.next().unwrap_or_else(|| {
-                    panic!("missing value for --mode (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|all)")
+                    panic!("missing value for --mode (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|consumer|all)")
                 });
             }
             "--runs" => {
@@ -112,10 +114,11 @@ fn parse_config() -> Config {
                     args.next().unwrap_or_else(|| panic!("missing value for --input")),
                 ));
             }
+            "--own-heap-values" => own_heap_values = true,
             "--help" | "-h" => {
                 println!(
-                    "Usage: cargo bench --features stage-timing --bench stage_timing -- [--mode <mode>] [--runs <n>] [--input <path>]\n\
-                     Modes: eager | lazy_bodies | lazy_signatures | lazy_all | lazy_production | all (default)\n\
+                    "Usage: cargo bench --features stage-timing --bench stage_timing -- [--mode <mode>] [--runs <n>] [--input <path>] [--own-heap-values]\n\
+                     Modes: eager | lazy_bodies | lazy_signatures | lazy_all | lazy_production | consumer | all (default)\n\
                      Default input: $RUNTIME_ARTIFACTS/.../System.Private.CoreLib.dll"
                 );
                 std::process::exit(0);
@@ -141,6 +144,7 @@ fn parse_config() -> Config {
     Config {
         mode,
         runs,
+        own_heap_values,
         input: input.unwrap_or_else(|| env::LIBRARIES.join("System.Private.CoreLib.dll")),
     }
 }
@@ -148,72 +152,60 @@ fn parse_config() -> Config {
 fn modes(mode: &str) -> Vec<(&'static str, ReadOptions)> {
     match mode {
         "eager" => vec![("eager", ReadOptions::default())],
-        "lazy_bodies" => vec![(
-            "lazy_bodies",
-            ReadOptions {
-                lazy_method_bodies: true,
-                ..ReadOptions::default()
-            },
-        )],
+        "lazy_bodies" => vec![("lazy_bodies", ReadOptions::default().with_lazy_method_bodies(true))],
         "lazy_signatures" => vec![(
             "lazy_signatures",
-            ReadOptions {
-                lazy_method_signatures: true,
-                ..ReadOptions::default()
-            },
+            ReadOptions::default().with_lazy_method_signatures(true),
         )],
         "lazy_all" => vec![(
             "lazy_all",
-            ReadOptions {
-                lazy_method_bodies: true,
-                lazy_method_signatures: true,
-                ..ReadOptions::default()
-            },
+            ReadOptions::default()
+                .with_lazy_method_bodies(true)
+                .with_lazy_method_signatures(true),
         )],
         "lazy_production" => vec![(
             "lazy_production",
-            ReadOptions {
-                lazy_method_bodies: true,
-                lazy_method_signatures: true,
-                lazy_attributes: true,
-                ..ReadOptions::default()
-            },
+            ReadOptions::default()
+                .with_lazy_method_bodies(true)
+                .with_lazy_method_signatures(true)
+                .with_lazy_attributes(true),
+        )],
+        "consumer" => vec![(
+            "consumer",
+            ReadOptions::default()
+                .with_lazy_method_bodies(true)
+                .with_lazy_attributes(true),
         )],
         "all" => vec![
             ("eager", ReadOptions::default()),
-            (
-                "lazy_bodies",
-                ReadOptions {
-                    lazy_method_bodies: true,
-                    ..ReadOptions::default()
-                },
-            ),
+            ("lazy_bodies", ReadOptions::default().with_lazy_method_bodies(true)),
             (
                 "lazy_signatures",
-                ReadOptions {
-                    lazy_method_signatures: true,
-                    ..ReadOptions::default()
-                },
+                ReadOptions::default().with_lazy_method_signatures(true),
             ),
             (
                 "lazy_all",
-                ReadOptions {
-                    lazy_method_bodies: true,
-                    lazy_method_signatures: true,
-                    ..ReadOptions::default()
-                },
+                ReadOptions::default()
+                    .with_lazy_method_bodies(true)
+                    .with_lazy_method_signatures(true),
             ),
             (
                 "lazy_production",
-                ReadOptions {
-                    lazy_method_bodies: true,
-                    lazy_method_signatures: true,
-                    lazy_attributes: true,
-                    ..ReadOptions::default()
-                },
+                ReadOptions::default()
+                    .with_lazy_method_bodies(true)
+                    .with_lazy_method_signatures(true)
+                    .with_lazy_attributes(true),
+            ),
+            (
+                "consumer",
+                ReadOptions::default()
+                    .with_lazy_method_bodies(true)
+                    .with_lazy_attributes(true),
             ),
         ],
-        _ => panic!("invalid mode '{mode}' (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|all)"),
+        _ => panic!(
+            "invalid mode '{mode}' (expected eager|lazy_bodies|lazy_signatures|lazy_all|lazy_production|consumer|all)"
+        ),
     }
 }
 
@@ -324,14 +316,18 @@ fn main() {
     let subscriber = Registry::default().with(recorder.clone());
     tracing::subscriber::set_global_default(subscriber).expect("failed to install stage timing subscriber");
 
-    println!("Input: {}", config.input.display());
+    println!(
+        "Input: {}; own_heap_values={}",
+        config.input.display(),
+        config.own_heap_values
+    );
 
     for (mode_name, options) in modes(&config.mode) {
         let mut run_samples = Vec::with_capacity(config.runs);
 
         for _ in 0..config.runs {
             recorder.take(); // clear straggler events from previous work
-            Resolution::parse(&bytes, options)
+            Resolution::parse(&bytes, options.with_own_heap_values(config.own_heap_values))
                 .unwrap_or_else(|e| panic!("failed to parse {} in mode {mode_name}: {e}", config.input.display()));
             let samples = recorder.take();
             assert!(

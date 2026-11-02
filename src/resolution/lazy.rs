@@ -24,9 +24,9 @@ use crate::{
 
 use super::{FieldIndex, MethodIndex, PropertyIndex};
 
-/// Raw bytes and alignment offset for a single method, captured at parse time.
-pub(crate) struct MethodPendingRaw<'a> {
-    pub bytes: &'a [u8],
+/// Validated range within `LazyParseState::body_source` and alignment offset for a method.
+pub(crate) struct MethodPendingRaw {
+    pub range: std::ops::Range<usize>,
     pub offset: usize,
 }
 
@@ -51,6 +51,7 @@ pub(crate) struct LazyParseState<'a> {
     pub method_spec_table: Vec<MethodSpec>,
     // Heap readers are Copy (&'a [u8] wrappers)
     pub blobs: BlobReader<'a>,
+    pub own_heap_values: bool,
     pub userstrings: UserStringReader<'a>,
     // Owned copies of the index maps used by lazy body decode.
     // All are empty when `lazy_bodies` is false.
@@ -60,8 +61,10 @@ pub(crate) struct LazyParseState<'a> {
     pub method_map: FxHashMap<usize, usize>,
 
     // ── Lazy body fields (populated only when lazy_bodies is true) ──────────
-    // Per-method: [method_def_idx] -> raw bytes (None for abstract/rva==0)
-    pub pending: Vec<Option<MethodPendingRaw<'a>>>,
+    // One input borrow, rather than a persistent sub-borrow per method.
+    pub body_source: &'a [u8],
+    // Per-method: [method_def_idx] -> validated byte range (None for abstract/rva==0)
+    pub pending: Vec<Option<MethodPendingRaw>>,
     /// MethodIndex -> method_def_idx (for methods with bodies; used by method_body)
     pub method_idx_to_def: FxHashMap<MethodIndex, usize>,
     /// [method_def_idx] -> decoded body; shared across all Resolution clones via Arc
@@ -336,7 +339,7 @@ impl<'a> LazyParseState<'a> {
         raw.iter()
             .map(|&(constructor, blob_idx)| {
                 let value = match blob_idx {
-                    Some(idx) => Some(std::borrow::Cow::Borrowed(self.blobs.at_index(idx)?)),
+                    Some(idx) => Some(super::read::retain(self.blobs.at_index(idx)?, self.own_heap_values)),
                     None => None,
                 };
                 Ok(Attribute { constructor, value })
@@ -376,7 +379,9 @@ impl<'a> LazyParseState<'a> {
             .as_ref()
             .ok_or(ResolveError::LazyLookupFailed("method has no body (rva == 0)"))?;
 
-        let raw_body: method::Method = pending.bytes.pread(pending.offset).map_err(Decode)?;
+        // The range was validated against this same immutable input during parsing.
+        let bytes = &self.body_source[pending.range.clone()];
+        let raw_body: method::Method = bytes.pread(pending.offset).map_err(Decode)?;
 
         let ctx = self.make_ctx();
         let m_ctx = convert::read::MethodContext {

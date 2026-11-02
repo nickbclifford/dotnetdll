@@ -140,3 +140,29 @@ Contributions welcome! Areas where help is especially appreciated:
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+### Parsing under Miri Tree Borrows
+
+The default parser borrows metadata heap values from the input. To reduce the cost
+of tracking many live borrows under Miri, opt into owned heap values:
+
+```rust
+use dotnetdll::prelude::*;
+let options = ReadOptions::default()
+    .with_lazy_method_bodies(true)
+    .with_lazy_attributes(true)
+    .with_own_heap_values(true);
+# let _ = options;
+```
+
+This copies retained names, keys, hashes, security declarations and attribute blobs
+into their existing `Cow::Owned` fields. Lazy attribute accessors use the same policy.
+It adds allocations, so measure native workloads before enabling it there. Use
+`.with_own_heap_values(cfg!(miri))` to enable it only under Miri. It does
+not make `Resolution` independent of its input: lazy readers and method bodies,
+field initializers, and embedded resources may still borrow the input. Decoded
+attribute arguments borrow their attribute blob when requested.
+
+`ReadOptions` is non-exhaustive. To migrate an existing struct literal, start with
+`ReadOptions::default()` and use the `with_*` builders or assign public fields.
+
+Use `ReadOptions::new()` and the same builders for const option values.

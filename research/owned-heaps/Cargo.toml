@@ -1,0 +1,27 @@
+[package]
+name = "dotnetdll-heap-probe"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85.1"
+publish = false
+
+[workspace]
+
+[dependencies]
+dotnetdll = { path = "../.." }
+
+[[bin]]
+name = "native_probe"
+path = "native_probe.rs"
+
+[[bin]]
+name = "parse_probe"
+path = "parse_probe.rs"
+
+[[bin]]
+name = "tree_borrows"
+path = "tree_borrows.rs"
+
+[[bin]]
+name = "inventory"
+path = "inventory.rs"

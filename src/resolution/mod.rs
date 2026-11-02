@@ -1026,4 +1026,31 @@ mod lazy_read_tests {
         }
         assert!(property_count > 0, "fixture should contain a property");
     }
+    #[test]
+    fn heap_ownership_covers_eager_and_lazy_attribute_blobs() {
+        for lazy in [false, true] {
+            let res = Resolution::parse(
+                test_dll(),
+                ReadOptions::default()
+                    .with_lazy_attributes(lazy)
+                    .with_own_heap_values(true),
+            )
+            .unwrap();
+            let attrs = res.assembly_attributes().unwrap();
+            assert!(!attrs.is_empty());
+            assert!(
+                attrs
+                    .iter()
+                    .all(|a| matches!(a.value, Some(std::borrow::Cow::Owned(_))))
+            );
+            for (ti, _) in res.enumerate_type_definitions() {
+                assert!(
+                    res.type_attributes(ti)
+                        .unwrap()
+                        .iter()
+                        .all(|a| matches!(a.value, Some(std::borrow::Cow::Owned(_))))
+                );
+            }
+        }
+    }
 }

@@ -12,9 +12,22 @@ use scroll::Pread;
 use std::{borrow::Cow, sync::Arc};
 use tracing::{debug, warn};
 
-/// A dictionary of options for [`Resolution::parse`] and [`DLL::resolve`].
+/// Options for [`Resolution::parse`] and [`DLL::resolve`].
+///
+/// Start with [`Options::new`] or [`Default::default`] and use the `with_*` builders
+/// or assign public fields. The struct is non-exhaustive to allow future options.
+/// For Miri-only ownership, use `.with_own_heap_values(cfg!(miri))`.
 #[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
 pub struct Options {
+    /// Copy retained metadata strings and blobs into their existing `Cow::Owned` variants.
+    ///
+    /// This reduces alias-tracking work under Miri Tree Borrows. The default is `false`,
+    /// preserving zero-copy parsing. Lazy attribute accessors use the same policy.
+    /// The input must still outlive the resolution: lazy readers, method bodies, field
+    /// initializers and embedded resources can continue to borrow it.
+    pub own_heap_values: bool,
+
     /// If this flag is set, [`Resolution::parse`] and [`DLL::resolve`] will not resolve the bodies of class methods,
     /// meaning [`Method::body`](members::Method::body) will always be `None`.
     ///
@@ -99,9 +112,111 @@ pub struct Options {
     pub lazy_attributes: bool,
 }
 
+impl Options {
+    /// Creates the default zero-copy, eager parsing options, including in const contexts.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            own_heap_values: false,
+            skip_method_bodies: false,
+            lazy_method_bodies: false,
+            lazy_method_signatures: false,
+            lazy_property_signatures: false,
+            lazy_attributes: false,
+        }
+    }
+
+    /// Sets [`Self::own_heap_values`].
+    #[must_use]
+    pub const fn with_own_heap_values(mut self, value: bool) -> Self {
+        self.own_heap_values = value;
+        self
+    }
+
+    /// Sets [`Self::skip_method_bodies`].
+    #[must_use]
+    pub const fn with_skip_method_bodies(mut self, value: bool) -> Self {
+        self.skip_method_bodies = value;
+        self
+    }
+
+    /// Sets [`Self::lazy_method_bodies`].
+    #[must_use]
+    pub const fn with_lazy_method_bodies(mut self, value: bool) -> Self {
+        self.lazy_method_bodies = value;
+        self
+    }
+
+    /// Sets [`Self::lazy_method_signatures`].
+    #[must_use]
+    pub const fn with_lazy_method_signatures(mut self, value: bool) -> Self {
+        self.lazy_method_signatures = value;
+        self
+    }
+
+    /// Sets [`Self::lazy_property_signatures`].
+    #[must_use]
+    pub const fn with_lazy_property_signatures(mut self, value: bool) -> Self {
+        self.lazy_property_signatures = value;
+        self
+    }
+
+    /// Sets [`Self::lazy_attributes`].
+    #[must_use]
+    pub const fn with_lazy_attributes(mut self, value: bool) -> Self {
+        self.lazy_attributes = value;
+        self
+    }
+}
+
+// Keep public binary heap readers zero-copy; ownership applies only to resolved values.
+struct RetainedHeap<R> {
+    reader: R,
+    own: bool,
+}
+
+impl<R> std::ops::Deref for RetainedHeap<R> {
+    type Target = R;
+    // Avoid adding helper-call overhead to the default path in debug builds.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn deref(&self) -> &R {
+        &self.reader
+    }
+}
+
+// Avoid adding helper-call overhead to the default path in debug builds.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+pub(crate) fn retain<T: ?Sized + ToOwned>(value: &T, own: bool) -> Cow<'_, T> {
+    if own {
+        Cow::Owned(value.to_owned())
+    } else {
+        Cow::Borrowed(value)
+    }
+}
+
+impl<'a> RetainedHeap<StringsReader<'a>> {
+    // Avoid adding helper-call overhead to the default path in debug builds.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn retained(&self, index: metadata::index::String) -> Result<Cow<'a, str>> {
+        Ok(retain(self.reader.at_index(index)?, self.own))
+    }
+}
+
+impl<'a> RetainedHeap<BlobReader<'a>> {
+    // Avoid adding helper-call overhead to the default path in debug builds.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn retained(&self, index: metadata::index::Blob) -> Result<Cow<'a, [u8]>> {
+        Ok(retain(self.reader.at_index(index)?, self.own))
+    }
+}
+
 macro_rules! heap_idx {
     ($heap:ident, $idx:expr) => {
-        Cow::Borrowed($heap.at_index($idx)?)
+        $heap.retained($idx)?
     };
 }
 
@@ -326,8 +441,8 @@ fn member_accessibility(flags: u16) -> Result<members::Accessibility> {
 
 fn decode_assembly<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
 ) -> Result<Option<assembly::Assembly<'a>>> {
     let mut assembly = None;
     if let Some(a) = tables.assembly.first() {
@@ -355,8 +470,8 @@ fn decode_assembly<'a>(
 
 fn decode_assembly_refs<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
 ) -> Result<Vec<assembly::ExternalAssemblyReference<'a>>> {
     use rayon::prelude::*;
 
@@ -386,7 +501,7 @@ fn decode_assembly_refs<'a>(
 /// handled layout values (internal invariant).
 fn decode_type_definitions<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     ctx: &convert::read::Context<'_, 'a>,
 ) -> Result<Vec<types::TypeDefinition<'a>>> {
     let mut types = Vec::with_capacity(tables.type_def.len());
@@ -448,8 +563,8 @@ fn decode_type_definitions<'a>(
 
 fn decode_files<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
 ) -> Result<Vec<module::File<'a>>> {
     use rayon::prelude::*;
 
@@ -473,7 +588,7 @@ fn decode_files<'a>(
 fn decode_resources<'a>(
     dll: &DLL<'a>,
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     files: &[module::File<'a>],
     assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
 ) -> Result<Vec<resource::ManifestResource<'a>>> {
@@ -550,7 +665,7 @@ fn decode_resources<'a>(
 
 fn decode_exported_types<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     files: &[module::File<'a>],
     assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
 ) -> Result<Vec<types::ExportedType<'a>>> {
@@ -630,7 +745,7 @@ fn decode_exported_types<'a>(
 
 fn decode_module<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     guids: &GUIDReader<'a>,
 ) -> Result<module::Module<'a>> {
     let module_row = tables
@@ -646,7 +761,7 @@ fn decode_module<'a>(
 
 fn decode_module_refs<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
 ) -> Result<Vec<module::ExternalModuleReference<'a>>> {
     use rayon::prelude::*;
 
@@ -667,7 +782,7 @@ fn decode_module_refs<'a>(
 
 fn decode_type_refs<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     module_refs: &[module::ExternalModuleReference<'a>],
     assembly_refs: &[assembly::ExternalAssemblyReference<'a>],
 ) -> Result<Vec<types::ExternalTypeReference<'a>>> {
@@ -765,8 +880,8 @@ fn decode_interfaces<'a>(
 fn decode_fields<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
     ctx: &convert::read::Context<'_, 'a>,
 ) -> Result<Vec<FieldIndex>> {
     use rayon::prelude::*;
@@ -807,7 +922,7 @@ fn decode_fields<'a>(
                     custom_modifiers: cmod,
                     field_type: t,
                     by_ref,
-                } = heap_idx!(blobs, f.signature).pread(0)?;
+                } = blobs.at_index(f.signature)?.pread(0)?;
 
                 fields.push(Field {
                     attributes: vec![],
@@ -879,8 +994,8 @@ struct DecodedMethods {
 fn decode_methods<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
     ctx: &convert::read::Context<'_, 'a>,
     opts: Options,
 ) -> Result<DecodedMethods> {
@@ -923,7 +1038,7 @@ fn decode_methods<'a>(
                 let sig = if opts.lazy_method_signatures {
                     Default::default()
                 } else {
-                    let mut sig = convert::read::managed_method(heap_idx!(blobs, m.signature).pread(0)?, ctx)?;
+                    let mut sig = convert::read::managed_method(blobs.at_index(m.signature)?.pread(0)?, ctx)?;
                     if check_bitmask!(m.flags, 0x10) {
                         sig.instance = false;
                     }
@@ -1078,7 +1193,7 @@ fn get_method_mut<'a, 'r>(types: &'r mut [types::TypeDefinition<'a>], idx: Metho
 fn decode_params<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     methods: &[MethodIndex],
     owned_params: Vec<(usize, usize, usize)>,
 ) -> Result<Vec<(usize, usize)>> {
@@ -1159,8 +1274,8 @@ struct DecodedProperties {
 fn decode_properties<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
     ctx: &convert::read::Context<'_, 'a>,
     opts: Options,
 ) -> Result<DecodedProperties> {
@@ -1218,7 +1333,7 @@ fn decode_properties<'a>(
                         vec![],
                     )
                 } else {
-                    let sig = heap_idx!(blobs, prop.property_type).pread::<PropertySig>(0)?;
+                    let sig = blobs.at_index(prop.property_type)?.pread::<PropertySig>(0)?;
                     (!sig.has_this, convert::read::parameter(sig.property_type, ctx)?, {
                         let mut ps = Vec::with_capacity(sig.params.len());
                         for p in sig.params {
@@ -1281,7 +1396,7 @@ fn decode_properties<'a>(
 fn decode_events<'a>(
     types: &mut [types::TypeDefinition<'a>],
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
     ctx: &convert::read::Context<'_, 'a>,
     sem_by_event: &mut HashMap<usize, Vec<(u16, usize)>>,
     methods: &mut [MethodIndex],
@@ -1766,8 +1881,8 @@ enum DecodedMemberRef<'a> {
 /// generic/security owners after prior validation), indicating inconsistent crate logic.
 fn decode_member_refs<'a>(
     tables: &metadata::table::Tables,
-    strings: &StringsReader<'a>,
-    blobs: &BlobReader<'a>,
+    strings: &RetainedHeap<StringsReader<'a>>,
+    blobs: &RetainedHeap<BlobReader<'a>>,
     module_refs: &[module::ExternalModuleReference<'a>],
     methods: &[MethodIndex],
     ctx: &convert::read::Context<'_, 'a>,
@@ -1783,7 +1898,7 @@ fn decode_member_refs<'a>(
             use members::*;
             use metadata::index::{MemberRefParent, TypeDefOrRef};
 
-            let name = strings.at_index(r.name)?.into();
+            let name = strings.retained(r.name)?;
             let sig_blob = blobs.at_index(r.signature)?;
 
             let Some(&sig_kind) = sig_blob.first() else {
@@ -1956,6 +2071,14 @@ fn decode_member_refs<'a>(
 #[allow(clippy::too_many_lines, clippy::nonminimal_bool)]
 pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'a>> {
     let (strings, blobs, guids, userstrings, logical) = dll.get_all_streams()?;
+    let strings = RetainedHeap {
+        reader: strings,
+        own: opts.own_heap_values,
+    };
+    let blobs = RetainedHeap {
+        reader: blobs,
+        own: opts.own_heap_values,
+    };
     let tables = logical.tables;
 
     let def_len = tables.type_def.len();
@@ -2365,7 +2488,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                     }
                 };
                 match fields.get(idx) {
-                    Some(&field) => Ok((field, heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?)),
+                    Some(&field) => Ok((field, blobs.at_index(marshal.native_type)?.pread::<MarshalSpec>(0)?)),
                     None => Err(resolve_oob("field marshal field", idx, fields.len().saturating_sub(1))),
                 }
             })
@@ -2381,7 +2504,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             match marshal.parent {
                 HasFieldMarshal::Field(_) => {}
                 HasFieldMarshal::Param(i) => {
-                    let value = Some(heap_idx!(blobs, marshal.native_type).pread::<MarshalSpec>(0)?);
+                    let value = Some(blobs.at_index(marshal.native_type)?.pread::<MarshalSpec>(0)?);
                     let idx = i - 1;
                     match params.get(idx) {
                         Some(&(m_idx, p_idx)) => {
@@ -2432,7 +2555,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
         use members::Constant::*;
         use metadata::index::HasConstant;
 
-        let blob = heap_idx!(blobs, c.value);
+        let blob = blobs.at_index(c.value)?;
 
         let value = Some(match c.constant_type {
             ELEMENT_TYPE_BOOLEAN => Boolean(blob.pread_with::<u8>(0, scroll::LE)? == 1),
@@ -3116,8 +3239,8 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
 
             for (def_idx, m) in tables.method_def.iter().enumerate() {
                 if m.rva != 0 {
-                    let (bytes, offset) = dll.method_bytes(m)?;
-                    pending.push(Some(lazy::MethodPendingRaw { bytes, offset }));
+                    let (range, offset) = dll.method_range(m)?;
+                    pending.push(Some(lazy::MethodPendingRaw { range, offset }));
                     method_idx_to_def.insert(methods[def_idx], def_idx);
                 } else {
                     pending.push(None);
@@ -3184,12 +3307,18 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
             specs: tables.type_spec.clone(),
             sigs: tables.stand_alone_sig.clone(),
             method_spec_table,
-            blobs,
+            blobs: blobs.reader,
+            own_heap_values: opts.own_heap_values,
             userstrings,
             field_map: field_map_for_bodies,
             field_indices: field_indices_for_bodies,
             method_indices: method_indices_for_bodies,
             method_map: method_map_for_bodies,
+            body_source: if opts.lazy_method_bodies {
+                dll.input_bytes()
+            } else {
+                &[]
+            },
             pending,
             method_idx_to_def,
             body_cache,

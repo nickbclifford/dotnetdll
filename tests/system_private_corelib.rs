@@ -9,13 +9,7 @@ fn lazy_signatures_match_eager() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;
 
     let eager = Resolution::parse(&file, ReadOptions::default())?;
-    let lazy = Resolution::parse(
-        &file,
-        ReadOptions {
-            lazy_method_signatures: true,
-            ..ReadOptions::default()
-        },
-    )?;
+    let lazy = Resolution::parse(&file, ReadOptions::default().with_lazy_method_signatures(true))?;
 
     let method_checks = {
         let mut checked = 0;
@@ -138,5 +132,70 @@ fn parse() -> Result<(), Box<dyn std::error::Error>> {
         println!("}}\n");
     }
 
+    Ok(())
+}
+
+/// Cover framework metadata (including its large name heaps) in both ownership modes.
+#[test]
+fn owned_heap_metadata_matches_borrowed() -> Result<(), Box<dyn std::error::Error>> {
+    use std::{borrow::Cow, fmt::Write, hash::Hasher};
+    struct Digest(std::collections::hash_map::DefaultHasher);
+    impl std::fmt::Write for Digest {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.write(s.as_bytes());
+            Ok(())
+        }
+    }
+    fn digest(value: &impl std::fmt::Debug) -> u64 {
+        let mut d = Digest(Default::default());
+        write!(d, "{value:?}").unwrap();
+        d.0.finish()
+    }
+    let bytes = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;
+    for lazy_attributes in [false, true] {
+        let options = ReadOptions::default()
+            .with_lazy_method_bodies(true)
+            .with_lazy_attributes(lazy_attributes);
+        let borrowed = Resolution::parse(&bytes, options)?;
+        let owned = Resolution::parse(&bytes, options.with_own_heap_values(true))?;
+        assert!(matches!(borrowed.module.name, Cow::Borrowed(_)));
+        assert!(matches!(owned.module.name, Cow::Owned(_)));
+        assert_eq!(borrowed.module.name, owned.module.name);
+        assert_eq!(digest(&borrowed.assembly), digest(&owned.assembly));
+        assert_eq!(digest(&borrowed.type_references), digest(&owned.type_references));
+        assert_eq!(digest(&borrowed.method_references), digest(&owned.method_references));
+        assert_eq!(
+            digest(&borrowed.assembly_attributes()?),
+            digest(&owned.assembly_attributes()?)
+        );
+        for (ti, ty) in owned.enumerate_type_definitions() {
+            assert!(matches!(ty.name, Cow::Owned(_)));
+            assert_eq!(borrowed[ti].name, ty.name);
+            assert_eq!(borrowed[ti].namespace, ty.namespace);
+            for (mi, method) in owned.enumerate_methods(ti) {
+                assert_eq!(borrowed[mi].name, method.name);
+                assert_eq!(borrowed[mi].signature, method.signature);
+                assert_eq!(
+                    digest(&borrowed.method_attributes(mi)?),
+                    digest(&owned.method_attributes(mi)?)
+                );
+            }
+            for (fi, field) in owned.enumerate_fields(ti) {
+                assert_eq!(borrowed[fi].name, field.name);
+                assert_eq!(borrowed[fi].return_type, field.return_type);
+                assert_eq!(
+                    digest(&borrowed.field_attributes(fi)?),
+                    digest(&owned.field_attributes(fi)?)
+                );
+            }
+            for (pi, _) in owned.enumerate_properties(ti) {
+                assert_eq!(digest(&borrowed[pi]), digest(&owned[pi]));
+            }
+            assert_eq!(
+                digest(&borrowed.type_attributes(ti)?),
+                digest(&owned.type_attributes(ti)?)
+            );
+        }
+    }
     Ok(())
 }
