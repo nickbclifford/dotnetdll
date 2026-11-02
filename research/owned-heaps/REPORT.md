@@ -27,8 +27,10 @@ let options = ReadOptions::new()
 The ownership flag is independent of every lazy flag. Names/keys/security values
 are copied during parse; lazy attributes are copied only when requested. Method
 and property signatures keep the same owned decoded representations and error
-caching/retry behavior. Body ranges are used only for lazy bodies. The existing
-skip-body behavior is preserved. Attribute instantiation consults public constructor
+caching/retry behavior. Body ranges are used only for lazy bodies. Follow-up review
+fixed a pre-existing option conflict: `skip_method_bodies` now overrides lazy bodies,
+without validating or retaining their ranges; other lazy options remain independent.
+Attribute instantiation consults public constructor
 signatures, so tests materialize those signatures when testing lazy signatures.
 
 Native zero-copy heap values remain the default. Input lifetimes remain required:
@@ -175,6 +177,13 @@ single observation and includes allocator effects. Miri RSS was not measured.
   ownership in eager and lazy modes.
 - The Miri small-fixture smoke asserts actual owned variants and exercises lazy
   bodies, attributes and const option construction: passes (2.95 s).
+- Follow-up range review confirms `raw_rva` returns nonempty subslices of the original
+  input, so address subtraction and the stored end index remain in bounds. Alignment
+  handling is unchanged. New self-contained regressions cover PE32/PE32+ tiny/fat
+  bodies, padding, cold clones and their shared cache, zero-RVA methods, invalid
+  RVAs, malformed/truncated IL, retrying decode errors, and skip/lazy precedence.
+  CI now explicitly checks Rust 1.85.1 and runs the ownership smoke and range tests
+  under the pinned Tree Borrows configuration.
 - Consumer native tests: 51 passed; 94 passed, six ignored by the existing suite. Fixture files were copied
   read-only from the existing consumer fixture build into scratch storage for
   the five host tests that otherwise fail because a fresh worktree lacks fixtures.
@@ -217,3 +226,56 @@ N=0: 0.1014 s; N=600: 5.4884 s; N=1500: 60.3760 s (read-loop time only). The las
 describes traversal and pruning optimizations; current nightly may differ from
 the pinned version. [MIRI_ISSUE_DRAFT.md](MIRI_ISSUE_DRAFT.md) contains the draft
 and minimal reproducer instructions. It was **not filed**.
+
+## Pre-merge review
+
+The range review found no new unsafe code or lifetime changes. `raw_rva` uses
+object's checked section lookup: an RVA must lie strictly inside the readable
+section, and the result is a nonempty subslice of the original input. Thus
+subtracting the base addresses gives an in-bounds start index, and adding that
+subslice's length cannot exceed the input length. Decode uses the same immutable
+input, including across `Resolution` clones. Header alignment is unchanged;
+the range validates storage, not the deferred header or IL encoding.
+
+A regression reproduced the pre-existing skip/lazy conflict before the fix.
+Normalizing the effective lazy-body flag once at parser entry now makes skip
+take precedence, including for invalid body RVAs, while independent lazy signature,
+property and attribute state remains available. The six new regression tests
+pass natively and under the pinned Tree Borrows flags (**20.23 s**); the ownership
+smoke also passes again (**3.16 s**).
+
+Final Rust 1.85.1 workspace tests, the all-target/all-feature check, docs and
+package verification pass. Package verification used `--locked`, `--offline` and
+`--allow-dirty` before committing; no registry upload occurred. Clippy completes
+with existing warnings and none in the new range tests. Workflow YAML parses,
+and its MSRV and Miri commands were exercised locally; hosted CI awaits a push
+or pull request. The resource-read test was additionally run against a freshly
+built scratch project because the checkout's existing .NET `obj`/`bin` directories
+belong to another UID, preventing an in-place rebuild.
+
+A fresh native run compared against hours-old Criterion samples initially showed
+a higher CoreLib default time (33.95 ms). A subsequent direct comparison with the
+preserved pre-review A+D benchmark binary controls for that temporal variation.
+Both binaries used Rust 1.85.1, the same DLLs, one Rayon thread, 30 samples,
+one-second warmup and two-second measurement targets. The second CoreLib pair
+ran in reverse order:
+
+| Case | Pre-review A+D | Reviewed implementation | Repeat before / after |
+|---|---:|---:|---:|
+| Support consumer, default | 354.20 us | 346.08 us | — |
+| Support consumer, owned | 392.42 us | 393.73 us | — |
+| CoreLib production lazy, default | 32.159 ms | 32.153 ms | 31.939 / 32.196 ms |
+| CoreLib production lazy, owned | 40.441 ms | 40.406 ms | 40.531 / 40.106 ms |
+
+These contemporaneous observations show no material native regression from the
+skip/lazy fix. Raw follow-up logs use the `review-` prefix in the same measurement
+directory; the original before/after measurements above remain unchanged.
+
+Consumer verification was repeated in a fresh scratch worktree of dotnet-rs at
+`6915ef7011a694c99f02419033cc3870b630989b`, using the same unconditional-owned
+adoption patch and separate target directory. Native tests again passed (51
+assembly tests; 94 VM tests, six existing ignores). Sequential Tree Borrows runs
+also passed: **p00 39.29 s**, **batch_2 45.17 s**, excluding compilation. These
+are follow-up observations on a newer consumer commit, not replacements for the
+original controlled before/after comparison. The scratch patch was retained as
+`review-consumer-owned.patch`; the worktree was removed without a consumer commit.

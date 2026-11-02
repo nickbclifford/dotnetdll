@@ -404,6 +404,8 @@ impl<'a> DLL<'a> {
 
     /// Returns the validated input range and alignment offset for a deferred method body.
     /// Keeping offsets avoids retaining one input sub-borrow for every method.
+    /// Only the containing byte range is validated here; header and IL decoding
+    /// (including truncation errors) remain deferred until body access.
     pub(crate) fn method_range(&self, def: &metadata::table::MethodDef) -> Result<(std::ops::Range<usize>, usize)> {
         let bytes = self.raw_rva(def.rva)?;
         let offset = if !check_bitmask!(bytes[0], 0x2) {

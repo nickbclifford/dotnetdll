@@ -111,7 +111,8 @@ pub struct Resolution<'a> {
     pub type_references: Vec<ExternalTypeReference<'a>>,
     /// Retained parse state for lazy/deferred read-path data.
     ///
-    /// This is `None` only when no lazy read option was enabled. It may contain method-body,
+    /// This is `None` when no lazy read option remains enabled after applying
+    /// `skip_method_bodies`. It may contain method-body,
     /// method-signature, property-signature, and/or custom-attribute state depending on the parse
     /// options. Shared across clones via `Arc` so data decoded by one clone is visible to all.
     pub(crate) lazy_state: Option<Arc<lazy::LazyParseState<'a>>>,
@@ -163,7 +164,10 @@ impl<'a> Resolution<'a> {
     /// **Lazy mode** (`lazy_method_bodies: true`): decodes and caches the body on first call.
     /// The cache is shared across all clones of this `Resolution`, so a body decoded by one clone
     /// is visible to all. Errors from decoding a bad body are *not* cached — the next call will
-    /// retry. Unlike eager mode, a bad body does not fail the initial parse.
+    /// retry. Malformed body bytes do not fail the initial parse; an invalid body RVA
+    /// still fails during parsing because its input range cannot be retained.
+    /// If `skip_method_bodies` was set, it takes precedence over lazy bodies:
+    /// no body is retained or decoded, and this accessor returns an error.
     ///
     /// # Notes on `body: None`
     ///

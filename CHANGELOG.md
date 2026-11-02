@@ -31,6 +31,12 @@ While the crate is pre-1.0, the public API may change between minor versions.
   Rust 1.85.1 support. Object remains on 0.38 because its error type is
   exposed in `DLLError::PERead`; Criterion 0.8 requires Rust 1.86.
 
+### Fixed
+
+- `ReadOptions::skip_method_bodies` now takes precedence over `lazy_method_bodies`,
+  avoiding body validation and deferred body storage when both flags are enabled.
+  Other lazy options continue to work independently.
+
 ## [0.3.0] - 2026-06-23
 
 ### Added

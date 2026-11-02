@@ -4,6 +4,34 @@ on:
     branches: [main]
   pull_request:
 jobs:
+  msrv:
+    name: Rust 1.85.1 checks
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.85.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.85.1 --profile minimal
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - name: Run self-contained parser regressions
+        run: cargo test --locked --test owned_heap_values --test deferred_method_bodies
+      - run: cargo doc --no-deps --all-features --locked
+
+  miri:
+    name: Miri Tree Borrows
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-05-27
+      MIRIFLAGS: -Zmiri-tree-borrows -Zmiri-disable-isolation -Zmiri-ignore-leaks
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly-2026-05-27 --profile minimal --component miri --component rust-src
+      - run: cargo miri setup
+      - name: Check owned heaps on a small generated DLL
+        run: cargo miri test --locked --test owned_heap_values miri_owned_heap_smoke -- --exact --test-threads=1
+      - name: Check deferred body ranges and errors
+        run: cargo miri test --locked --test deferred_method_bodies -- --test-threads=1
+
   test:
     runs-on: ubuntu-latest
     steps:

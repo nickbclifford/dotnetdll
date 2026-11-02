@@ -30,6 +30,8 @@ pub struct Options {
 
     /// If this flag is set, [`Resolution::parse`] and [`DLL::resolve`] will not resolve the bodies of class methods,
     /// meaning [`Method::body`](members::Method::body) will always be `None`.
+    /// This takes precedence over [`Self::lazy_method_bodies`]: no deferred body
+    /// state is retained, and [`Resolution::method_body`] returns an error.
     ///
     /// [`Default`] value of `false`.
     pub skip_method_bodies: bool,
@@ -2069,7 +2071,10 @@ fn decode_member_refs<'a>(
 }
 
 #[allow(clippy::too_many_lines, clippy::nonminimal_bool)]
-pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'a>> {
+pub(crate) fn read_impl<'a>(dll: &DLL<'a>, mut opts: Options) -> Result<Resolution<'a>> {
+    // Skipping must also disable deferred body validation, retention, and decoding.
+    // Other lazy options still build their own state independently.
+    opts.lazy_method_bodies = opts.lazy_method_bodies && !opts.skip_method_bodies;
     let (strings, blobs, guids, userstrings, logical) = dll.get_all_streams()?;
     let strings = RetainedHeap {
         reader: strings,
