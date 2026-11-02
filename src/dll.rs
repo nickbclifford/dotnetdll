@@ -254,9 +254,7 @@ impl<'a> DLL<'a> {
                     file.data_directory(pe::IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR),
                 )
             }
-            _ => {
-                return Err(ParseError::BadStructure("invalid object type, must be PE32 or PE64").into())
-            }
+            _ => return Err(ParseError::BadStructure("invalid object type, must be PE32 or PE64").into()),
         };
 
         let cli_b = dir

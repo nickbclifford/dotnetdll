@@ -227,7 +227,10 @@ impl<'a> LazyParseState<'a> {
         let _ = cache[def_idx].set(sig);
         // Invariant: this slot was just initialized via `set` above.
         let cached = cache[def_idx].get();
-        debug_assert!(cached.is_some(), "OnceLock method-def signature cache must be initialized after set");
+        debug_assert!(
+            cached.is_some(),
+            "OnceLock method-def signature cache must be initialized after set"
+        );
         Ok(cached.unwrap())
     }
 
@@ -253,7 +256,10 @@ impl<'a> LazyParseState<'a> {
         let _ = cache[ref_idx].set(sig);
         // Invariant: this slot was just initialized via `set` above.
         let cached = cache[ref_idx].get();
-        debug_assert!(cached.is_some(), "OnceLock method-ref signature cache must be initialized after set");
+        debug_assert!(
+            cached.is_some(),
+            "OnceLock method-ref signature cache must be initialized after set"
+        );
         Ok(cached.unwrap())
     }
 
@@ -304,7 +310,10 @@ impl<'a> LazyParseState<'a> {
         let _ = cache[def_idx].set(sig);
         // Invariant: this slot was just initialized via `set` above.
         let cached = cache[def_idx].get();
-        debug_assert!(cached.is_some(), "OnceLock property signature cache must be initialized after set");
+        debug_assert!(
+            cached.is_some(),
+            "OnceLock property signature cache must be initialized after set"
+        );
         Ok(cached.unwrap())
     }
 

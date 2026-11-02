@@ -65,10 +65,9 @@ pub fn user_index(t: UserType) -> TypeDefOrRef {
 #[tracing::instrument(level = "trace", skip_all)]
 fn source_sig(value_kind: Option<ValueKind>, t: &TypeSource<impl TypeKind>, ctx: &mut Context) -> Result<SType> {
     let Some(value_kind) = value_kind else {
-        return Err(ResolveError::LazyLookupFailed(
-            "attempted to use type of unknown value kind inside a signature",
-        )
-        .into());
+        return Err(
+            ResolveError::LazyLookupFailed("attempted to use type of unknown value kind inside a signature").into(),
+        );
     };
     Ok(match t {
         TypeSource::User(u) => match value_kind {

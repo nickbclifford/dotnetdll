@@ -230,9 +230,11 @@ fn extract_method<'a>(
                 if current_index == stop {
                     break;
                 }
-                current_index = current_index.checked_add_signed(inc).ok_or(ResolveError::IndexArithmetic {
-                    context: "extract_method walk",
-                })?;
+                current_index = current_index
+                    .checked_add_signed(inc)
+                    .ok_or(ResolveError::IndexArithmetic {
+                        context: "extract_method walk",
+                    })?;
             }
             Ok(())
         };
@@ -418,7 +420,7 @@ fn decode_type_definitions<'a>(
                             // Invariant: `layout_flags` is masked by `t.flags & 0x18` above.
                             debug_assert!(false, "unreachable type layout flags outside 0x00/0x08/0x10");
                             unreachable!()
-                        },
+                        }
                     }
                 },
             ),
@@ -1036,7 +1038,10 @@ fn decode_methods<'a>(
             for (m_idx, mut method_idx) in decoded_type_method_idxs {
                 let MethodMemberIndex::Method(member_idx) = &mut method_idx.member else {
                     // Invariant: `decode_type_methods` produces only `Method` member variants here.
-                    debug_assert!(false, "unreachable decoded method index contained non-method member variant");
+                    debug_assert!(
+                        false,
+                        "unreachable decoded method index contained non-method member variant"
+                    );
                     unreachable!()
                 };
                 *member_idx += method_offset;
@@ -1490,13 +1495,9 @@ fn apply_method_semantics_for_type<'a>(
                 }
             }
             SemanticsAssociation::Property(idx) => {
-                let &(_, internal_idx) = properties.get(idx).ok_or_else(|| {
-                    resolve_oob(
-                        "method semantics property",
-                        idx,
-                        properties.len().saturating_sub(1),
-                    )
-                })?;
+                let &(_, internal_idx) = properties
+                    .get(idx)
+                    .ok_or_else(|| resolve_oob("method semantics property", idx, properties.len().saturating_sub(1)))?;
                 let property = &mut parent.properties[internal_idx];
 
                 if check_bitmask!(action.semantics, 0x1) {
@@ -2459,9 +2460,9 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                 if t == 0 {
                     Null
                 } else {
-                    dll_bail!(
-                        ParseError::BadStructure("constant ELEMENT_TYPE_CLASS payload must be null reference"),
-                    );
+                    dll_bail!(ParseError::BadStructure(
+                        "constant ELEMENT_TYPE_CLASS payload must be null reference"
+                    ),);
                 }
             }
             bad => dll_bail!(ParseError::BadElementType { tag: bad }),
@@ -2730,7 +2731,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                             // definitions before this point.
                             debug_assert!(false, "unreachable custom attribute generic owner is null");
                             unreachable!()
-                        },
+                        }
                     }
                 }};
             }
@@ -2890,7 +2891,7 @@ pub(crate) fn read_impl<'a>(dll: &DLL<'a>, opts: Options) -> Result<Resolution<'
                                 // concrete security owner (TypeDef/MethodDef/Assembly).
                                 debug_assert!(false, "unreachable custom attribute DeclSecurity owner is null");
                                 unreachable!()
-                            },
+                            }
                         },
                         None => {
                             dll_bail!(resolve_oob(

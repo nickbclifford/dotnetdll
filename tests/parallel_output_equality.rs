@@ -176,9 +176,7 @@ fn materialize_lazy_method_state(mut resolution: Resolution<'_>) -> Result<Resol
 
         let body = match resolution.method_body(method_idx) {
             Ok(body) => Some(body.clone()),
-            Err(DLLError::Resolve(ResolveError::LazyLookupFailed(
-                "method has no body (abstract or rva == 0)",
-            ))) => None,
+            Err(DLLError::Resolve(ResolveError::LazyLookupFailed("method has no body (abstract or rva == 0)"))) => None,
             Err(other) => return Err(Box::new(other)),
         };
 

@@ -302,7 +302,7 @@ impl TypeFlags {
                     // Invariant: `bitmask & 0x7` can only yield 0x0..=0x7, all handled above.
                     debug_assert!(false, "unreachable TypeFlags::accessibility after 0x7 mask");
                     unreachable!()
-                },
+                }
             },
             layout,
             kind: match bitmask & 0x20 {

@@ -51,9 +51,7 @@ impl TypeKind for MemberType {
 
     fn as_idx(&self, ctx: &mut write::Context) -> std::result::Result<TypeDefOrRef, ResolveError> {
         match self {
-            MemberType::Base(b) => {
-                write::base_index(&**b, ctx).map_err(|err| as_resolve(&err, "member type to index"))
-            }
+            MemberType::Base(b) => write::base_index(&**b, ctx).map_err(|err| as_resolve(&err, "member type to index")),
             MemberType::TypeGeneric(i) => {
                 write::into_index(Type::Var(*i as u32), ctx).map_err(|err| as_resolve(&err, "member generic to index"))
             }
@@ -102,12 +100,9 @@ impl TypeKind for MethodType {
 
     fn as_idx(&self, ctx: &mut write::Context) -> std::result::Result<TypeDefOrRef, ResolveError> {
         match self {
-            MethodType::Base(b) => {
-                write::base_index(&**b, ctx).map_err(|err| as_resolve(&err, "method type to index"))
-            }
-            MethodType::TypeGeneric(i) => {
-                write::into_index(Type::Var(*i as u32), ctx).map_err(|err| as_resolve(&err, "method type generic to index"))
-            }
+            MethodType::Base(b) => write::base_index(&**b, ctx).map_err(|err| as_resolve(&err, "method type to index")),
+            MethodType::TypeGeneric(i) => write::into_index(Type::Var(*i as u32), ctx)
+                .map_err(|err| as_resolve(&err, "method type generic to index")),
             MethodType::MethodGeneric(i) => {
                 write::into_index(Type::MVar(*i as u32), ctx).map_err(|err| as_resolve(&err, "method generic to index"))
             }

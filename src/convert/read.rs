@@ -337,8 +337,7 @@ pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMetho
                         kind: "method",
                         index: m_idx,
                         max: ctx.method_indices.len().saturating_sub(1),
-                    }
-                    );
+                    });
                 }
             }
         }
@@ -349,16 +348,14 @@ pub fn user_method(idx: MethodDefOrRef, ctx: &MethodContext) -> Result<UserMetho
                 None => {
                     dll_bail!(ResolveError::BadTokenTarget {
                         context: "user method token member reference is not callable",
-                    }
-                    );
+                    });
                 }
             }
         }
         MethodDefOrRef::Null => {
             dll_bail!(ResolveError::BadTokenTarget {
                 context: "user method index cannot be null",
-            }
-            );
+            });
         }
     })
 }
@@ -399,8 +396,7 @@ fn method_source<'r>(tok: Token, ctx: &Context<'r, '_>, m_ctx: &MethodContext<'r
                         kind: "method spec",
                         index: idx,
                         max: m_ctx.method_specs.len().saturating_sub(1),
-                    }
-                    );
+                    });
                 }
             }
         }
@@ -420,8 +416,7 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
                     kind: "field",
                     index: idx,
                     max: ctx.field_indices.len().saturating_sub(1),
-                }
-                );
+                });
             }
         },
         Table(Kind::MemberRef) => match ctx.field_map.get(&idx) {
@@ -429,15 +424,13 @@ fn field_source(tok: Token, ctx: &MethodContext) -> Result<FieldSource> {
             None => {
                 dll_bail!(ResolveError::BadTokenTarget {
                     context: "field source member reference is not a field",
-                }
-                );
+                });
             }
         },
         _ => {
             dll_bail!(ResolveError::BadTokenTarget {
                 context: "field source token must target Field or MemberRef",
-            }
-            );
+            });
         }
     })
 }
@@ -521,16 +514,14 @@ pub fn instruction<'r>(
                                 kind: "standalone signature",
                                 index: idx,
                                 max: ctx.sigs.len().saturating_sub(1),
-                            }
-                            );
+                            });
                         }
                     }
                 }
                 _ => {
                     dll_bail!(ResolveError::BadTokenTarget {
                         context: "calli token must target StandAloneSig",
-                    }
-                    )
+                    })
                 }
             }
         };
@@ -897,8 +888,7 @@ pub fn instruction<'r>(
             _ => {
                 dll_bail!(ResolveError::BadTokenTarget {
                     context: "ldstr token must target UserString",
-                }
-                );
+                });
             }
         },
         Ldtoken(t) => {
@@ -922,8 +912,7 @@ pub fn instruction<'r>(
                 _ => {
                     dll_bail!(ResolveError::BadTokenTarget {
                         context: "ldtoken token target is invalid",
-                    }
-                    );
+                    });
                 }
             }
         }

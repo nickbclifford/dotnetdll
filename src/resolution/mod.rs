@@ -178,12 +178,9 @@ impl<'a> Resolution<'a> {
     pub fn method_body(&self, idx: MethodIndex) -> Result<&body::Method> {
         if let Some(state) = &self.lazy_state {
             if state.lazy_bodies {
-                let def_idx = state
-                    .method_idx_to_def
-                    .get(&idx)
-                    .ok_or(ResolveError::LazyLookupFailed(
-                        "method has no body (abstract or rva == 0)",
-                    ))?;
+                let def_idx = state.method_idx_to_def.get(&idx).ok_or(ResolveError::LazyLookupFailed(
+                    "method has no body (abstract or rva == 0)",
+                ))?;
                 return state.decode_body(*def_idx);
             }
         }
