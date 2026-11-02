@@ -35,7 +35,9 @@ def_macros! {
 #[proc_macro_derive(From, attributes(nested))]
 pub fn derive_from(input: TokenStream) -> TokenStream {
     let derive = parse_macro_input!(input);
-    from::derive_from(derive).into()
+    from::derive_from(derive)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 // requires a reference for implementation reasons

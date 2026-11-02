@@ -20,7 +20,7 @@ impl Parse for CodedIndex {
         Ok(CodedIndex {
             attrs,
             name,
-            tables: tables.parse_terminated(Ident::parse)?,
+            tables: tables.parse_terminated(Ident::parse, Token![,])?,
         })
     }
 }

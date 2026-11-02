@@ -24,8 +24,8 @@ impl Parse for Instructions {
         braced!(prefix_in in input);
 
         type InstrVariant = Punctuated<Variant, Token![,]>;
-        let prefixes: InstrVariant = prefix_in.parse_terminated(Variant::parse)?;
-        let rest: InstrVariant = input.parse_terminated(Variant::parse)?;
+        let prefixes: InstrVariant = prefix_in.parse_terminated(Variant::parse, Token![,])?;
+        let rest: InstrVariant = input.parse_terminated(Variant::parse, Token![,])?;
 
         Ok(Instructions {
             prefixes: prefixes.into_iter().collect(),
@@ -56,7 +56,7 @@ struct TargetAttribute(Vec<TargetIdent>);
 
 impl Parse for TargetAttribute {
     fn parse(input: ParseStream) -> Result<Self> {
-        let ids: Punctuated<TargetIdent, Token![,]> = input.parse_terminated(TargetIdent::parse)?;
+        let ids: Punctuated<TargetIdent, Token![,]> = input.parse_terminated(TargetIdent::parse, Token![,])?;
         Ok(TargetAttribute(ids.into_iter().collect()))
     }
 }
@@ -116,7 +116,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     let mut prefixes_map = FieldsMap::new();
 
     for v in &prefixes {
-        let t_attr = v.attrs.iter().find(|a| a.path.is_ident("target")).unwrap();
+        let t_attr = v.attrs.iter().find(|a| a.path().is_ident("target")).unwrap();
         let TargetAttribute(targets) = t_attr.parse_args().unwrap();
 
         build_targets(&normal_map, &mut prefixes_map, v, targets);
@@ -126,7 +126,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
     let mut composed_map = FieldsMap::new();
 
     for v in &prefixes {
-        if let Some(c_attr) = v.attrs.iter().find(|a| a.path.is_ident("compose")) {
+        if let Some(c_attr) = v.attrs.iter().find(|a| a.path().is_ident("compose")) {
             let id: Ident = c_attr.parse_args().unwrap();
 
             // for composition, the attribute argument is the only valid target
@@ -186,7 +186,7 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
         let byte_writer = quote! { (#byte as u8) };
 
         // put match arm in correct bucket
-        let (size, bucket, mut to_write) = if v.attrs.iter().any(|a| a.path.is_ident("extended")) {
+        let (size, bucket, mut to_write) = if v.attrs.iter().any(|a| a.path().is_ident("extended")) {
             (2_usize, &mut extended_parses, vec![quote! { 0xFE_u8 }, byte_writer])
         } else {
             (1_usize, &mut parses, vec![byte_writer])

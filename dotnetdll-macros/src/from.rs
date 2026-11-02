@@ -1,52 +1,50 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, Meta, NestedMeta};
+use syn::punctuated::Punctuated;
+use syn::{Data, DeriveInput, Error, Fields, Path, Result, Token};
 
-pub fn derive_from(input: DeriveInput) -> TokenStream {
+pub fn derive_from(input: DeriveInput) -> Result<TokenStream> {
     let type_name = input.ident;
+    let generics = input.generics;
     let variants = match input.data {
         Data::Enum(e) => e.variants,
-        _ => panic!("derive(From) is only valid for enums"),
+        _ => return Err(Error::new(type_name.span(), "derive(From) is only valid for enums")),
     };
-    let generics = input.generics;
 
-    let impls = variants.into_iter().filter_map(|v| {
-        let name = v.ident;
-        let (attrs, field) = match &v.fields {
-            Fields::Unnamed(f) => {
-                let field = f.unnamed.first()?;
-                (&field.attrs, &field.ty)
-            }
-            _ => return None,
+    let mut impls = TokenStream::new();
+
+    for variant in variants {
+        let name = &variant.ident;
+
+        let field = match &variant.fields {
+            Fields::Unnamed(f) => match f.unnamed.first() {
+                Some(field) => field,
+                None => continue,
+            },
+            _ => continue,
         };
-        let mut nested = vec![];
-        for a in attrs {
-            match a.parse_meta() {
-                Ok(Meta::List(l)) if l.path.is_ident("nested") => {
-                    for variant in l.nested {
-                        if let NestedMeta::Meta(m) = variant {
-                            nested.push(quote! {
-                                impl #generics From<#m> for #type_name #generics {
-                                    fn from(m: #m) -> Self {
-                                        Self::#name(m.into())
-                                    }
-                                }
-                            });
+        let ty = &field.ty;
+
+        for attr in field.attrs.iter().filter(|a| a.path().is_ident("nested")) {
+            for path in attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)? {
+                impls.extend(quote! {
+                    impl #generics From<#path> for #type_name #generics {
+                        fn from(m: #path) -> Self {
+                            Self::#name(m.into())
                         }
                     }
-                }
-                _ => {}
+                });
             }
         }
-        Some(quote! {
-            #(#nested)*
-            impl #generics From<#field> for #type_name #generics {
-                fn from(f: #field) -> Self {
+
+        impls.extend(quote! {
+            impl #generics From<#ty> for #type_name #generics {
+                fn from(f: #ty) -> Self {
                     Self::#name(f)
                 }
             }
-        })
-    });
+        });
+    }
 
-    quote! { #(#impls)* }
+    Ok(impls)
 }

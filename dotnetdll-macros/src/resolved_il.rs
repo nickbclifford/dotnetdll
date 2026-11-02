@@ -11,26 +11,34 @@ pub struct Instruction {
     fields: Vec<Type>,
     skip_constructor: bool,
 }
+
+fn parse_flag(input: ParseStream) -> syn::Result<String> {
+    Ok(if input.peek(Token![type]) {
+        input.parse::<Token![type]>()?;
+        "type".to_string()
+    } else {
+        input.parse::<Ident>()?.to_string()
+    })
+}
+
+fn parse_flags_args(input: ParseStream) -> syn::Result<Vec<String>> {
+    Ok(input.parse_terminated(parse_flag, Token![,])?.into_iter().collect())
+}
+
 impl Parse for Instruction {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut skip_constructor = false;
         let mut flags = vec![];
         for attr in input.call(Attribute::parse_outer)? {
-            if attr.path.is_ident("flags") {
-                flags.extend(attr.parse_args_with(|i: ParseStream| {
-                    i.parse_terminated::<_, Token![,]>(|i| {
-                        Ok(if i.peek(Token![type]) {
-                            i.parse::<Token![type]>()?;
-                            "type".to_string()
-                        } else {
-                            i.parse::<Ident>()?.to_string()
-                        })
-                    })
-                })?);
-            } else if attr.path.is_ident("skip_constructor") {
+            if attr.path().is_ident("flags") {
+                flags.extend(attr.parse_args_with(parse_flags_args)?);
+            } else if attr.path().is_ident("skip_constructor") {
                 skip_constructor = true;
             } else {
-                return Err(input.error("invalid attribute (only #[flags()]/#[skip_constructor] supported)"));
+                return Err(syn::Error::new_spanned(
+                    &attr,
+                    "invalid attribute (only #[flags()]/#[skip_constructor] supported)",
+                ));
             }
         }
 
@@ -42,10 +50,7 @@ impl Parse for Instruction {
                 if input.peek(Paren) {
                     let content;
                     parenthesized!(content in input);
-                    content
-                        .parse_terminated::<_, Token![,]>(Type::parse)?
-                        .into_iter()
-                        .collect()
+                    content.parse_terminated(Type::parse, Token![,])?.into_iter().collect()
                 } else {
                     vec![]
                 }
@@ -59,7 +64,7 @@ impl Parse for Instructions {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Instructions(
             input
-                .parse_terminated::<_, Token![,]>(Instruction::parse)?
+                .parse_terminated(Instruction::parse, Token![,])?
                 .into_iter()
                 .collect(),
         ))
