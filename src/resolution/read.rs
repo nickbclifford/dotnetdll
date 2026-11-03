@@ -17,6 +17,24 @@ use tracing::{debug, warn};
 /// Start with [`Options::new`] or [`Default::default`] and use the `with_*` builders
 /// or assign public fields. The struct is non-exhaustive to allow future options.
 /// For Miri-only ownership, use `.with_own_heap_values(cfg!(miri))`.
+///
+/// # Examples
+///
+/// ```
+/// use dotnetdll::prelude::ReadOptions;
+///
+/// const OPTIONS: ReadOptions = ReadOptions::new()
+///     .with_lazy_method_bodies(true)
+///     .with_lazy_attributes(true)
+///     .with_own_heap_values(cfg!(miri));
+///
+/// assert!(!OPTIONS.skip_method_bodies);
+/// assert!(!OPTIONS.lazy_method_signatures);
+/// ```
+///
+/// All options default to `false`. Lazy options require their corresponding
+/// [`Resolution`] accessors because public fields can contain placeholders.
+/// [`Self::skip_method_bodies`] takes precedence over [`Self::lazy_method_bodies`].
 #[derive(Debug, Default, Copy, Clone)]
 #[non_exhaustive]
 pub struct Options {

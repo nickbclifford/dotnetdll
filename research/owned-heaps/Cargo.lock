@@ -82,7 +82,7 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
 name = "dotnetdll"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bitfield",
  "bitvec",

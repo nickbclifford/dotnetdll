@@ -44,6 +44,44 @@
 //! }
 //! ```
 //!
+//! ### Read options and Miri
+//!
+//! [`ReadOptions`](resolution::read::Options) is non-exhaustive. Construct it with
+//! `new()` or `default()` and the `with_*` builders instead of a struct literal.
+//! `new()` and every builder also work in const contexts:
+//!
+//! ```rust,no_run
+//! use dotnetdll::prelude::*;
+//!
+//! const OPTIONS: ReadOptions = ReadOptions::new()
+//!     .with_lazy_method_bodies(true)
+//!     .with_lazy_attributes(true)
+//!     .with_own_heap_values(cfg!(miri));
+//!
+//! let bytes = std::fs::read("MyLibrary.dll")?;
+//! let res = Resolution::parse(&bytes, OPTIONS)?;
+//! for (ti, _) in res.enumerate_type_definitions() {
+//!     let attributes = res.type_attributes(ti)?;
+//!     for (mi, _) in res.enumerate_methods(ti) {
+//!         if let Ok(body) = res.method_body(mi) {
+//!             println!("{} instructions", body.instructions.len());
+//!         }
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Lazy modes require the corresponding accessors: public body fields, signatures,
+//! and attribute lists can contain placeholders or empty values. Signatures remain
+//! eager in this example. `skip_method_bodies` overrides lazy body decoding.
+//!
+//! `own_heap_values` copies retained metadata heap strings and blobs into existing
+//! `Cow::Owned` fields, reducing Tree Borrows tracking costs. Its default is false;
+//! `cfg!(miri)` preserves native zero-copy heap behavior. **The input must still
+//! outlive the resolution**: lazy readers, IL, field initializers and embedded
+//! resources can retain input borrows. See the
+//! [0.4 migration guide](https://github.com/nickbclifford/dotnetdll/blob/v0.4.0/docs/migration-0.4.md).
+//!
 //! ### Creating a new assembly
 //!
 //! ```rust,no_run

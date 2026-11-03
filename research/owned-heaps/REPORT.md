@@ -1,7 +1,10 @@
 # Owned heaps and Miri Tree Borrows
 
 Measured 2026-11-02. Local implementation branch: `miri-owned-heaps`.
-The crate remains `0.3.1` unreleased; nothing was published or pushed.
+Measurements used package version `0.3.1` without changing or publishing it.
+Release preparation subsequently targets `0.4.0`. Registry verification confirmed
+that baseline version 0.3.1 had already been published; the initial task described
+it as unreleased.
 
 ## Recommendation and implementation
 
@@ -41,7 +44,8 @@ refer to the input. This is not an input-independent `Resolution<'static>` API.
 struct expressions **including `..Default::default()`**; use the builders or
 assign fields after `default()`. `ReadOptions::new()` and builders are const,
 so downstream const option values remain possible. This is a breaking change;
-recommend **0.4.0**, not a 0.3.x patch. The current package version was not bumped.
+recommend **0.4.0**, not a 0.3.x patch. The version remained 0.3.1 during
+measurement and was bumped separately during release preparation.
 [Cargo's compatibility guide](https://doc.rust-lang.org/cargo/reference/semver.html)
 classifies adding non-exhaustive to an exhaustive public struct as breaking.
 
