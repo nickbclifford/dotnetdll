@@ -402,16 +402,25 @@ impl<'a> DLL<'a> {
         bytes.pread(offset).map_err(Decode)
     }
 
-    /// Returns the raw bytes and alignment offset for a method body without parsing.
-    /// Used by the lazy-decode path to defer `binary::method::Method` parsing until first access.
-    pub(crate) fn method_bytes(&self, def: &metadata::table::MethodDef) -> Result<(&'a [u8], usize)> {
+    /// Returns the validated input range and alignment offset for a deferred method body.
+    /// Keeping offsets avoids retaining one input sub-borrow for every method.
+    /// Only the containing byte range is validated here; header and IL decoding
+    /// (including truncation errors) remain deferred until body access.
+    pub(crate) fn method_range(&self, def: &metadata::table::MethodDef) -> Result<(std::ops::Range<usize>, usize)> {
         let bytes = self.raw_rva(def.rva)?;
         let offset = if !check_bitmask!(bytes[0], 0x2) {
             4 - (def.rva as usize % 4)
         } else {
             0
         };
-        Ok((bytes, offset))
+        // raw_rva returns a subslice of self.buffer. Address arithmetic only computes
+        // indices; no pointer is reconstructed and no provenance is discarded on access.
+        let start = bytes.as_ptr().addr() - self.buffer.as_ptr().addr();
+        Ok((start..start + bytes.len(), offset))
+    }
+
+    pub(crate) fn input_bytes(&self) -> &'a [u8] {
+        self.buffer
     }
 
     /// Resolves the CLI metadata within the DLL into a high-level [`Resolution`] struct.

@@ -1,0 +1,281 @@
+{
+  "date": "2026-11-02",
+  "baseline_commit": "ddab300e9f2353ebbe510f14c1ada2da856392f4",
+  "consumer_commit": "893d7f8ae89f024b91450af5150a8a205540efca",
+  "branch": "miri-owned-heaps",
+  "msrv": "1.85.1",
+  "miri_toolchain": "nightly-2026-05-27",
+  "miri_rustc": "1.98.0-nightly d1fc603d1788cc3c0eebdb94a45a61c4f33b1674",
+  "miriflags": "-Zmiri-tree-borrows -Zmiri-disable-isolation -Zmiri-ignore-leaks",
+  "support_sha256": "720120f3049d58e6a62a4e3e64e95fb8fb13bdc94fbf2ec5cb5555e788596829",
+  "corelib_sha256": "22abea031395740f763f1db8e383a760f5a7071d6cfb86c618634b6c6eba94c9",
+  "miri_consumer_seconds": {
+    "before-p00": 271.04,
+    "before-batch2": 234.29,
+    "after-p00": 35.11,
+    "after-batch2": 40.1
+  },
+  "miri_small_fixture_seconds": 2.95,
+  "miri_direct_parse_seconds": {
+    "A-both": 34.837612402,
+    "A-strings": 35.571763267,
+    "A-blobs": 291.320257745,
+    "C-split": 195.440316771,
+    "A+D": 28.514440451
+  },
+  "micro_reads_seconds": {
+    "0": 0.10143803800000001,
+    "600": 5.488408196,
+    "1500": 60.375989844
+  },
+  "callgrind_three_captured_calls": {
+    "baseline-debug-instructions": {
+      "total": 111111338,
+      "per_call": 37037112.666666664
+    },
+    "baseline-release-instructions": {
+      "total": 14294116,
+      "per_call": 4764705.333333333
+    },
+    "class-debug-blobs-instructions": {
+      "total": 111457472,
+      "per_call": 37152490.666666664
+    },
+    "class-debug-split-instructions": {
+      "total": 111433259,
+      "per_call": 37144419.666666664
+    },
+    "class-debug-strings-instructions": {
+      "total": 116846349,
+      "per_call": 38948783.0
+    },
+    "class-release-blobs-instructions": {
+      "total": 14310054,
+      "per_call": 4770018.0
+    },
+    "class-release-split-instructions": {
+      "total": 14299136,
+      "per_call": 4766378.666666667
+    },
+    "class-release-strings-instructions": {
+      "total": 16338968,
+      "per_call": 5446322.666666667
+    },
+    "combined-debug-borrowed-instructions": {
+      "total": 111463633,
+      "per_call": 37154544.333333336
+    },
+    "combined-debug-owned-instructions": {
+      "total": 116896675,
+      "per_call": 38965558.333333336
+    },
+    "combined-release-borrowed-instructions": {
+      "total": 14306634,
+      "per_call": 4768878.0
+    },
+    "combined-release-owned-instructions": {
+      "total": 16347208,
+      "per_call": 5449069.333333333
+    },
+    "final-debug-borrowed-instructions": {
+      "total": 111419357,
+      "per_call": 37139785.666666664
+    },
+    "final-debug-owned-instructions": {
+      "total": 116848237,
+      "per_call": 38949412.333333336
+    },
+    "final-release-borrowed-instructions": {
+      "total": 14298311,
+      "per_call": 4766103.666666667
+    },
+    "final-release-owned-instructions": {
+      "total": 16346028,
+      "per_call": 5448676.0
+    },
+    "ranges-debug-borrowed-instructions": {
+      "total": 111495900,
+      "per_call": 37165300.0
+    },
+    "ranges-debug-owned-instructions": {
+      "total": 116915003,
+      "per_call": 38971667.666666664
+    },
+    "ranges-release-borrowed-instructions": {
+      "total": 14313520,
+      "per_call": 4771173.333333333
+    },
+    "ranges-release-owned-instructions": {
+      "total": 16348898,
+      "per_call": 5449632.666666667
+    }
+  },
+  "criterion_final_corelib": {
+    "parse/System.Private.CoreLib/eager": {
+      "low_ms": 122.42,
+      "estimate_ms": 130.86,
+      "high_ms": 140.62
+    },
+    "parse/System.Private.CoreLib/eager/owned_heaps": {
+      "low_ms": 137.27,
+      "estimate_ms": 138.01,
+      "high_ms": 138.73
+    },
+    "parse/System.Private.CoreLib/lazy_bodies": {
+      "low_ms": 53.275,
+      "estimate_ms": 53.51,
+      "high_ms": 53.762
+    },
+    "parse/System.Private.CoreLib/lazy_bodies/owned_heaps": {
+      "low_ms": 63.461,
+      "estimate_ms": 63.621,
+      "high_ms": 63.783
+    },
+    "parse/System.Private.CoreLib/lazy_signatures": {
+      "low_ms": 95.834,
+      "estimate_ms": 96.086,
+      "high_ms": 96.349
+    },
+    "parse/System.Private.CoreLib/lazy_signatures/owned_heaps": {
+      "low_ms": 111.14,
+      "estimate_ms": 111.39,
+      "high_ms": 111.63
+    },
+    "parse/System.Private.CoreLib/lazy_all": {
+      "low_ms": 34.355,
+      "estimate_ms": 34.657,
+      "high_ms": 35.017
+    },
+    "parse/System.Private.CoreLib/lazy_all/owned_heaps": {
+      "low_ms": 43.681,
+      "estimate_ms": 43.8,
+      "high_ms": 43.923
+    },
+    "parse/System.Private.CoreLib/lazy_production": {
+      "low_ms": 31.847,
+      "estimate_ms": 31.974,
+      "high_ms": 32.111
+    },
+    "parse/System.Private.CoreLib/lazy_production/owned_heaps": {
+      "low_ms": 40.656,
+      "estimate_ms": 40.827,
+      "high_ms": 41.006
+    },
+    "parse/System.Private.CoreLib/consumer": {
+      "low_ms": 50.503,
+      "estimate_ms": 51.027,
+      "high_ms": 51.726
+    },
+    "parse/System.Private.CoreLib/consumer/owned_heaps": {
+      "low_ms": 57.991,
+      "estimate_ms": 58.348,
+      "high_ms": 58.786
+    }
+  },
+  "criterion_final_support": {
+    "parse/support/consumer": {
+      "low_ms": 0.36321,
+      "estimate_ms": 0.36555000000000004,
+      "high_ms": 0.36783
+    },
+    "parse/support/consumer/owned_heaps": {
+      "low_ms": 0.39844,
+      "estimate_ms": 0.40058,
+      "high_ms": 0.40364
+    }
+  },
+  "criterion_baseline_corelib": {
+    "parse/System.Private.CoreLib/eager": {
+      "low_ms": 116.14,
+      "estimate_ms": 116.71,
+      "high_ms": 117.31
+    },
+    "parse/System.Private.CoreLib/lazy_bodies": {
+      "low_ms": 54.037,
+      "estimate_ms": 54.322,
+      "high_ms": 54.621
+    },
+    "parse/System.Private.CoreLib/lazy_signatures": {
+      "low_ms": 96.974,
+      "estimate_ms": 97.483,
+      "high_ms": 98.089
+    },
+    "parse/System.Private.CoreLib/lazy_all": {
+      "low_ms": 34.504,
+      "estimate_ms": 34.74,
+      "high_ms": 35.006
+    },
+    "parse/System.Private.CoreLib/lazy_production": {
+      "low_ms": 33.089,
+      "estimate_ms": 33.381,
+      "high_ms": 33.701
+    }
+  },
+  "criterion_eager_repeats": {
+    "baseline": {
+      "parse/System.Private.CoreLib/eager": {
+        "low_ms": 116.24,
+        "estimate_ms": 116.9,
+        "high_ms": 117.61
+      }
+    },
+    "baseline-repeat": {
+      "parse/System.Private.CoreLib/eager": {
+        "low_ms": 115.18,
+        "estimate_ms": 115.48,
+        "high_ms": 115.78
+      }
+    },
+    "combined": {
+      "parse/System.Private.CoreLib/eager": {
+        "low_ms": 116.19,
+        "estimate_ms": 116.6,
+        "high_ms": 117.01
+      },
+      "parse/System.Private.CoreLib/eager/owned_heaps": {
+        "low_ms": 129.67,
+        "estimate_ms": 129.93,
+        "high_ms": 130.2
+      }
+    }
+  },
+  "native_support_allocation_instrumented_repeats": "debug 0 baseline borrowed\nparse_us=2750 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2832.202\ndebug 0 final borrowed\nparse_us=2743 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2854.716\ndebug 0 final owned\nparse_us=3478 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=500 mean_us=2867.102\ndebug 1 baseline borrowed\nparse_us=3012 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2829.976\ndebug 1 final borrowed\nparse_us=2700 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2782.332\ndebug 1 final owned\nparse_us=3119 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=500 mean_us=3005.178\ndebug 2 baseline borrowed\nparse_us=2733 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2853.878\ndebug 2 final borrowed\nparse_us=2790 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=500 mean_us=2856.798\ndebug 2 final owned\nparse_us=3043 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=500 mean_us=2980.224\nrelease 0 baseline borrowed\nparse_us=376 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=434.864\nrelease 0 final borrowed\nparse_us=391 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=413.614\nrelease 0 final owned\nparse_us=417 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=2000 mean_us=514.528\nrelease 1 baseline borrowed\nparse_us=429 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=410.3435\nrelease 1 final borrowed\nparse_us=445 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=408.7065\nrelease 1 final owned\nparse_us=434 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=2000 mean_us=479.84\nrelease 2 baseline borrowed\nparse_us=379 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=405.305\nrelease 2 final borrowed\nparse_us=448 retained_bytes=1093120 peak_extra_bytes=1210952 allocations=4276\nn=2000 mean_us=404.682\nrelease 2 final owned\nparse_us=415 retained_bytes=1111436 peak_extra_bytes=1229268 allocations=6006\nn=2000 mean_us=482.322\n",
+  "native_class_allocation_instrumented": "debug baseline borrowed\nparse_us=2799 retained_bytes=1093120 peak_extra_bytes=1210960 allocations=4277\nn=200 mean_us=2853.005\ndebug strings owned\nparse_us=2831 retained_bytes=1111231 peak_extra_bytes=1229070 allocations=6001\nn=200 mean_us=2971.515\ndebug blobs owned\nparse_us=2904 retained_bytes=1093325 peak_extra_bytes=1211162 allocations=4283\nn=200 mean_us=3017.59\ndebug all owned\nparse_us=2884 retained_bytes=1111436 peak_extra_bytes=1229271 allocations=6007\nn=200 mean_us=3294.415\ndebug split borrowed\nparse_us=5109 retained_bytes=1093120 peak_extra_bytes=1210957 allocations=4277\nn=200 mean_us=4658.75\nrelease baseline borrowed\nparse_us=590 retained_bytes=1093120 peak_extra_bytes=1210960 allocations=4277\nn=1000 mean_us=448.147\nrelease strings owned\nparse_us=539 retained_bytes=1111231 peak_extra_bytes=1229070 allocations=6001\nn=1000 mean_us=474.841\nrelease blobs owned\nparse_us=455 retained_bytes=1093325 peak_extra_bytes=1211162 allocations=4283\nn=1000 mean_us=438.233\nrelease all owned\nparse_us=418 retained_bytes=1111436 peak_extra_bytes=1229271 allocations=6007\nn=1000 mean_us=558.934\nrelease split borrowed\nparse_us=382 retained_bytes=1093120 peak_extra_bytes=1210957 allocations=4277\nn=1000 mean_us=420.512\n",
+  "final_requested_allocation_observations": "support debug borrowed\nparse_us=2772 retained_bytes=1096992 peak_extra_bytes=1214824 allocations=4276\nn=500 mean_us=2769.04\nsupport debug owned\nparse_us=2891 retained_bytes=1115308 peak_extra_bytes=1233140 allocations=6006\nn=500 mean_us=2976.266\nsupport release borrowed\nparse_us=387 retained_bytes=1096992 peak_extra_bytes=1214824 allocations=4276\nn=500 mean_us=398.326\nsupport release owned\nparse_us=401 retained_bytes=1115308 peak_extra_bytes=1233140 allocations=6006\nn=500 mean_us=468.864\ncorelib release eager borrowed\nparse_us=106010 retained_bytes=203741120 peak_extra_bytes=226074480 allocations=855746\nn=10 mean_us=132839.9\ncorelib release eager owned\nparse_us=116442 retained_bytes=205859164 peak_extra_bytes=228192524 allocations=1029480\nn=10 mean_us=149759.1\ncorelib release bodies borrowed\nparse_us=52800 retained_bytes=96414128 peak_extra_bytes=105930448 allocations=504148\nn=10 mean_us=67751.4\ncorelib release bodies owned\nparse_us=57270 retained_bytes=98532172 peak_extra_bytes=108048492 allocations=677882\nn=10 mean_us=75785.9\ncorelib release consumer borrowed\nparse_us=50012 retained_bytes=97255328 peak_extra_bytes=106771648 allocations=492986\nn=10 mean_us=60043.1\ncorelib release consumer owned\nparse_us=52128 retained_bytes=98953523 peak_extra_bytes=108469843 allocations=638214\nn=10 mean_us=67025.6\ncorelib release production borrowed\nparse_us=29756 retained_bytes=78607208 peak_extra_bytes=88123528 allocations=187193\nn=10 mean_us=35210.3\ncorelib release production owned\nparse_us=33387 retained_bytes=80305403 peak_extra_bytes=89821723 allocations=332421\nn=10 mean_us=41922.3\n",
+  "rss_observations": "eager final borrowed\nparse_us=102834 retained_bytes=203741120 peak_extra_bytes=226074480 allocations=855746\nn=0 mean_us=NaN\npeak_rss_kib=235468\neager final owned\nparse_us=111899 retained_bytes=205859164 peak_extra_bytes=228192524 allocations=1029480\nn=0 mean_us=NaN\npeak_rss_kib=241252\neager combined borrowed\nparse_us=96649 retained_bytes=203741120 peak_extra_bytes=226074480 allocations=855746\nn=0 mean_us=NaN\npeak_rss_kib=234852\neager combined owned\nparse_us=107396 retained_bytes=205859164 peak_extra_bytes=228192524 allocations=1029480\nn=0 mean_us=NaN\npeak_rss_kib=241084\nconsumer final borrowed\nparse_us=47931 retained_bytes=96908168 peak_extra_bytes=106424488 allocations=492986\nn=0 mean_us=NaN\npeak_rss_kib=139004\nconsumer final owned\nparse_us=50058 retained_bytes=98606363 peak_extra_bytes=108122683 allocations=638214\nn=0 mean_us=NaN\npeak_rss_kib=141124\nconsumer combined borrowed\nparse_us=46498 retained_bytes=97255328 peak_extra_bytes=106771648 allocations=492986\nn=0 mean_us=NaN\npeak_rss_kib=138468\nconsumer combined owned\nparse_us=49029 retained_bytes=98953523 peak_extra_bytes=108469843 allocations=638214\nn=0 mean_us=NaN\npeak_rss_kib=141032\nproduction final borrowed\nparse_us=28110 retained_bytes=78260048 peak_extra_bytes=87776368 allocations=187193\nn=0 mean_us=NaN\npeak_rss_kib=117764\nproduction final owned\nparse_us=35200 retained_bytes=79958243 peak_extra_bytes=89474563 allocations=332421\nn=0 mean_us=NaN\npeak_rss_kib=121672\nproduction combined borrowed\nparse_us=32338 retained_bytes=78607208 peak_extra_bytes=88123528 allocations=187193\nn=0 mean_us=NaN\npeak_rss_kib=118064\nproduction combined owned\nparse_us=34233 retained_bytes=80305403 peak_extra_bytes=89821723 allocations=332421\nn=0 mean_us=NaN\npeak_rss_kib=122004\n",
+  "input_inventory": {
+    "support": "bytes=46592 types=50 type_refs=135 fields=73 methods=482 parameters=455 member_refs=215 properties=96 events=0 attributes=485 field_rvas=0 resources=0 body_slices=373 type_specs=50 standalone_sigs=56\n#~ 18548 bytes\n#Strings 7520 bytes\n#US 720 bytes\n#GUID 16 bytes\n#Blob 5436 bytes\n",
+    "corelib": "bytes=6389248 types=2849 type_refs=0 fields=9093 methods=43393 parameters=69595 member_refs=8817 properties=5799 events=32 attributes=28506 field_rvas=130 resources=4 body_slices=41270 type_specs=2393 standalone_sigs=6202\n#~ 2354792 bytes\n#Strings 602884 bytes\n#US 359836 bytes\n#GUID 16 bytes\n#Blob 451768 bytes\n",
+    "consumer-before": "bytes=46592 types=50 type_refs=135 fields=73 methods=482 parameters=455 member_refs=215 properties=96 events=0 attributes=485 field_rvas=0 resources=0 body_slices=373 type_specs=50 standalone_sigs=56\n#~ 18548 bytes hash=5a793387731c952d\n#Strings 7520 bytes hash=d5cd10657a021b50\n#US 720 bytes hash=1a5689cd5c79fa48\n#GUID 16 bytes hash=568161ab86a400b4\n#Blob 5436 bytes hash=9553b31be1bba5eb\n",
+    "consumer-after": "bytes=46592 types=50 type_refs=135 fields=73 methods=482 parameters=455 member_refs=215 properties=96 events=0 attributes=485 field_rvas=0 resources=0 body_slices=373 type_specs=50 standalone_sigs=56\n#~ 18548 bytes hash=5a793387731c952d\n#Strings 7520 bytes hash=d5cd10657a021b50\n#US 720 bytes hash=1a5689cd5c79fa48\n#GUID 16 bytes hash=3bd748e623f6a48c\n#Blob 5436 bytes hash=9553b31be1bba5eb\n"
+  },
+  "consumer_native_test_results": {
+    "assemblies": [
+      "test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "vm": [
+      "test result: ok. 94 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.20s"
+    ]
+  },
+  "full_suite_results": [
+    "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.86s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s",
+    "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ]
+}

@@ -202,11 +202,9 @@ fn assert_eager_and_lazy_all_public_fields_match(bytes: &[u8]) -> Result<(), Box
     let eager = Resolution::parse(bytes, ReadOptions::default())?;
     let lazy = Resolution::parse(
         bytes,
-        ReadOptions {
-            lazy_method_bodies: true,
-            lazy_method_signatures: true,
-            ..ReadOptions::default()
-        },
+        ReadOptions::default()
+            .with_lazy_method_bodies(true)
+            .with_lazy_method_signatures(true),
     )?;
     let lazy = materialize_lazy_method_state(lazy)?;
 
@@ -229,4 +227,19 @@ fn system_private_corelib_public_resolution_fields_match() -> Result<(), Box<dyn
 
     let bytes = std::fs::read(common::env::LIBRARIES.join("System.Private.CoreLib.dll"))?;
     assert_eager_and_lazy_all_public_fields_match(&bytes)
+}
+
+#[test]
+fn owned_heaps_preserve_all_public_fields() {
+    let bytes = representative_dll();
+    for lazy in [false, true] {
+        let options = ReadOptions::default()
+            .with_lazy_method_bodies(lazy)
+            .with_lazy_method_signatures(lazy);
+        let borrowed = materialize_lazy_method_state(Resolution::parse(&bytes, options).unwrap()).unwrap();
+        let owned =
+            materialize_lazy_method_state(Resolution::parse(&bytes, options.with_own_heap_values(true)).unwrap())
+                .unwrap();
+        assert_resolution_public_fields_eq(&borrowed, &owned);
+    }
 }
