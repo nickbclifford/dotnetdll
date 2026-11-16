@@ -38,6 +38,12 @@
 //! definitions in Partition III; this API keeps those instruction families typed and
 //! ergonomic without changing their semantics.
 //!
+//! [`Instruction::CallVirtualConstrainedTail`] represents a virtual call with both
+//! `constrained.` and `tail.` prefixes. Its operands are the constraint type and
+//! method, in that order. The reader accepts either prefix order and the writer
+//! emits `constrained.` followed by `tail.`. For either prefix alone, use
+//! [`Instruction::CallVirtualConstrained`] or [`Instruction::CallVirtualTail`].
+//!
 //! # Examples
 //!
 //! ## Basic instructions
@@ -411,6 +417,7 @@ r_instructions! {
     CallVirtual(MethodSource),
     CallVirtualConstrained(MethodType, MethodSource),
     CallVirtualTail(MethodSource),
+    CallVirtualConstrainedTail(MethodType, MethodSource),
     #[flags(type)]
     CastClass(MethodType),
     CopyObject(MethodType),

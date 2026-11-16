@@ -23,7 +23,7 @@ Implements the [ECMA-335](https://www.ecma-international.org/publications-and-st
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-dotnetdll = "0.4"
+dotnetdll = "0.5"
 ```
 
 ### Reading a DLL

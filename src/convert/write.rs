@@ -747,6 +747,9 @@ pub fn instruction(
             BInstruction::ConstrainedCallvirt(constraint.as_idx(ctx)?.into(), method_source!(method))
         }
         CallVirtualTail(m) => BInstruction::TailCallvirt(method_source!(m)),
+        CallVirtualConstrainedTail(constraint, method) => {
+            BInstruction::ConstrainedTailCallvirt(constraint.as_idx(ctx)?.into(), method_source!(method))
+        }
         CastClass {
             skip_type_check: false,
             param0: cast_type,

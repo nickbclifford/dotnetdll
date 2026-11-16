@@ -9,6 +9,23 @@ While the crate is pre-1.0, the public API may change between minor versions.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
+### Added
+
+- `Instruction::CallVirtualConstrainedTail(MethodType, MethodSource)` represents
+  `constrained.` and `tail.` together on a virtual call. The reader accepts both
+  prefix orders; the writer emits `constrained.` followed by `tail.`. Existing
+  single-prefix variants retain their behavior.
+- Regression tests for both prefix orders, branch targets, single-prefix calls,
+  and a .NET 10 execution probe.
+
+### Changed
+
+- **Breaking:** the public resolved and binary IL instruction enums have new
+  variants. Downstream exhaustive matches must handle them; see the
+  [0.5 migration guide](docs/migration-0.5.md).
+
 ## [0.4.0] - 2026-11-02
 
 This release adds opt-in metadata heap ownership for faster parsing under Miri
@@ -89,7 +106,8 @@ resolved field types and input lifetimes are unchanged. See the
   above. See the migration guide in the `DLLError` documentation for the mapping
   from the old variants. Code that only stringifies errors needs no changes.
 
-[Unreleased]: https://github.com/nickbclifford/dotnetdll/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nickbclifford/dotnetdll/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nickbclifford/dotnetdll/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nickbclifford/dotnetdll/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/nickbclifford/dotnetdll/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nickbclifford/dotnetdll/compare/v0.2.0...v0.3.0

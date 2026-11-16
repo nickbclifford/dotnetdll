@@ -4,12 +4,14 @@ use dotnetdll_macros::instructions;
 instructions! {
     prefixes {
         #[target(Call, Callvirt)]
+        #[compose(TailCallvirt)]
         Constrained(Token) = 0x16,
         #[target(Castclass, Unbox, Ldelem*, Stelem*, Ldfld, Stfld, Callvirt, Ldvirtftn)]
         Nocheck(u8) = 0x19,
         #[target(Ldelema)]
         Readonly = 0x1E,
         #[target(Call, Calli, Callvirt)]
+        #[compose(ConstrainedCallvirt)]
         Tail = 0x14,
         #[target(Ldind*, Stind*, Ldfld, Stfld, Ldobj, Stobj, Initblk, Cpblk)]
         #[compose(Volatile)]

@@ -1,7 +1,7 @@
 # Releasing dotnetdll
 
 The root crate and `dotnetdll-macros` have independent versions. Publish the macros
-crate first only when its version changes; dotnetdll 0.4.0 uses the already
+crate first only when its version changes; dotnetdll 0.5.0 uses the already
 published macros 0.2.1. Do not publish the example or research packages.
 
 ## Prepare the release commit
@@ -21,7 +21,7 @@ Run the self-contained checks on Rust 1.85.1:
 ```bash
 cargo +1.85.1 fmt --all -- --check
 cargo +1.85.1 check --workspace --all-targets --all-features --locked
-cargo +1.85.1 test --locked --test owned_heap_values --test deferred_method_bodies
+cargo +1.85.1 test --locked --test owned_heap_values --test deferred_method_bodies --test constrained_tail
 cargo +1.85.1 test --doc --locked
 cargo +1.85.1 doc --no-deps --all-features --locked
 ```
@@ -70,15 +70,15 @@ These commands write to GitHub or crates.io; run them when the release is
 authorized. Merge the tested branch after all CI jobs pass, then use a clean
 checkout of the resulting main commit. Do not amend the release after publishing.
 
-For 0.4.0:
+For 0.5.0, the package version is already set in the release commit. Review the
+`cargo release` dry run first, then execute it when publishing is authorized:
 
 ```bash
 git switch main
 git pull --ff-only origin main
-cargo +1.85.1 publish --locked -p dotnetdll
-git tag -a v0.4.0 -m "Release dotnetdll 0.4.0"
-git push origin v0.4.0
-gh release create v0.4.0 --verify-tag --title "dotnetdll 0.4.0" --notes-file docs/releases/0.4.0.md
+cargo +1.85.1 release -p dotnetdll 0.5.0
+cargo +1.85.1 release -p dotnetdll 0.5.0 --execute
+gh release create v0.5.0 --verify-tag --title "dotnetdll 0.5.0" --notes-file docs/releases/0.5.0.md
 ```
 
 Verify the crates.io version and docs.rs build after publishing. Cargo uploads

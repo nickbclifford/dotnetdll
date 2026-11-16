@@ -987,6 +987,9 @@ pub fn instruction<'r>(
         ConstrainedCallvirt(c, t) => {
             Instruction::CallVirtualConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
         }
+        ConstrainedTailCallvirt(c, t) | TailConstrainedCallvirt(c, t) => {
+            Instruction::CallVirtualConstrainedTail(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
+        }
         NocheckCallvirt(flags, t) => Instruction::CallVirtual {
             skip_null_check: check_bitmask!(flags, 0x4),
             param0: method_source(t, ctx, m_ctx)?,
