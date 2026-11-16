@@ -205,6 +205,10 @@ pub struct MethodSignature<CallConv, InnerType> {
     /// Return type of the method.
     pub return_type: ReturnType<InnerType>,
     /// Additional variable arguments (for vararg calling conventions).
+    ///
+    /// When reading standalone Cdecl or managed vararg signatures, an empty
+    /// tail is represented as `Some(vec![])`; the encoding cannot distinguish
+    /// that from `None`.
     pub varargs: Option<Vec<Parameter<InnerType>>>,
 }
 impl<C: Debug, T: ResolvedDebug> ResolvedDebug for MethodSignature<C, T> {

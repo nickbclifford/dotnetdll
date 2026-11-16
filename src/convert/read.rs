@@ -299,7 +299,23 @@ macro_rules! def_method_sig {
 }
 
 def_method_sig!(fn managed_method(MethodDefSig) -> ManagedMethod);
-def_method_sig!(fn maybe_unmanaged_method(StandAloneMethodSig) -> MaybeUnmanagedMethod);
+#[tracing::instrument(level = "trace", skip_all)]
+pub fn maybe_unmanaged_method<T: TypeKind>(
+    mut sig: StandAloneMethodSig,
+    ctx: &Context,
+) -> Result<signature::MaybeUnmanagedMethod<T>> {
+    let varargs = std::mem::take(&mut sig.varargs);
+    let has_varargs = matches!(
+        sig.calling_convention,
+        StandAloneCallingConvention::Vararg | StandAloneCallingConvention::Cdecl
+    );
+    let mut parsed = unmanaged_method_without_varargs(sig, ctx)?;
+    if has_varargs {
+        parsed.varargs = Some(varargs.into_iter().map(|p| parameter(p, ctx)).collect::<Result<_>>()?);
+    }
+    Ok(parsed)
+}
+def_method_sig!(fn unmanaged_method_without_varargs(StandAloneMethodSig) -> MaybeUnmanagedMethod);
 
 #[tracing::instrument(level = "trace", skip_all)]
 
@@ -474,36 +490,7 @@ pub fn instruction<'r>(
                     match ctx.sigs.get(idx) {
                         Some(s) => {
                             let sig: StandAloneMethodSig = ctx.blobs.at_index(s.signature)?.pread(0)?;
-                            let StandAloneMethodSig {
-                                has_this,
-                                explicit_this,
-                                calling_convention,
-                                ret_type,
-                                params,
-                                varargs,
-                            } = sig;
-                            let mut parsed = maybe_unmanaged_method(
-                                StandAloneMethodSig {
-                                    has_this,
-                                    explicit_this,
-                                    calling_convention,
-                                    ret_type,
-                                    params,
-                                    varargs: Vec::new(),
-                                },
-                                ctx,
-                            )?;
-                            if matches!(
-                                calling_convention,
-                                StandAloneCallingConvention::Vararg | StandAloneCallingConvention::Cdecl
-                            ) {
-                                parsed.varargs = Some(
-                                    varargs
-                                        .into_iter()
-                                        .map(|p| parameter(p, ctx))
-                                        .collect::<Result<_>>()?,
-                                );
-                            }
+                            let parsed = maybe_unmanaged_method(sig, ctx)?;
                             Instruction::CallIndirect {
                                 tail_call: $tail,
                                 param0: parsed,
@@ -984,6 +971,9 @@ pub fn instruction<'r>(
         UnboxAny(t) => Instruction::UnboxIntoValue(type_token(t, ctx)?),
         Xor => Instruction::Xor,
         ConstrainedCall(c, t) => Instruction::CallConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?),
+        ConstrainedTailCall(c, t) | TailConstrainedCall(c, t) => {
+            Instruction::CallConstrainedTail(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
+        }
         ConstrainedCallvirt(c, t) => {
             Instruction::CallVirtualConstrained(type_token(c, ctx)?, method_source(t, ctx, m_ctx)?)
         }

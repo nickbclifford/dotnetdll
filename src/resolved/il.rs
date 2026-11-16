@@ -38,6 +38,8 @@
 //! definitions in Partition III; this API keeps those instruction families typed and
 //! ergonomic without changing their semantics.
 //!
+//! [`Instruction::CallConstrainedTail`] represents a static call with both prefixes.
+//!
 //! [`Instruction::CallVirtualConstrainedTail`] represents a virtual call with both
 //! `constrained.` and `tail.` prefixes. Its operands are the constraint type and
 //! method, in that order. The reader accepts either prefix order and the writer
@@ -358,6 +360,7 @@ r_instructions! {
     #[flags(tail_call)]
     Call(MethodSource),
     CallConstrained(MethodType, MethodSource),
+    CallConstrainedTail(MethodType, MethodSource),
     #[flags(tail_call)]
     CallIndirect(signature::MaybeUnmanagedMethod<MethodType>),
     CompareEqual,

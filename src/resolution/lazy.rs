@@ -488,19 +488,14 @@ pub(crate) fn decode_body_with_ctx(
                 }
                 .into());
             }
-            let max = instr_offsets.iter().max().ok_or(ResolveError::IndexOutOfRange {
-                kind: "instruction offset",
-                index: $byte as usize,
-                max: 0,
-            })?;
-            if $byte as usize == *max + 1 {
+            if $byte as usize == init_offset {
                 instr_offsets.len()
             } else {
                 instr_offsets.iter().position(|&i| i == $byte as usize).ok_or_else(|| {
                     ResolveError::IndexOutOfRange {
                         kind: $name,
                         index: $byte as usize,
-                        max: *max + 1,
+                        max: init_offset,
                     }
                 })?
             }

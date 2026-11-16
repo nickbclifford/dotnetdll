@@ -137,6 +137,9 @@ impl TryIntoCtx<(), DynamicBuffer> for Header {
 ///
 /// ECMA-335, II.25.4.6.
 ///
+/// The standalone reader and writer use the fat (24-byte) layout; a
+/// [`DataSection`] selects and writes the appropriate layout for its clauses.
+///
 /// See also: [`crate::resolved::body::Exception`].
 #[derive(Debug, Pread)]
 pub struct Exception {
@@ -159,24 +162,12 @@ impl TryIntoCtx<(), DynamicBuffer> for Exception {
     fn try_into_ctx(self, into: &mut DynamicBuffer, (): ()) -> Result<usize, Self::Error> {
         let offset = &mut 0;
 
-        if let (Ok(tlen), Ok(hlen), Ok(toff), Ok(hoff)) = (
-            u8::try_from(self.try_length),
-            u8::try_from(self.handler_length),
-            u16::try_from(self.try_offset),
-            u16::try_from(self.handler_offset),
-        ) {
-            into.gwrite_with(self.flags as u8, offset, scroll::LE)?;
-            into.gwrite_with(toff, offset, scroll::LE)?;
-            into.gwrite_with(tlen, offset, scroll::LE)?;
-            into.gwrite_with(hoff, offset, scroll::LE)?;
-            into.gwrite_with(hlen, offset, scroll::LE)?;
-        } else {
-            into.gwrite_with(self.flags, offset, scroll::LE)?;
-            into.gwrite_with(self.try_offset, offset, scroll::LE)?;
-            into.gwrite_with(self.try_length, offset, scroll::LE)?;
-            into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
-            into.gwrite_with(self.handler_length, offset, scroll::LE)?;
-        }
+        // Standalone clauses use the fat layout, matching their Pread implementation.
+        into.gwrite_with(self.flags, offset, scroll::LE)?;
+        into.gwrite_with(self.try_offset, offset, scroll::LE)?;
+        into.gwrite_with(self.try_length, offset, scroll::LE)?;
+        into.gwrite_with(self.handler_offset, offset, scroll::LE)?;
+        into.gwrite_with(self.handler_length, offset, scroll::LE)?;
 
         into.gwrite_with(self.class_token_or_filter, offset, scroll::LE)?;
 
@@ -245,7 +236,11 @@ impl TryFromCtx<'_> for DataSection {
                 *offset += 2;
             }
 
-            let n = (length - 4) / if is_fat { 24 } else { 12 };
+            let clause_size = if is_fat { 24 } else { 12 };
+            if length < 4 || (length - 4) % clause_size != 0 || length > from.len() {
+                return Err(scroll::Error::Custom("invalid exception section length".into()));
+            }
+            let n = (length - 4) / clause_size;
 
             let exceptions = (0..n)
                 .map(|_| {
@@ -287,15 +282,23 @@ impl TryIntoCtx<(), DynamicBuffer> for DataSection {
             Exceptions(es) => {
                 kind |= 0x1;
 
-                let should_be_fat = !es.iter().all(|e| {
-                    e.try_length < 256 && e.handler_length < 256 && e.try_offset < 65536 && e.handler_offset < 65536
-                });
+                let should_be_fat = es.len() > (u8::MAX as usize - 4) / 12
+                    || !es.iter().all(|e| {
+                        e.flags <= u16::MAX as u32
+                            && e.try_length < 256
+                            && e.handler_length < 256
+                            && e.try_offset < 65536
+                            && e.handler_offset < 65536
+                    });
 
                 (should_be_fat, (if should_be_fat { 24 } else { 12 } * es.len()) + 4)
             }
             Unrecognized { is_fat, length } => (*is_fat, *length),
         };
 
+        if (is_fat && length > 0x00ff_ffff) || (!is_fat && length > u8::MAX as usize) {
+            return Err(scroll::Error::Custom("method data section too large".into()));
+        }
         if is_fat {
             kind |= 0x40;
         }

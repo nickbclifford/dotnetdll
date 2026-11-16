@@ -127,10 +127,12 @@ pub fn instructions(Instructions { prefixes, normal }: Instructions) -> TokenStr
 
     for v in &prefixes {
         if let Some(c_attr) = v.attrs.iter().find(|a| a.path().is_ident("compose")) {
-            let id: Ident = c_attr.parse_args().unwrap();
-
-            // for composition, the attribute argument is the only valid target
-            build_targets(&prefixes_map, &mut composed_map, v, vec![TargetIdent::Wildcard(id)]);
+            let TargetAttribute(mut targets) = c_attr.parse_args().unwrap();
+            // Preserve the original single-name prefix matching behavior.
+            if let [TargetIdent::Normal(id)] = targets.as_slice() {
+                targets = vec![TargetIdent::Wildcard(id.clone())];
+            }
+            build_targets(&prefixes_map, &mut composed_map, v, targets);
         }
     }
 

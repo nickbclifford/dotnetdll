@@ -140,7 +140,7 @@ impl TryFromCtx<'_> for MethodDefSig {
 
     fn try_from_ctx(from: &[u8], (): ()) -> Result<(Self, usize), Self::Error> {
         build_method_def(from, |len, offset| {
-            let mut params = Vec::with_capacity(len as usize);
+            let mut params = Vec::with_capacity((len as usize).min(from.len().saturating_sub(*offset)));
             for _ in 0..len {
                 params.push(from.gread(offset)?);
             }
@@ -166,9 +166,14 @@ impl TryIntoCtx<(), DynamicBuffer> for MethodDefSig {
 }
 
 fn build_params_with_varargs(len: &mut u32, from: &[u8], offset: &mut usize) -> scroll::Result<Vec<Param>> {
-    let mut params = Vec::with_capacity(*len as usize);
+    let mut params = Vec::with_capacity((*len as usize).min(from.len().saturating_sub(*offset)));
     while *len > 0 {
-        if from[*offset] == ELEMENT_TYPE_SENTINEL {
+        if from
+            .get(*offset)
+            .copied()
+            .ok_or_else(|| scroll::Error::Custom(ParseError::Truncated { offset: *offset }.to_string()))?
+            == ELEMENT_TYPE_SENTINEL
+        {
             *offset += 1;
             break;
         }
@@ -204,7 +209,12 @@ impl TryFromCtx<'_> for MethodRefSig {
             Ok(params)
         })?;
 
-        let mut varargs = Vec::with_capacity(remaining_params as usize);
+        if remaining_params > 0 && method_def.calling_convention != CallingConvention::Vararg {
+            return Err(scroll::Error::Custom(
+                "optional parameters require a vararg calling convention".into(),
+            ));
+        }
+        let mut varargs = Vec::with_capacity((remaining_params as usize).min(from.len().saturating_sub(offset)));
         for _ in 0..remaining_params {
             varargs.push(from.gread(&mut offset)?);
         }
@@ -217,10 +227,15 @@ macro_rules! ref_sig_impl {
         let total_len = $self.method_def.params.len() + $self.varargs.len();
 
         let conv = $self.method_def.calling_convention;
+        if !$self.varargs.is_empty() && conv != CallingConvention::Vararg {
+            return Err(scroll::Error::Custom(
+                "optional parameters require a vararg calling convention".into(),
+            ));
+        }
 
         let offset = &mut $writer($into, $self.method_def, total_len)?;
 
-        if conv == CallingConvention::Vararg {
+        if !$self.varargs.is_empty() {
             $into.gwrite_with(ELEMENT_TYPE_SENTINEL, offset, scroll::LE)?;
 
             for v in $self.varargs {
@@ -347,7 +362,12 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
         let ret_type = from.gread(offset)?;
 
         let params = build_params_with_varargs(&mut param_count, from, offset)?;
-        let mut varargs = Vec::with_capacity(param_count as usize);
+        if param_count > 0 && !matches!(calling_convention, Vararg | Cdecl) {
+            return Err(scroll::Error::Custom(
+                "optional parameters require a vararg or Cdecl calling convention".into(),
+            ));
+        }
+        let mut varargs = Vec::with_capacity((param_count as usize).min(from.len().saturating_sub(*offset)));
         for _ in 0..param_count {
             varargs.push(from.gread(offset)?);
         }
@@ -367,6 +387,16 @@ impl TryFromCtx<'_> for StandAloneMethodSig {
 }
 try_into_ctx!(StandAloneMethodSig, |self, into| {
     let offset = &mut 0;
+    if !self.varargs.is_empty()
+        && !matches!(
+            self.calling_convention,
+            StandAloneCallingConvention::Vararg | StandAloneCallingConvention::Cdecl
+        )
+    {
+        return Err(scroll::Error::Custom(
+            "optional parameters require a vararg or Cdecl calling convention".into(),
+        ));
+    }
 
     let mut tag: u8 = 0;
     if self.has_this {
@@ -398,7 +428,7 @@ try_into_ctx!(StandAloneMethodSig, |self, into| {
         into.gwrite(p, offset)?;
     }
 
-    if self.calling_convention == Vararg && !self.varargs.is_empty() {
+    if !self.varargs.is_empty() {
         into.gwrite_with(0x41_u8, offset, scroll::LE)?;
         for v in self.varargs {
             into.gwrite(v, offset)?;

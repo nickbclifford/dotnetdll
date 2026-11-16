@@ -1007,43 +1007,68 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
             .iter()
             .map(|i| convert::write::instruction(i, ctx, m_ctx))
             .collect::<Result<_>>()?;
-        let mut offsets: Vec<_> = instructions
-            .iter()
-            .scan(0, |state, i| {
-                let my_offset = *state;
-                *state += i.bytesize();
-                Some(my_offset)
-            })
-            .collect();
-
         use crate::binary::il::Instruction;
+        use crate::dll::{ParseError, ResolveError};
 
-        let mut n_short = 0;
-        let mut deltas = vec![];
-        for i in &instructions {
-            use Instruction::*;
-
-            deltas.push(3 * n_short);
-            if matches!(i, Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
-                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) if i8::try_from(*o).is_ok())
-            {
-                n_short += 1;
+        // Begin with long branches. Shortening can only reduce distances between
+        // instructions, so repeat until no additional branch fits in an i8.
+        let mut short = vec![false; instructions.len()];
+        let offsets = loop {
+            let mut position = 0usize;
+            let offsets: Vec<_> = instructions
+                .iter()
+                .enumerate()
+                .map(|(idx, ins)| {
+                    let here = position;
+                    position += ins.bytesize() - if short[idx] { 3 } else { 0 };
+                    here
+                })
+                .collect();
+            let mut changed = false;
+            for (idx, ins) in instructions.iter().enumerate() {
+                use Instruction::*;
+                let target = match ins {
+                    Beq(o) | Bge(o) | BgeUn(o) | Bgt(o) | BgtUn(o) | Ble(o) | BleUn(o) | Blt(o) | BltUn(o)
+                    | BneUn(o) | Br(o) | Brfalse(o) | Brtrue(o) | Leave(o) => *o,
+                    _ => continue,
+                };
+                let target = usize::try_from(target).ok().filter(|&i| i < offsets.len()).ok_or(
+                    ResolveError::IndexOutOfRange {
+                        kind: "branch target",
+                        index: target as usize,
+                        max: offsets.len().saturating_sub(1),
+                    },
+                )?;
+                if !short[idx] {
+                    // A forward target shifts with the shortened instruction; a
+                    // backward target does not. Both use the short instruction end.
+                    let target_offset = offsets[target] - if target > idx { 3 } else { 0 };
+                    let base = offsets[idx] + ins.bytesize() - 3;
+                    let displacement = target_offset as i64 - base as i64;
+                    if i8::try_from(displacement).is_ok() {
+                        short[idx] = true;
+                        changed = true;
+                    }
+                }
             }
-        }
-        for (offset, delta) in offsets.iter_mut().zip(deltas.into_iter()) {
-            *offset -= delta;
-        }
+            if !changed {
+                break offsets;
+            }
+        };
 
         for (idx, i) in instructions.iter_mut().enumerate() {
-            let bytesize = i.bytesize();
-            let convert_offset = |o: &mut i32, can_shorten: bool| {
-                let base = offsets[idx] + bytesize;
-                let target = offsets[*o as usize];
-                *o = (target as i32) - (base as i32);
-                if can_shorten && i8::try_from(*o).is_ok() {
-                    // this instruction will become 3 bytes shorter, need to adjust offset for change in bytesize
-                    *o += 3;
-                }
+            let bytesize = i.bytesize() - if short[idx] { 3 } else { 0 };
+            let convert_offset = |o: &mut i32| -> Result<()> {
+                let target = usize::try_from(*o).ok().and_then(|target| offsets.get(target)).ok_or(
+                    ResolveError::IndexOutOfRange {
+                        kind: "branch target",
+                        index: *o as usize,
+                        max: offsets.len().saturating_sub(1),
+                    },
+                )?;
+                *o = i32::try_from(*target as i64 - (offsets[idx] + bytesize) as i64)
+                    .map_err(|_| ParseError::BadStructure("branch displacement exceeds i32"))?;
+                Ok(())
             };
 
             use paste::paste;
@@ -1052,18 +1077,17 @@ pub(crate) fn write_impl(res: &Resolution, opts: Options) -> Result<Vec<u8>> {
                     match i {
                         $(
                             Instruction::$ins(o) => {
-                                convert_offset(o, true);
-                                if let Ok(int) = i8::try_from(*o) {
-                                    *i = paste! { Instruction::[<$ins S>](int) };
+                                convert_offset(o)?;
+                                if short[idx] {
+                                    *i = paste! { Instruction::[<$ins S>](i8::try_from(*o).expect("short branch displacement")) };
                                 }
                             }
                         )+
-                        Instruction::Switch(os) => os.iter_mut().for_each(|o| convert_offset(o, false)),
+                        Instruction::Switch(os) => for o in os { convert_offset(o)?; },
                         _ => {}
                     }
                 }
             }
-
             build_match!(
                 Beq, Bge, BgeUn, Bgt, BgtUn, Ble, BleUn, Blt, BltUn, BneUn, Br, Brfalse, Brtrue, Leave
             );

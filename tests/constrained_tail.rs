@@ -240,3 +240,180 @@ fn combined_prefix_executes_on_dotnet_10_when_available() {
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(result.stdout, b"42\n");
 }
+
+fn static_fixture() -> Vec<u8> {
+    use dotnetdll::resolved::types::{ExternalTypeReference, ResolutionScope};
+    let mut res = Resolution::new(Module::new("static-tail.dll"));
+    res.assembly = Some(Assembly::new("static-tail"));
+    let support = res.push_assembly_reference(ExternalAssemblyReference::new("Support"));
+    let core = res.push_assembly_reference(ExternalAssemblyReference::new("System.Private.CoreLib"));
+    let object = res.push_type_reference(type_ref! { System.Object in #core });
+    let iface = res.push_type_reference(ExternalTypeReference::new(
+        None,
+        "IValue",
+        ResolutionScope::Assembly(support),
+    ));
+    let value = res.push_type_reference(ExternalTypeReference::new(
+        None,
+        "Value",
+        ResolutionScope::Assembly(support),
+    ));
+    let iface_type: MethodType = BaseType::class(iface).into();
+    let get = res.push_method_reference(method_ref! { static int #iface_type::Get() });
+    let owner = res.push_type_definition(TypeDefinition::new(None, "Subject"));
+    res[owner].set_extends(object);
+    let constraint: MethodType = BaseType::valuetype(value).into();
+    let main = res.push_method(
+        owner,
+        Method::new(
+            Accessibility::Public,
+            msig! { static int () },
+            "Main",
+            Some(body::Method::new(vec![
+                Instruction::CallConstrainedTail(constraint.clone(), get.into()),
+                Instruction::Return,
+            ])),
+        ),
+    );
+    res.push_method(
+        owner,
+        Method::new(
+            Accessibility::Public,
+            msig! { static void () },
+            "Branches",
+            Some(body::Method::new(vec![
+                Instruction::Branch(3),
+                Instruction::Branch(2),
+                Instruction::CallConstrainedTail(constraint.clone(), get.into()),
+                Instruction::Return,
+                Instruction::Branch(1),
+            ])),
+        ),
+    );
+    res.push_method(
+        owner,
+        Method::new(
+            Accessibility::Public,
+            msig! { static int () },
+            "Constrained",
+            Some(body::Method::new(vec![
+                Instruction::CallConstrained(constraint, get.into()),
+                Instruction::Return,
+            ])),
+        ),
+    );
+    res.set_entry_point(main);
+    res.write(WriteOptions {
+        is_32_bit: false,
+        is_executable: true,
+    })
+    .unwrap()
+}
+
+#[test]
+fn static_constrained_tail_binary_and_resolved_roundtrips() {
+    use scroll::Pwrite;
+    use scroll_buffer::DynamicBuffer;
+    let bytes = static_fixture();
+    let check = |bytes: &[u8]| {
+        for lazy in [false, true] {
+            let res = Resolution::parse(bytes, ReadOptions::new().with_lazy_method_bodies(lazy)).unwrap();
+            assert!(matches!(
+                instructions(&res, "Main")[0],
+                Instruction::CallConstrainedTail(_, _)
+            ));
+            assert!(matches!(
+                instructions(&res, "Constrained")[0],
+                Instruction::CallConstrained(_, _)
+            ));
+            let b = instructions(&res, "Branches");
+            assert!(matches!(b[0], Instruction::Branch(3)));
+            assert!(matches!(b[1], Instruction::Branch(2)));
+            assert!(matches!(b[2], Instruction::CallConstrainedTail(_, _)));
+            assert!(matches!(b[4], Instruction::Branch(1)));
+        }
+    };
+    check(&bytes);
+    let mut reversed = bytes.clone();
+    for name in ["Main", "Branches"] {
+        let range = method_il_range(&reversed, name);
+        let code = &mut reversed[range];
+        let at = code.windows(2).position(|w| w == [0xfe, 0x16]).unwrap();
+        let (decoded, len) = <BinaryInstruction as scroll::ctx::TryFromCtx>::try_from_ctx(&code[at..], ()).unwrap();
+        assert!(matches!(decoded, BinaryInstruction::ConstrainedTailCall(_, _)));
+        assert_eq!(decoded.bytesize(), 13);
+        let mut output = DynamicBuffer::new();
+        output.pwrite(decoded, 0).unwrap();
+        assert_eq!(output.get(), &code[at..at + len]);
+        assert_eq!(&code[at + 6..at + 8], &[0xfe, 0x14]);
+        let prefix: [u8; 6] = code[at..at + 6].try_into().unwrap();
+        code[at..at + 2].copy_from_slice(&[0xfe, 0x14]);
+        code[at + 2..at + 8].copy_from_slice(&prefix);
+        let (decoded, len) = <BinaryInstruction as scroll::ctx::TryFromCtx>::try_from_ctx(&code[at..], ()).unwrap();
+        assert!(matches!(decoded, BinaryInstruction::TailConstrainedCall(_, _)));
+        let mut output = DynamicBuffer::new();
+        output.pwrite(decoded, 0).unwrap();
+        assert_eq!(output.get(), &code[at..at + len]);
+    }
+    check(&reversed);
+    let res = Resolution::parse(&reversed, ReadOptions::new()).unwrap();
+    let rewritten = res
+        .write(WriteOptions {
+            is_32_bit: false,
+            is_executable: true,
+        })
+        .unwrap();
+    check(&rewritten);
+}
+
+#[test]
+fn serialized_static_constrained_tail_executes_on_dotnet_10_when_available() {
+    use std::process::Command;
+    let Ok(sdks) = Command::new("dotnet").arg("--list-sdks").output() else {
+        return;
+    };
+    if !String::from_utf8_lossy(&sdks.stdout)
+        .lines()
+        .any(|s| s.starts_with("10."))
+    {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Support.csproj"), r#"<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>"#).unwrap();
+    std::fs::write(dir.path().join("Support.cs"), "public interface IValue { static abstract int Get(); } public struct Value : IValue { public static int Get() => 42; }").unwrap();
+    let build = Command::new("dotnet")
+        .args([
+            "build",
+            "Support.csproj",
+            "--nologo",
+            "--verbosity",
+            "quiet",
+            "--ignore-failed-sources",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let out = dir.path().join("bin/Debug/net10.0");
+    std::fs::write(out.join("static-tail.dll"), static_fixture()).unwrap();
+    std::fs::write(
+        out.join("static-tail.runtimeconfig.json"),
+        r#"{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}"#,
+    )
+    .unwrap();
+    let result = Command::new("dotnet")
+        .arg(out.join("static-tail.dll"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        result.status.code(),
+        Some(42),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}

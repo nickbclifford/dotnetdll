@@ -494,7 +494,12 @@ impl TryFromCtx<'_> for Type {
             ELEMENT_TYPE_OBJECT => Object,
             ELEMENT_TYPE_PTR => Ptr(
                 all_custom_mods(from, offset),
-                if from[*offset] == ELEMENT_TYPE_VOID {
+                if from
+                    .get(*offset)
+                    .copied()
+                    .ok_or(ParseError::Truncated { offset: *offset })?
+                    == ELEMENT_TYPE_VOID
+                {
                     *offset += 1;
                     None
                 } else {

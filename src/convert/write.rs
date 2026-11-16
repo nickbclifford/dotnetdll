@@ -590,6 +590,9 @@ pub fn instruction(
         CallConstrained(constraint, method) => {
             BInstruction::ConstrainedCall(constraint.as_idx(ctx)?.into(), method_source!(method))
         }
+        CallConstrainedTail(constraint, method) => {
+            BInstruction::ConstrainedTailCall(constraint.as_idx(ctx)?.into(), method_source!(method))
+        }
         CallIndirect {
             tail_call: false,
             param0: signature,
@@ -742,7 +745,7 @@ pub fn instruction(
         CallVirtual {
             skip_null_check: true,
             param0: method,
-        } => BInstruction::NocheckCallvirt(check_mask(false, true, false), method_source!(method)),
+        } => BInstruction::NocheckCallvirt(check_mask(false, false, true), method_source!(method)),
         CallVirtualConstrained(constraint, method) => {
             BInstruction::ConstrainedCallvirt(constraint.as_idx(ctx)?.into(), method_source!(method))
         }

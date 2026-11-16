@@ -9,6 +9,33 @@ While the crate is pre-1.0, the public API may change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `Instruction::CallConstrainedTail` represents `constrained.` and `tail.` on
+  a static `call`. Both binary prefix orders are readable; the resolved writer
+  emits `constrained.` first.
+
+### Fixed
+
+- Preserve Cdecl and managed vararg tails, omit empty sentinels, reject optional
+  tails for incompatible conventions, and return errors for truncated signatures.
+- Relocate branches, switches and exception regions from final byte offsets.
+- Encode oversized and mixed exception sections correctly and read handler ends
+  at code size. Correct the `callvirt` `no.` null-check bit.
+
+### Compatibility for a possible 0.5.1
+
+- **Source breaking:** exhaustive matches on the public resolved and binary IL
+  enums must handle `CallConstrainedTail`, `ConstrainedTailCall`, and
+  `TailConstrainedCall`. Existing `CallConstrained` remains available.
+- Invalid optional tails now fail to read or write. Cdecl/managed vararg function-pointer
+  signatures now decode with `varargs: Some(...)`, including `Some(vec![])` when
+  the optional tail is empty; the wire format cannot distinguish an empty `Some`
+  from `None`.
+- Standalone binary `method::Exception` writes now use the fat layout to match
+  its reader. `dotnetdll-macros` must be released at 0.2.2 before publishing a
+  dotnetdll release that depends on it.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added
